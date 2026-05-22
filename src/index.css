@@ -7,6 +7,8 @@
   --font-display: "Outfit", sans-serif;
   --font-serif: "Cormorant Garamond", serif;
 
+  --breakpoint-3xl: 2000px;
+
   --color-bento-bg: #050505;
   --color-bento-card: #0d0d0d;
   --color-bento-card-hover: #121212;

@@ -2,5 +2,5 @@
   "name": "Bullish AI: Stock Research & Prompt Hub",
   "description": "Generate professional investment prompts and store AI-powered research reports using Gemini.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

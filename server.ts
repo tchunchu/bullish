@@ -681,7 +681,10 @@ async function startServer() {
           prior_sqz: false,
           obv_divergence,
           higher_lows: higherLows,
-          pfl
+          pfl,
+          g1_ocf: opCashflow,
+          g1_revGrowth: revGrowth,
+          targetMeanPrice: round(targetMeanPrice, 2)
       };
     } catch(err) {
       console.error(`Gate error for ${ticker}:`, err);
@@ -917,10 +920,27 @@ async function startServer() {
       if (field === "G3") return "NEUTRAL";
       return "POOR";
     }
-    const parts = state.split("|").map(p => p.trim());
+    const parts = state.split(/[| ]+/).map(p => p.trim()).filter(p => p);
     for (const part of parts) {
       if (part.startsWith(`${field}:`)) {
-        return part.substring(3).trim();
+        const val = part.substring(part.indexOf(":") + 1).trim();
+        if (field === "G1") {
+          return val === "P" ? "PASS" : val === "W" ? "WATCH" : "FAIL";
+        }
+        if (field === "G2") {
+          return val === "P" ? "DEEP VALUE" : "FAIR";
+        }
+        if (field === "G3") {
+          const g3statePart = parts.find(p => p.startsWith("G3STATE:"));
+          const g3stateVal = g3statePart ? g3statePart.substring(g3statePart.indexOf(":") + 1).trim() : "";
+          if (g3stateVal === "STRONG CONFIRM" || val === "P") return "STRONG CONFIRM";
+          if (g3stateVal === "CONFIRM") return "CONFIRM";
+          return "CONTRADICT";
+        }
+        if (field === "G4") {
+          return val === "P" ? "EXCELLENT" : "POOR";
+        }
+        return val;
       }
     }
     // Fallbacks
@@ -941,7 +961,7 @@ async function startServer() {
     return "NEUTRAL";
   }
 
-  async function computeUnifiedAlpha(ticker: string, horizon: string) {
+  async function computeUnifiedAlpha(ticker: string, horizon: string, isCustom = false) {
     if (!ticker) return null;
     const coiled = await computeCoiledSpring(ticker, horizon);
     if (!coiled) return null; 
@@ -985,8 +1005,8 @@ async function startServer() {
     else if (isGate && isRev) { bucket = "Gate+Rev ⚙️"; bucket_rank = 3; }
     else if (isCSHot) { bucket = "CS Only"; bucket_rank = 5; }
 
-    // Require at least 2-signal overlap — single-signal setups have too much noise
-    if (bucket === "NONE" || bucket === "CS Only") return null;
+    // Require at least 2-signal overlap — single-signal setups have too much noise (unless custom list run)
+    if (!isCustom && (bucket === "NONE" || bucket === "CS Only")) return null;
 
     // ── 3. Steam score — max 14 ────────────────────────────────
     const steam_score =
@@ -1016,16 +1036,30 @@ async function startServer() {
     const compositeScore = Math.min(100, Math.round(fs + ts));
 
     // ── 5. Gate field extraction ────────────────────────────────────────────
-    const g1 = extractGateField(gate.state, "G1");
+    const g1_status = extractGateField(gate.state, "G1");
+    let g1 = g1_status;
+    if (gate.g1_ocf !== undefined && gate.g1_revGrowth !== undefined) {
+      const ocf = gate.g1_ocf;
+      const rg = gate.g1_revGrowth;
+      const ocfStr = ocf != null && typeof ocf === 'number'
+        ? (Math.abs(ocf) >= 1e9 
+            ? `${ocf >= 0 ? '+' : ''}${(ocf / 1e9).toFixed(1)}B` 
+            : `${ocf >= 0 ? '+' : ''}${(ocf / 1e6).toFixed(1)}M`)
+        : "N/A";
+      const rgStr = rg != null && typeof rg === 'number'
+        ? `${rg >= 0 ? '+' : ''}${(rg * 100).toFixed(1)}%`
+        : "N/A";
+      g1 = `${g1_status} (OCF: ${ocfStr}, YoY Rev Growth: ${rgStr})`;
+    }
     const g2 = extractGateField(gate.state, "G2");
     const g3 = extractGateField(gate.state, "G3");
     const g4 = extractGateField(gate.state, "G4");
 
     // ── 6. Real upside and R:R ──────────────────────────
-    const upside_pct: number | null =
-      gate.upside_pct ?? 
-      (gate.fair_value && coiled.price > 0
-        ? Math.round((gate.fair_value / coiled.price - 1) * 100)
+    const atr_pct = vcs.atr_pct || 2.0;
+    const upside_pct: number =
+      (gate.targetMeanPrice && gate.targetMeanPrice > 0 && coiled.price > 0
+        ? Math.round((gate.targetMeanPrice / coiled.price - 1) * 100)
         : null) ??
       (() => {
         if (coiled.n_entry && coiled.n_entry !== "N/A" && coiled.n_tp1 && coiled.n_tp1 !== "N/A") {
@@ -1035,7 +1069,7 @@ async function startServer() {
             return Math.round(((tp1 - entry) / entry) * 100);
           }
         }
-        return null;
+        return Math.round(atr_pct);
       })();
 
     const rr: string | null =
@@ -1094,6 +1128,7 @@ async function startServer() {
        vcs_score: vcs.bull_score || 0,
        trend: vcs.trend || "NONE",
        rsi: Math.round(vcs.rsi || coiled.rsi || 50),
+       atr_pct: atr_pct,
        sort_score: (4 - bucket_rank) * 1000 + compositeScore * 10,
     };
   }
@@ -1176,6 +1211,7 @@ async function startServer() {
     const customTickers = customTickersRaw ? customTickersRaw.split(',').map(t => t.trim().toUpperCase()).filter(t => t) : null;
     
     let tickersToScreen = (customTickers && customTickers.length > 0) ? customTickers : null;
+    const isCustom = (tickersToScreen !== null);
     if (!tickersToScreen) {
       if (indexName === 'both') {
         const sp500 = await getTickersForIndex('sp500');
@@ -1203,7 +1239,7 @@ async function startServer() {
             : screenerType === 'coiled'
             ? await computeCoiledSpring(t, horizon)
             : (screenerType === 'unified' || screenerType === 'unified_v2')
-            ? await computeUnifiedAlpha(t, horizon)
+            ? await computeUnifiedAlpha(t, horizon, isCustom)
             : await computeVCS(t, horizon);
             
           if (vcsRes) {

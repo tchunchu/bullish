@@ -124,6 +124,331 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Robust JSON cleanup to prevent malformed tags/JSON from breaking
+function cleanJSONString(jsonStr: string): string {
+  let insideString = false;
+  let escape = false;
+  let result = '';
+  for (let i = 0; i < jsonStr.length; i++) {
+    const char = jsonStr[i];
+    if (char === '\\' && insideString) {
+      escape = !escape;
+      result += char;
+    } else if (char === '"' && !escape) {
+      insideString = !insideString;
+      result += char;
+      escape = false;
+    } else {
+      if (insideString && (char === '\n' || char === '\r')) {
+        result += '\\n';
+      } else {
+        result += char;
+      }
+      escape = false;
+    }
+  }
+  return result
+    .replace(/,\s*([}\]])/g, '$1')
+    .trim();
+}
+
+const cleanNarrativeStr = (text: string | undefined | null) => {
+  if (!text) return "";
+  return text.trim().replace(/^>\s*/gm, '');
+};
+
+const extractCurrentPriceShared = (text: string, tickerHint?: string): string => {
+  if (!text) return "";
+
+  // 1. First, search for standard table formats of 'Current Price' or similar fields
+  const escapedLabelRegexes = [
+    /Current\s*Price/i,
+    /Current\s*Market\s*Price/i,
+    /Market\s*Price/i,
+    /Stock\s*Price/i,
+    /Price/i
+  ];
+
+  for (const labelRegex of escapedLabelRegexes) {
+    const tableRegex = new RegExp(`\\|\\s*[^|]*(?:\\*\\*|\\*)?${labelRegex.source}(?:\\*\\*|\\*)?[^|]*\\|\\s*(?:\\*\\*|\\*)?\\$?([\\d,.]+)`, 'i');
+    const tableMatch = text.match(tableRegex);
+    if (tableMatch && tableMatch[1]) {
+      return tableMatch[1].trim();
+    }
+  }
+
+  // 2. Search for colon/dash notation formats, e.g. **Current Price**: $X.XX
+  for (const labelRegex of escapedLabelRegexes) {
+    const colonRegex = new RegExp(`(?:\\*\\*|\\*)?[^\\n:]*${labelRegex.source}[^\\n:]*(?:\\*\\*|\\*)?\\s*:\\s*\\$?([\\d,.]+)`, 'i');
+    const colonMatch = text.match(colonRegex);
+    if (colonMatch && colonMatch[1]) {
+      return colonMatch[1].trim();
+    }
+    const dashRegex = new RegExp(`(?:\\*\\*|\\*)?[^\\n-]*${labelRegex.source}[^\\n-]*(?:\\*\\*|\\*)?\\s*-\\s*\\$?([\\d,.]+)`, 'i');
+    const dashMatch = text.match(dashRegex);
+    if (dashMatch && dashMatch[1]) {
+      return dashMatch[1].trim();
+    }
+  }
+
+  // 3. Search near tickerHint if available
+  if (tickerHint) {
+    const upperTicker = tickerHint.toUpperCase();
+    const cleanTicker = upperTicker.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    
+    const tickerPatterns = [
+      new RegExp(`(?:\\b|\\*)${cleanTicker}\\s*(?:\\*\\*)?\\s*@\\s*\\$?([\\d,.]+)`, 'i'),
+      new RegExp(`(?:\\b|\\*)${cleanTicker}\\s*(?:\\*\\*)?\\s*:\\s*\\$?([\\d,.]+)`, 'i'),
+      new RegExp(`(?:\\b|\\*)${cleanTicker}\\s*\\(\\s*\\$?([\\d,.]+)\\s*\\)`, 'i'),
+      new RegExp(`(?:\\b|\\*)${cleanTicker}\\s*(?:\\*\\*)?\\s+currently\\s+trading\\s+at\\s*\\$?([\\d,.]+)`, 'i'),
+      new RegExp(`(?:\\b|\\*)${cleanTicker}\\s*(?:\\*\\*)?\\s+is\\s+at\\s*\\$?([\\d,.]+)`, 'i'),
+      new RegExp(`(?:\\b|\\*)${cleanTicker}\\s*(?:\\*\\*)?\\s+price\\s+is\\s*\\$?([\\d,.]+)`, 'i')
+    ];
+
+    for (const pattern of tickerPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+  }
+
+  // 4. Look for generic sentences/phrases
+  const phrasePatterns = [
+    /trading\s+at\s*\(?\$?([\d,.]+)\)?/i,
+    /closed\s+at\s*\(?\$?([\d,.]+)\)?/i,
+    /current\s+price\s+is\s*\(?\$?([\d,.]+)\)?/i,
+    /stock\s+is\s+at\s*\(?\$?([\d,.]+)\)?/i,
+    /market\s+price\s+of\s*\(?\$?([\d,.]+)\)?/i,
+    /price\s+of\s*\$([\d,.]+)/i
+  ];
+
+  for (const pattern of phrasePatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // 5. Look for any standalone numeric amount prefixed with $ near the start of the report
+  const anyPriceMatch = text.match(/\bprice\b[\s\S]{1,50}\$([\d,.]+)/i);
+  if (anyPriceMatch && anyPriceMatch[1]) {
+    return anyPriceMatch[1].trim();
+  }
+
+  return "";
+};
+
+const extractBullCaseShared = (text: string): string => {
+  if (!text) return "";
+  
+  const bullCaseHeaders = [
+    /\*\*Bull\s*Case\s*[-—–]\s*Top\s*3\s*Points:?\*\*/i,
+    /Bull\s*Case\s*[-—–]\s*Top\s*3\s*Points/i,
+    /\*\*Bull\s*Case\s*[-—–]\s*Top\s*3\s*Catalysts:?\*\*/i,
+    /Bull\s*Case\s*[-—–]\s*Top\s*3\s*Catalysts/i,
+    /\*\*Bull\s*Case:?\*\*/i,
+    /Bull\s*Case:?/i,
+    /🐂\s*Bull\s*(?:Thesis|Case)/i
+  ];
+  
+  const endMarkers = [
+    /\*\*Base\s*Case/i,
+    /Base\s*Case/i,
+    /\*\*Bear\s*Case/i,
+    /Bear\s*Case/i,
+    /##/i,
+    /###/i,
+    /\n\s*\n\s*\w+\s*:/
+  ];
+  
+  for (const headerRegex of bullCaseHeaders) {
+    const match = text.match(headerRegex);
+    if (match && match.index !== undefined) {
+      const startIdx = match.index + match[0].length;
+      const remaining = text.substring(startIdx);
+      
+      let endIdx = remaining.length;
+      for (const endRegex of endMarkers) {
+        const endMatch = remaining.match(endRegex);
+        if (endMatch && endMatch.index !== undefined && endMatch.index < endIdx) {
+          endIdx = endMatch.index;
+        }
+      }
+      
+      const content = remaining.substring(0, endIdx).trim();
+      if (content) {
+        return content;
+      }
+    }
+  }
+  
+  // Fallbacks
+  const sectionMatch = text.match(/(?:##|###)?\s*(?:🐂\s*)?(?:Detailed\s*)?Bull\s*(?:Thesis|Case)(?:\s*Summary)?:?\s*\n*([\s\S]*?)(?=(?:##|###)?\s*(?:🐻\s*)?(?:Detailed\s*)?(?:Bear\s*(?:Thesis|Risk|Factors|Case)|Risk\s*Factors)|##|###|\n\n\w+)/i);
+  if (sectionMatch && sectionMatch[1].trim()) return sectionMatch[1].trim();
+
+  // 1-sentence bull case fallback
+  const oneSentMatch = text.match(/\*\*Bull\s*Case\s*(?:\(1\s*sentence\))?:?\*\*\s*\n*(?:>\s*)?([\s\S]*?)(?=\*\*Bear\s*Case|\*\*Moat\s*Assessment|##|###|\n\s*\w+\s*:)/i);
+  if (oneSentMatch && oneSentMatch[1].trim()) return oneSentMatch[1].trim();
+
+  return "";
+};
+
+const extractBearCaseShared = (text: string): string => {
+  if (!text) return "";
+  
+  const bearCaseHeaders = [
+    /\*\*Bear\s*Case\s*[-—–]\s*Top\s*3\s*Risks:?\*\*/i,
+    /Bear\s*Case\s*[-—–]\s*Top\s*3\s*Risks/i,
+    /\*\*Bear\s*Case\s*[-—–]\s*Top\s*3\s*Points:?\*\*/i,
+    /Bear\s*Case\s*[-—–]\s*Top\s*3\s*Points/i,
+    /\*\*Bear\s*Case:?\*\*/i,
+    /Bear\s*Case:?/i,
+    /🐻\s*Bear\s*(?:Thesis|Case|Risk)/i
+  ];
+  
+  const endMarkers = [
+    /\*\*Top\s*3\s*Signals/i,
+    /Top\s*3\s*Signals/i,
+    /\*\*Base\s*Case/i,
+    /Base\s*Case/i,
+    /\*\*⭐\s*FINAL\s*VERDICT/i,
+    /⭐\s*FINAL\s*VERDICT/i,
+    /##/i,
+    /###/i,
+    /\n\s*\n\s*\w+\s*:/
+  ];
+  
+  for (const headerRegex of bearCaseHeaders) {
+    const match = text.match(headerRegex);
+    if (match && match.index !== undefined) {
+      const startIdx = match.index + match[0].length;
+      const remaining = text.substring(startIdx);
+      
+      let endIdx = remaining.length;
+      for (const endRegex of endMarkers) {
+        const endMatch = remaining.match(endRegex);
+        if (endMatch && endMatch.index !== undefined && endMatch.index < endIdx) {
+          endIdx = endMatch.index;
+        }
+      }
+      
+      const content = remaining.substring(0, endIdx).trim();
+      if (content) {
+        return content;
+      }
+    }
+  }
+  
+  // Fallbacks
+  const sectionMatch = text.match(/(?:##|###)?\s*(?:🐻\s*)?(?:Detailed\s*)?(?:Bear\s*(?:Thesis|Risk|Factors|Case)|Risk\s*Factors)(?:\s*Summary)?:?\s*\n*([\s\S]*?)(?=(?:##|###)?\s*(?:🔮\s*)?Perspective|##|###|\n\n\w+)/i);
+  if (sectionMatch && sectionMatch[1].trim()) return sectionMatch[1].trim();
+
+  // 1-sentence bear case fallback
+  const oneSentMatch = text.match(/\*\*Bear\s*Case\s*(?:\(1\s*sentence\))?:?\*\*\s*\n*(?:>\s*)?([\s\S]*?)(?=\*\*Moat\s*Assessment|##|###|\n\s*\w+\s*:)/i);
+  if (oneSentMatch && oneSentMatch[1].trim()) return oneSentMatch[1].trim();
+
+  return "";
+};
+
+const extractCommentsShared = (text: string): string => {
+  if (!text) return "";
+  
+  let baseCaseContent = "";
+  let topSignalsContent = "";
+  
+  // 1. Extract Base Case content
+  const baseCaseHeaders = [
+    /\*\*Base\s*Case\s*\(Most\s*Likely\s*Scenario\):?\*\*/i,
+    /Base\s*Case\s*\(Most\s*Likely\s*Scenario\)/i,
+    /\*\*Base\s*Case:?\*\*/i,
+    /Base\s*Case:?/i
+  ];
+  const baseCaseEndMarkers = [
+    /\*\*Bear\s*Case/i,
+    /Bear\s*Case/i,
+    /\*\*Top\s*3\s*Signals/i,
+    /Top\s*3\s*Signals/i,
+    /##/i,
+    /###/i
+  ];
+  
+  for (const headerRegex of baseCaseHeaders) {
+    const match = text.match(headerRegex);
+    if (match && match.index !== undefined) {
+      const startIdx = match.index + match[0].length;
+      const remaining = text.substring(startIdx);
+      
+      let endIdx = remaining.length;
+      for (const endRegex of baseCaseEndMarkers) {
+        const endMatch = remaining.match(endRegex);
+        if (endMatch && endMatch.index !== undefined && endMatch.index < endIdx) {
+          endIdx = endMatch.index;
+        }
+      }
+      baseCaseContent = remaining.substring(0, endIdx).trim();
+      break;
+    }
+  }
+  
+  // 2. Extract Top 3 Signals content
+  const signalHeaders = [
+    /\*\*Top\s*3\s*Signals\s*Driving\s*the\s*Decision(?:\s*RIGHT\s*NOW)?:?\*\*/i,
+    /Top\s*3\s*Signals\s*Driving\s*the\s*Decision(?:\s*RIGHT\s*NOW)?/i,
+    /\*\*Top\s*3\s*Signals:?\*\*/i,
+    /Top\s*3\s*Signals:?/i
+  ];
+  const signalEndMarkers = [
+    /\*\*⭐\s*FINAL\s*VERDICT/i,
+    /⭐\s*FINAL\s*VERDICT/i,
+    /##/i,
+    /###/i
+  ];
+  
+  for (const headerRegex of signalHeaders) {
+    const match = text.match(headerRegex);
+    if (match && match.index !== undefined) {
+      const startIdx = match.index + match[0].length;
+      const remaining = text.substring(startIdx);
+      
+      let endIdx = remaining.length;
+      for (const endRegex of signalEndMarkers) {
+        const endMatch = remaining.match(endRegex);
+        if (endMatch && endMatch.index !== undefined && endMatch.index < endIdx) {
+          endIdx = endMatch.index;
+        }
+      }
+      topSignalsContent = remaining.substring(0, endIdx).trim();
+      break;
+    }
+  }
+  
+  // 3. Fallbacks if neither of above succeeded
+  if (!baseCaseContent && !topSignalsContent) {
+    const perspectiveMatch = text.match(/(?:##|###)?\s*(?:📊|🔮)?\s*Perspective:?\s*\n*([\s\S]*?)(?=##|###|\n\n\w+)/i);
+    if (perspectiveMatch && perspectiveMatch[1].trim()) return perspectiveMatch[1].trim();
+
+    const commentsMatch = text.match(/Comments?:?\s*\n*([\s\S]*?)(?=\n\n|\n\*\*|###)/i);
+    if (commentsMatch && commentsMatch[1].trim()) return commentsMatch[1].trim();
+
+    const macroMatch = text.match(/ACTIONABLE SIGNALS[\s\S]*?(?=\n\n|###|##)/i) ||
+                       text.match(/## 🎯 MACRO SCORECARD SUMMARY[\s\S]*?(?=\n\n|##)/i);
+    if (macroMatch && macroMatch[0].trim()) return macroMatch[0].trim();
+  }
+  
+  // Combine nicely
+  let combined = "";
+  if (baseCaseContent) {
+    combined += baseCaseContent;
+  }
+  if (topSignalsContent) {
+    if (combined) combined += "\n\n**Top 3 Decision Signals:**\n";
+    combined += topSignalsContent;
+  }
+  
+  return combined.trim();
+};
+
 export default function App() {
   const getChildrenText = (c: any): string => {
     if (!c) return '';
@@ -257,6 +582,99 @@ export default function App() {
     }
   };
 
+  const cleanPrice = (val: any) => {
+    if (val === undefined || val === null || val === "" || val === "—" || val === "N/A" || val === "N/A" || val === "unknown") return "—";
+    const str = String(val).trim();
+    if (str.startsWith("$")) return str;
+    return `$${str}`;
+  };
+
+  const extractEli5Content = (text: string) => {
+    if (!text) return { before: "", eli5: null, after: "" };
+    
+    const startTag = "[ELI5_START]";
+    const endTag = "[ELI5_END]";
+    
+    const startIndex = text.indexOf(startTag);
+    const endIndex = text.indexOf(endTag);
+    
+    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+      const before = text.substring(0, startIndex);
+      const eli5 = text.substring(startIndex + startTag.length, endIndex).trim();
+      const after = text.substring(endIndex + endTag.length);
+      return { before, eli5, after };
+    }
+    
+    return { before: text, eli5: null, after: "" };
+  };
+
+  const Eli5ReportWrapper = ({ content }: { content: string }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    const { before, eli5, after } = extractEli5Content(content);
+
+    if (!eli5) {
+      return (
+        <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          {content}
+        </Markdown>
+      );
+    }
+
+    return (
+      <div className="space-y-4 font-sans select-none text-left">
+        <div className="bg-gradient-to-r from-purple-950/20 to-[#1c1a30]/10 border border-purple-500/30 rounded-xl overflow-hidden shadow-xl hover:border-purple-500/50 transition-all duration-300">
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="w-full flex items-center justify-between p-4 sm:p-5 text-left font-sans focus:outline-none"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-xl sm:text-2xl">🧸</span>
+              <div>
+                <h4 className="text-xs sm:text-sm font-bold text-purple-300 tracking-wide uppercase leading-tight flex items-center gap-2">
+                  Explain Like I'm 5 (ELI5) Summary
+                  <span className="px-2 py-0.5 text-[8px] font-extrabold uppercase bg-purple-500/20 text-purple-200 border border-purple-500/30 rounded-full animate-pulse font-mono">Deep Moat Summary</span>
+                </h4>
+                <p className="text-[10px] text-bento-muted mt-0.5">Core business, direct competitors, economic shields, and future innovation stories.</p>
+              </div>
+            </div>
+            <div className={`w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-300 transition-transform duration-300 ${isExpanded ? 'rotate-90' : ''}`}>
+              <ChevronRight className="w-5 h-5" />
+            </div>
+          </button>
+
+          <AnimatePresence initial={false}>
+            {isExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2, ease: "easeInOut" }}
+              >
+                <div className="px-4 sm:px-6 pb-6 border-t border-purple-500/15 bg-purple-950/5 text-gray-300 font-sans">
+                  <div className="mt-4 p-4 rounded-xl bg-purple-950/25 border border-purple-500/10 shadow-inner text-sm leading-relaxed whitespace-pre-wrap markdown-body text-gray-200">
+                    <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                      {eli5}
+                    </Markdown>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="prose prose-invert prose-xs text-left markdown-body text-gray-200 mt-4">
+          <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {before + after}
+          </Markdown>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStockReportWithEli5 = (content: string) => {
+    return <Eli5ReportWrapper content={content} />;
+  };
+
   const renderMultiStockReport = (data: any[]) => {
     if (!Array.isArray(data)) return null;
     return (
@@ -377,23 +795,32 @@ export default function App() {
   const renderRawScreenerMobile = (results: any[], isUnified: boolean) => {
     if (!Array.isArray(results) || results.length === 0) {
       return (
-        <div className="text-center p-8 text-bento-muted italic text-xs md:hidden block bg-black/40 rounded-xl border border-white/5">
+        <div className={cn("text-center p-8 text-bento-muted italic text-xs bg-black/40 rounded-xl border border-white/5", viewMode === 'tiles' ? "block" : "hidden")}>
           No results found matching criteria.
         </div>
       );
     }
 
     return (
-      <div className="space-y-4 md:hidden block text-left">
+      <div className={cn("grid gap-4 text-left", 
+        viewMode === 'tiles' 
+          ? "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-3 3xl:grid-cols-4 block" 
+          : "hidden"
+      )}>
         {results.map((r, i) => {
           const priceVal = r.price !== undefined ? r.price : (r.close !== undefined ? r.close : 0);
           return (
             <div key={i} className="bg-gradient-to-b from-[#11111b] to-black border border-white/10 rounded-xl p-4 space-y-3 shadow-md">
               <div className="flex items-center justify-between border-b border-white/5 pb-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-display font-black text-sm text-bento-accent tracking-wider uppercase">
+                  <a 
+                    href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="font-display font-black text-sm text-bento-accent tracking-wider uppercase hover:underline"
+                  >
                     {r.ticker}
-                  </span>
+                  </a>
                   {isUnified && r.bucket && (
                     <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
                       {r.bucket}
@@ -435,27 +862,41 @@ export default function App() {
                     </div>
                     <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold">Upside Est</span>
-                      <span className="text-emerald-400 font-mono font-bold">+{r.upside_pct || 0}%</span>
+                      <span className="text-emerald-400 font-mono font-bold">
+                        {r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct || 0}%
+                      </span>
                     </div>
                     <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold">R:R Ratio</span>
-                      <span className="font-mono text-white">{r.rr}</span>
+                      <span className="font-mono text-white font-semibold">{r.rr || '—'}</span>
                     </div>
                     <div>
-                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Take Profit 1</span>
-                      <span className="text-blue-400 font-mono font-bold">${r.algoTP1 || r.target || r.n_tp1 || '—'}</span>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Take Profit 1</span>
+                      <span className="text-blue-400 font-mono font-bold">{cleanPrice(r.algoTP1 || r.target || r.n_tp1)}</span>
                     </div>
                     <div>
-                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Stop Loss</span>
-                      <span className="text-red-400 font-mono font-bold">${r.algoExit || r.stop || r.n_exit || '—'}</span>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Stop Loss</span>
+                      <span className="text-red-400 font-mono font-bold">{cleanPrice(r.algoExit || r.stop || r.n_exit)}</span>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between text-[8px] text-bento-muted font-bold font-mono">
-                    <span>G1: <span style={{color: r.g1 === 'PASS' ? '#00ff44' : '#ff4444'}}>{r.g1}</span></span>
-                    <span>G2: <span className="text-white/80">{r.g2}</span></span>
-                    <span>G3: <span className="text-white/80">{r.g3}</span></span>
-                    <span>G4: <span className="text-white/80">{r.g4}</span></span>
+                  <div className="grid grid-cols-2 gap-1.5 pt-2.5 border-t border-white/5 text-[8px] text-bento-muted font-bold font-mono">
+                    <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                      <span className="block text-[7px] text-purple-300 font-extrabold uppercase leading-tight mb-0.5">Quality Gate (G1)</span>
+                      <span style={{color: r.g1?.includes('PASS') ? '#00ff44' : r.g1?.includes('WATCH') ? '#fbbf24' : '#ff4444'}} className="block text-[9px] font-mono leading-tight whitespace-pre-wrap">{r.g1 || '—'}</span>
+                    </div>
+                    <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                      <span className="block text-[7px] text-pink-300 font-extrabold uppercase leading-tight mb-0.5">Valuation Gate (G2)</span>
+                      <span style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : '#9ca3af'}} className="block text-[9px] font-mono leading-tight truncate">{r.g2 || '—'}</span>
+                    </div>
+                    <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                      <span className="block text-[7px] text-amber-300 font-extrabold uppercase leading-tight mb-0.5">Technical Gate (G3)</span>
+                      <span style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}} className="block text-[9px] font-mono leading-tight whitespace-pre-wrap">{r.g3 || '—'}</span>
+                    </div>
+                    <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                      <span className="block text-[7px] text-teal-300 font-extrabold uppercase leading-tight mb-0.5">Risk/Reward (G4)</span>
+                      <span style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}} className="block text-[9px] font-mono leading-tight font-extrabold whitespace-pre-wrap">{r.g4 || '—'} {r.rr ? `(${r.rr})` : ''}</span>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -496,14 +937,18 @@ export default function App() {
   const renderNeuralScreenerMobile = (aiResults: any[], isUnified: boolean, rawResults: any[] = []) => {
     if (!Array.isArray(aiResults) || aiResults.length === 0) {
       return (
-        <div className="text-center p-8 text-bento-muted italic text-xs md:hidden block bg-black/40 rounded-xl border border-white/5">
+        <div className={cn("text-center p-8 text-bento-muted italic text-xs bg-black/40 rounded-xl border border-white/5", viewMode === 'tiles' ? "block" : "hidden")}>
           No neural analysis results available.
         </div>
       );
     }
 
     return (
-      <div className="space-y-4 md:hidden block font-sans text-left">
+      <div className={cn("grid gap-4 font-sans text-left", 
+        viewMode === 'tiles' 
+          ? "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-3 3xl:grid-cols-4 block" 
+          : "hidden"
+      )}>
         {aiResults.map((r, i) => {
           const rec = (r.neuralRecommendation || r.recommendation || '').toUpperCase();
           const isAccumulate = rec.includes('ACCUMULATE') || rec.includes('BUY');
@@ -516,9 +961,14 @@ export default function App() {
               {/* Header */}
               <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="font-display font-black text-sm text-bento-accent tracking-wider uppercase">
+                  <a 
+                    href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="font-display font-black text-sm text-bento-accent tracking-wider uppercase hover:underline"
+                  >
                     {r.ticker}
-                  </span>
+                  </a>
                   <span className={cn(
                     "px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider border",
                     isAccumulate ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
@@ -538,24 +988,70 @@ export default function App() {
 
               {/* Levels & Signals */}
               {isUnified ? (
-                <div className="grid grid-cols-2 gap-2 text-xs bg-black/30 p-2.5 rounded-lg border border-white/5">
-                  <div>
-                    <span className="block text-[8px] text-bento-muted uppercase font-bold">Bucket</span>
-                    <span className="text-white font-bold">{rawMatch.bucket || '—'}</span>
+                <div className="space-y-3.5">
+                  <div className="grid grid-cols-3 gap-2.5 text-xs bg-black/30 p-2.5 rounded-lg border border-white/5 font-sans">
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Bucket</span>
+                      <span className="text-white font-semibold truncate block">{rawMatch.bucket || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Screener Price</span>
+                      <span className="text-white font-mono font-bold block">
+                        ${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2) || '—'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-amber-400">Target Upside</span>
+                      <span className="text-amber-400 font-mono font-black block">
+                        {rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}` : rawMatch.upside_pct || 0}%
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Gate Signal</span>
+                      <span className="font-sans text-amber-300 font-bold block">{rawMatch.gate_sig || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Rev State</span>
+                      <span className="font-sans text-purple-400 font-semibold truncate block">{rawMatch.rev_state || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">R:R Ratio</span>
+                      <span className="font-mono text-emerald-400 font-black block">{rawMatch.rr || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans text-purple-300">N-Entry</span>
+                      <span className="font-mono text-purple-300 font-bold block">{cleanPrice(rawMatch.algoEntry || rawMatch.n_entry || r.neuralEntry || r.nEntry)}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans text-red-400">N-Exit (Stop)</span>
+                      <span className="font-mono text-red-400 font-bold block">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit || r.neuralExit || r.nExit)}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans text-teal-400">N-TP1 / TP2</span>
+                      <span className="font-mono text-teal-400 font-bold block truncate">
+                        {cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1)} / {cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2)}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <span className="block text-[8px] text-bento-muted uppercase font-bold">Screener Price</span>
-                    <span className="text-emerald-400 font-mono font-bold">
-                      ${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2) || '—'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] text-bento-muted uppercase font-bold">Gate Signal</span>
-                    <span className="font-sans text-amber-300 font-semibold">{rawMatch.gate_sig || '—'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] text-bento-muted uppercase font-bold">Rev State</span>
-                    <span className="font-sans text-white/90">{rawMatch.rev_state || '—'}</span>
+
+                  {/* Semantic Gates */}
+                  <div className="grid grid-cols-2 gap-1.5 pt-2 border-t border-white/5 text-[8px] text-bento-muted font-bold font-mono">
+                    <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                      <span className="block text-[7px] text-purple-300 font-extrabold uppercase leading-tight mb-0.5">Quality Gate (G1)</span>
+                      <span style={{color: rawMatch.g1?.includes('PASS') ? '#00ff44' : rawMatch.g1?.includes('WATCH') ? '#fbbf24' : '#ff4444'}} className="block text-[9px] font-mono leading-tight whitespace-pre-wrap">{rawMatch.g1 || '—'}</span>
+                    </div>
+                    <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                      <span className="block text-[7px] text-pink-300 font-extrabold uppercase leading-tight mb-0.5">Valuation Gate (G2)</span>
+                      <span style={{color: rawMatch.g2?.includes('DEEP VALUE') ? '#00ff44' : '#9ca3af'}} className="block text-[9px] font-mono leading-tight truncate">{rawMatch.g2 || '—'}</span>
+                    </div>
+                    <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                      <span className="block text-[7px] text-amber-300 font-extrabold uppercase leading-tight mb-0.5">Technical Gate (G3)</span>
+                      <span style={{color: rawMatch.g3?.includes('STRONG') ? '#00ff44' : rawMatch.g3?.includes('CONFIRM') ? '#10b981' : rawMatch.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}} className="block text-[9px] font-mono leading-tight whitespace-pre-wrap">{rawMatch.g3 || '—'}</span>
+                    </div>
+                    <div className="bg-white/5 p-1.5 rounded border border-white/5">
+                      <span className="block text-[7px] text-teal-300 font-extrabold uppercase leading-tight mb-0.5">Risk/Reward (G4)</span>
+                      <span style={{color: rawMatch.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}} className="block text-[9px] font-mono leading-tight font-extrabold whitespace-pre-wrap">{rawMatch.g4 || '—'} {rawMatch.rr ? `(${rawMatch.rr})` : ''}</span>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -674,6 +1170,7 @@ export default function App() {
   const [isScreening, setIsScreening] = useState(false);
   const [isScreened, setIsScreened] = useState(false);
   const [analysisType, setAnalysisType] = useState<'stock' | 'macro' | 'multi_stock'>('stock');
+  const [viewMode, setViewMode] = useState<'tiles' | 'table'>('tiles');
   
   // Intelligence / Search State
   const defaultMacroPrompt = `Act as an elite institutional analyst. 
@@ -854,7 +1351,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       if (startIndex !== -1 && endIndex !== -1) {
         try {
           const jsonStr = output.substring(startIndex + startTag.length, endIndex).trim();
-          const metadata = JSON.parse(jsonStr);
+          const metadata = JSON.parse(cleanJSONString(jsonStr));
           parsed = true;
           setLogData(prev => ({
             ...prev,
@@ -866,12 +1363,12 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             tp1: metadata.tp1?.toString() || '',
             tp2: metadata.tp2?.toString() || '',
             fairValue: metadata.fairValue?.toString() || '',
-            price: (metadata.price || metadata.currentPrice || '')?.toString() || '',
+            price: (metadata.price || metadata.currentPrice || '')?.toString() || extractCurrentPriceShared(output, metadata.ticker || tickerHint) || '',
             sentiment: metadata.sentiment || prev.sentiment,
             indicators: metadata.indicators || '',
-            bullCase: metadata.bullCase || '',
-            bearCase: metadata.bearCase || '',
-            comments: metadata.comments || ''
+            bullCase: cleanNarrativeStr(extractBullCaseShared(output)) || metadata.bullCase || '',
+            bearCase: cleanNarrativeStr(extractBearCaseShared(output)) || metadata.bearCase || '',
+            comments: cleanNarrativeStr(extractCommentsShared(output)) || metadata.comments || ''
           }));
         } catch (e) {
           console.log("JSON parsing of metadata block failed, falling back to regex extraction", e);
@@ -881,7 +1378,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       if (!parsed && (analysisType === 'multi_stock' || typeHint === 'multi_stock')) {
         try {
           const jsonStr = output.match(/```(?:json)?\s*([\s\S]*?)\s*```/)?.[1] || output;
-          const data = JSON.parse(jsonStr);
+          const data = JSON.parse(cleanJSONString(jsonStr));
           if (Array.isArray(data) && data.length > 0) {
             const first = data[0];
             setLogData({
@@ -910,59 +1407,10 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       if (!parsed) {
         const isMacro = typeHint === 'macro' || analysisType === 'macro' || /COMPREHENSIVE MACRO MARKET PULSE/i.test(output) || /ECONOMIC PHASE/i.test(output);
 
-        const extractBullCase = (text: string): string => {
-          const top3Match = text.match(/\*\*Bull Case\s*[-—–]\s*Top 3 Points:?\*\*\s*\n*([\s\S]*?)(?=\*\*Base Case|\*\*Bear Case|\*\*comments|##|###|\n\s*\n\s*\w+\s*:)/i);
-          if (top3Match && top3Match[1].trim()) return top3Match[1].trim();
-          
-          const top3MatchNoStars = text.match(/Bull Case\s*[-—–]\s*Top 3 Points:?\s*\n*([\s\S]*?)(?=Base Case|Bear Case|comments|##|###)/i);
-          if (top3MatchNoStars && top3MatchNoStars[1].trim()) return top3MatchNoStars[1].trim();
-
-          const oneSentMatch = text.match(/\*\*Bull Case\s*(?:\(1 sentence\))?:?\*\*\s*\n*(?:>\s*)?([\s\S]*?)(?=\*\*Bear Case|\*\*Moat Assessment|##|###|\n\s*\w+\s*:)/i);
-          if (oneSentMatch && oneSentMatch[1].trim()) return oneSentMatch[1].trim();
-
-          const fallback = text.match(/Bull Case:?\s*\n*(?:>\s*)?([\s\S]*?)(?=Bear Case|Base Case|Moat Assessment|##|###)/i);
-          if (fallback && fallback[1].trim()) return fallback[1].trim();
-
-          return "";
-        };
-
-        const extractBearCase = (text: string): string => {
-          const top3Match = text.match(/\*\*Bear Case\s*[-—–]\s*Top 3 Risks:?\*\*\s*\n*([\s\S]*?)(?=\*\*Base Case|##|###|\n\s*\n\s*\w+\s*:)/i);
-          if (top3Match && top3Match[1].trim()) return top3Match[1].trim();
-
-          const top3MatchNoStars = text.match(/Bear Case\s*[-—–]\s*Top 3 Risks:?\s*\n*([\s\S]*?)(?=Base Case|##|###)/i);
-          if (top3MatchNoStars && top3MatchNoStars[1].trim()) return top3MatchNoStars[1].trim();
-
-          const oneSentMatch = text.match(/\*\*Bear Case\s*(?:\(1 sentence\))?:?\*\*\s*\n*(?:>\s*)?([\s\S]*?)(?=\*\*Moat Assessment|##|###|\n\s*\w+\s*:)/i);
-          if (oneSentMatch && oneSentMatch[1].trim()) return oneSentMatch[1].trim();
-
-          const fallback = text.match(/Bear Case:?\s*\n*(?:>\s*)?([\s\S]*?)(?=Base Case|Moat Assessment|##|###)/i);
-          if (fallback && fallback[1].trim()) return fallback[1].trim();
-
-          return "";
-        };
-
-        const extractComments = (text: string): string => {
-          const baseCaseMatch = text.match(/\*\*Base Case\s*\(Most Likely Scenario\):?\*\*\s*\n*([\s\S]*?)(?=\*\*Bear Case|##|###|\n\s*\w+\s*:)/i);
-          if (baseCaseMatch && baseCaseMatch[1].trim()) return baseCaseMatch[1].trim();
-
-          const baseCaseMatchNoStars = text.match(/Base Case\s*\(Most Likely Scenario\):?\s*\n*([\s\S]*?)(?=Bear Case|##|###)/i);
-          if (baseCaseMatchNoStars && baseCaseMatchNoStars[1].trim()) return baseCaseMatchNoStars[1].trim();
-
-          const commentsMatch = text.match(/Comments?:?\s*\n*([\s\S]*?)(?=\n\n|\n\*\*|###)/i);
-          if (commentsMatch && commentsMatch[1].trim()) return commentsMatch[1].trim();
-
-          const macroMatch = text.match(/ACTIONABLE SIGNALS[\s\S]*?(?=\n\n|###|##)/i) ||
-                             text.match(/## 🎯 MACRO SCORECARD SUMMARY[\s\S]*?(?=\n\n|##)/i);
-          if (macroMatch && macroMatch[0].trim()) return macroMatch[0].trim();
-
-          return "";
-        };
-
-        const cleanNarrative = (text: string | undefined | null) => {
-          if (!text) return "";
-          return text.trim().replace(/^>\s*/gm, '');
-        };
+        const extractBullCase = (text: string): string => extractBullCaseShared(text);
+        const extractBearCase = (text: string): string => extractBearCaseShared(text);
+        const extractComments = (text: string): string => extractCommentsShared(text);
+        const cleanNarrative = (text: string | undefined | null) => cleanNarrativeStr(text);
 
         const matchNumeric = (fieldName: string) => {
           const escaped = fieldName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -1023,12 +1471,13 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
           const tp2Val = matchNumeric("Target 2 (Aggressive)") || 
                          matchNumeric("Target 2") || "";
 
-          const currentPriceVal = matchNumeric("Current Price") || 
-                                  matchNumeric("Price") || 
-                                  "";
-
           const tickMatch = output.match(/STOCK DEEP DIVE:\s*([A-Z0-9]+)/i);
           const tickFound = tickerHint || (tickMatch ? tickMatch[1] : '') || ticker.toUpperCase() || '';
+
+          const currentPriceVal = extractCurrentPriceShared(output, tickFound) || 
+                                  matchNumeric("Current Price") || 
+                                  matchNumeric("Price") || 
+                                  "";
           const isStrongBuy = /Strong Buy/i.test(output);
           const isBuy = /Buy/i.test(output);
           const isHold = /Hold/i.test(output);
@@ -1682,59 +2131,10 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
       return isNaN(parsed) ? 0 : parsed;
     };
 
-    const extractBullCase = (text: string): string => {
-      const top3Match = text.match(/\*\*Bull Case\s*[-—–]\s*Top 3 Points:?\*\*\s*\n*([\s\S]*?)(?=\*\*Base Case|\*\*Bear Case|\*\*comments|##|###|\n\s*\n\s*\w+\s*:)/i);
-      if (top3Match && top3Match[1].trim()) return top3Match[1].trim();
-      
-      const top3MatchNoStars = text.match(/Bull Case\s*[-—–]\s*Top 3 Points:?\s*\n*([\s\S]*?)(?=Base Case|Bear Case|comments|##|###)/i);
-      if (top3MatchNoStars && top3MatchNoStars[1].trim()) return top3MatchNoStars[1].trim();
-
-      const oneSentMatch = text.match(/\*\*Bull Case\s*(?:\(1 sentence\))?:?\*\*\s*\n*(?:>\s*)?([\s\S]*?)(?=\*\*Bear Case|\*\*Moat Assessment|##|###|\n\s*\w+\s*:)/i);
-      if (oneSentMatch && oneSentMatch[1].trim()) return oneSentMatch[1].trim();
-
-      const fallback = text.match(/Bull Case:?\s*\n*(?:>\s*)?([\s\S]*?)(?=Bear Case|Base Case|Moat Assessment|##|###)/i);
-      if (fallback && fallback[1].trim()) return fallback[1].trim();
-
-      return "";
-    };
-
-    const extractBearCase = (text: string): string => {
-      const top3Match = text.match(/\*\*Bear Case\s*[-—–]\s*Top 3 Risks:?\*\*\s*\n*([\s\S]*?)(?=\*\*Base Case|##|###|\n\s*\n\s*\w+\s*:)/i);
-      if (top3Match && top3Match[1].trim()) return top3Match[1].trim();
-
-      const top3MatchNoStars = text.match(/Bear Case\s*[-—–]\s*Top 3 Risks:?\s*\n*([\s\S]*?)(?=Base Case|##|###)/i);
-      if (top3MatchNoStars && top3MatchNoStars[1].trim()) return top3MatchNoStars[1].trim();
-
-      const oneSentMatch = text.match(/\*\*Bear Case\s*(?:\(1 sentence\))?:?\*\*\s*\n*(?:>\s*)?([\s\S]*?)(?=\*\*Moat Assessment|##|###|\n\s*\w+\s*:)/i);
-      if (oneSentMatch && oneSentMatch[1].trim()) return oneSentMatch[1].trim();
-
-      const fallback = text.match(/Bear Case:?\s*\n*(?:>\s*)?([\s\S]*?)(?=Base Case|Moat Assessment|##|###)/i);
-      if (fallback && fallback[1].trim()) return fallback[1].trim();
-
-      return "";
-    };
-
-    const extractComments = (text: string): string => {
-      const baseCaseMatch = text.match(/\*\*Base Case\s*\(Most Likely Scenario\):?\*\*\s*\n*([\s\S]*?)(?=\*\*Bear Case|##|###|\n\s*\w+\s*:)/i);
-      if (baseCaseMatch && baseCaseMatch[1].trim()) return baseCaseMatch[1].trim();
-
-      const baseCaseMatchNoStars = text.match(/Base Case\s*\(Most Likely Scenario\):?\s*\n*([\s\S]*?)(?=Bear Case|##|###)/i);
-      if (baseCaseMatchNoStars && baseCaseMatchNoStars[1].trim()) return baseCaseMatchNoStars[1].trim();
-
-      const commentsMatch = text.match(/Comments?:?\s*\n*([\s\S]*?)(?=\n\n|\n\*\*|###)/i);
-      if (commentsMatch && commentsMatch[1].trim()) return commentsMatch[1].trim();
-
-      const macroMatch = text.match(/ACTIONABLE SIGNALS[\s\S]*?(?=\n\n|###|##)/i) ||
-                         text.match(/## 🎯 MACRO SCORECARD SUMMARY[\s\S]*?(?=\n\n|##)/i);
-      if (macroMatch && macroMatch[0].trim()) return macroMatch[0].trim();
-
-      return "";
-    };
-
-    const cleanNarrative = (text: string | null | undefined) => {
-      if (!text) return "";
-      return text.trim().replace(/^>\s*/gm, '');
-    };
+    const extractBullCase = (text: string): string => extractBullCaseShared(text);
+    const extractBearCase = (text: string): string => extractBearCaseShared(text);
+    const extractComments = (text: string): string => extractCommentsShared(text);
+    const cleanNarrative = (text: string | null | undefined) => cleanNarrativeStr(text);
 
     const matchNumericValue = (fieldName: string) => {
       const escaped = fieldName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -1806,19 +2206,19 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
       if (startIndex !== -1 && endIndex !== -1) {
         try {
           const jsonStr = outputText.substring(startIndex + startTag.length, endIndex).trim();
-          const metadata = JSON.parse(jsonStr);
+          const metadata = JSON.parse(cleanJSONString(jsonStr));
           tickerName = metadata.ticker || tickerName;
           entryPriceVal = metadata.entryPrice?.toString() || '';
           tp1Val = metadata.tp1?.toString() || '';
           tp2Val = metadata.tp2?.toString() || '';
           fairValueVal = metadata.fairValue?.toString() || '';
-          priceVal = metadata.price?.toString() || metadata.currentPrice?.toString() || '';
+          priceVal = metadata.price?.toString() || metadata.currentPrice?.toString() || extractCurrentPriceShared(outputText, metadata.ticker || tickerName) || '';
           suggestionVal = metadata.suggestion || metadata.sentiment || 'Buy';
           sentimentVal = metadata.sentiment || 'Bullish';
           indicatorsVal = metadata.indicators || '';
-          bullCaseVal = metadata.bullCase || '';
-          bearCaseVal = metadata.bearCase || '';
-          commentsVal = metadata.comments || '';
+          bullCaseVal = cleanNarrativeStr(extractBullCaseShared(outputText)) || metadata.bullCase || '';
+          bearCaseVal = cleanNarrativeStr(extractBearCaseShared(outputText)) || metadata.bearCase || '';
+          commentsVal = cleanNarrativeStr(extractCommentsShared(outputText)) || metadata.comments || '';
           parsed = true;
         } catch (e) {
           console.log("JSON parsing of metadata block failed in direct log, falling back to regex", e);
@@ -1863,12 +2263,13 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
                          matchNumericValue("Target Price") || 
                          "";
 
-          priceVal = matchNumericValue("Current Price") || 
-                     matchNumericValue("Price") || 
-                     "";
-
           const tickMatch = outputText.match(/STOCK DEEP DIVE:\s*([A-Z0-9]+)/i);
           tickerName = tickerName || (tickMatch ? tickMatch[1] : '') || 'UNKNOWN';
+
+          priceVal = extractCurrentPriceShared(outputText, tickerName) || 
+                     matchNumericValue("Current Price") || 
+                     matchNumericValue("Price") || 
+                     "";
 
           const isStrongBuy = /Strong Buy/i.test(outputText);
           const isBuy = /Buy/i.test(outputText);
@@ -1935,7 +2336,7 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
       
       let sectionsStr = '';
       if (sSections.story) {
-        sectionsStr += `## 1. 📖 INVESTMENT STORY\n\n**Company Overview:**\n[2–3 sentence description of what ${t} does, its business model, and revenue sources]\n\n**Market Position:** [Leader / Challenger / Niche player]\n\n**Bull Case (1 sentence):**\n> [Most compelling reason to own ${t} today]\n\n**Bear Case (1 sentence):**\n> [Biggest single risk to the thesis]\n\n**Moat Assessment:**\n- Type: [ ] Network Effect  [ ] Cost Advantage  [ ] Switching Costs  [ ] Intangibles  [ ] Efficient Scale  [ ] None\n- Strength: Narrow / Wide / None\n- Trend: Widening / Stable / Narrowing\n\n`;
+        sectionsStr += `## 1. 📖 INVESTMENT STORY\n\n**Company Overview:**\n[2–3 sentence description of what ${t} does, its business model, and revenue sources]\n\n[ELI5_START]\n### 🧸 ELI5 (Explain Like I'm 5) Summary\n*Create an extremely relatable, plain-English summary, specifically comparing tough concepts (like EDA software from CDNS, optical transceivers from MRVL, high-bandwidth memory, etc.) to simple everyday concepts (like drawing boards vs. large shipping docks) to make it immediately understandable to a beginner.* \n\n- **What they actually do:** [Explain what the company actually does in simple, vivid, physical analogies or relatable everyday English. Include a dynamic, creative world-analogy (e.g., "Think of Cadence (CDNS) like an Adobe Photoshop for chips—without their blueprinted canvases, it would be physically impossible for Apple or NVIDIA to hand-draw billions of micro-bridges...").]\n- **Direct Competition:** [The competitive story. Who is their chief archenemy? Is it a duopoly? What is the relative dynamic in high-stakes innovation?]\n- **The Moat (Their Superpower):** [What concrete economic moat exists? Switching costs, network effect, or scale? Why can't a competitor easily steal their market shares?]\n- **Innovation & Product Ecosystem:** [What are their core products, recent innovations (e.g., custom AI layers, Blackwell platforms, Cerebrus software), and what does the futurist runway look like?]\n[ELI5_END]\n\n**Market Position:** [Leader / Challenger / Niche player]\n\n**Bull Case (1 sentence):**\n> [Most compelling reason to own ${t} today]\n\n**Bear Case (1 sentence):**\n> [Biggest single risk to the thesis]\n\n**Moat Assessment:**\n- Type: [ ] Network Effect  [ ] Cost Advantage  [ ] Switching Costs  [ ] Intangibles  [ ] Efficient Scale  [ ] None\n- Strength: Narrow / Wide / None\n- Trend: Widening / Stable / Narrowing\n\n`;
       }
       if (sSections.sector) {
         sectionsStr += `## 2. 🔀 SECTOR & INDUSTRY ROTATION\n\n**Sector:** [e.g., Technology]\n**Industry:** [e.g., Semiconductors]\n**Sector ETF:** [e.g., XLK, SMH]\n\n- Is money rotating **INTO** or **OUT OF** this sector vs. SPY over the last 3 months?\n- Sector ETF performance vs. SPY: ___% (3-month relative performance)\n- Is ${t} outperforming or underperforming its sector ETF?\n- **Tailwind or Headwind** for ${t} right now?\n\n| | ${t} | Sector ETF | SPY |\n|---|---|---|---|\n| 1-Month Return | | | |\n| 3-Month Return | | | |\n| YTD Return | | | |\n\n**Sector P/E (average):** ___\n**${t} P/E:** ___\n**Premium/Discount to sector:** ___% [Over/Under valued vs. peers?]\n\n`;
@@ -2036,17 +2437,17 @@ Target P/E: ___ × Forward EPS $___ = **12-Month Price Target: $___**
 ### F. FINAL RATING
 
 **Bull Case — Top 3 Points:**
-1.
-2.
-3.
+1. **[Key Catalyst 1 with bold name]**: [Provide an extremely detailed, rich, multi-sentence argument with specific numbers, growth figures, or catalyst events]. Keep it thorough, comprehensive and professional!
+2. **[Key Catalyst 2 with bold name]**: [Provide a detailed explanation].
+3. **[Key Catalyst 3 with bold name]**: [Provide a detailed explanation].
 
 **Base Case (Most Likely Scenario):**
-[2–3 sentence narrative of the most probable 12-month outcome]
+[3–4 sentence narrative of the most probable 12-month outcome, containing macro assumptions, margins growth, near-term range, and target prices].
 
 **Bear Case — Top 3 Risks:**
-1.
-2.
-3.
+1. **[Key Risk 1 with bold name]**: [Provide an extremely detailed, rich, multi-sentence risk analysis with specific numbers, inventory headwinds, or regulatory concerns]. Keep it thorough, comprehensive and professional!
+2. **[Key Risk 2 with bold name]**: [Provide a detailed explanation].
+3. **[Key Risk 3 with bold name]**: [Provide a detailed explanation].
 
 **Top 3 Signals Driving the Decision RIGHT NOW:**
 1. [Most important signal today and why it matters most]
@@ -2084,9 +2485,9 @@ Target P/E: ___ × Forward EPS $___ = **12-Month Price Target: $___**
   "tp1": [Target 1 as number],
   "tp2": [Target 2 as number],
   "fairValue": [Price Target as number],
-  "bullCase": "[Summary of Bull Case Top 3]",
-  "bearCase": "[Summary of Bear Case Top 3]",
-  "comments": "[2 sentence summary of core logic and signals]"
+  "bullCase": "- **[Key Catalyst 1]**: [Detailed, highly exhaustive markdown bullet point describing first major fundamental bull thesis point with specific statistics/metrics]\\n- **[Key Catalyst 2]**: [Detailed, highly exhaustive description of second major bull thesis point]\\n- **[Key Catalyst 3]**: [Detailed, highly exhaustive description of third major bull thesis point]",
+  "bearCase": "- **[Key Risk 1]**: [Detailed, highly exhaustive markdown bullet point describing first major risk factor with specific statistics/metrics]\\n- **[Key Risk 2]**: [Detailed, highly exhaustive description of second major risk factor]\\n- **[Key Risk 3]**: [Detailed, highly exhaustive description of third major risk factor]",
+  "comments": "[Write a detailed corporate perspective paragraph of 3-4 sentences summarizing the blended core reasoning, key catalysts driving the decision right now, and near-term expected price action relative to the target goals]"
 }
 TRACKER_METADATA_END -->`;
       
@@ -2146,9 +2547,9 @@ ${sectionsStr}
   "analysisType": "macro",
   "sentiment": "[Strongly Bullish/Bullish/Neutral/Bearish/Strongly Bearish]",
   "indicators": "[Summary of top 3 economic signals]",
-  "bullCase": "[1 sentence on why things could go better than expected]",
-  "bearCase": "[1 sentence on the biggest macro tail risk]",
-  "comments": "[2 sentence summary of current state of the global economy]"
+  "bullCase": "- **[Macro Catalyst 1]**: [Detailed, highly exhaustive markdown bullet point describing first major positive macro force]\\n- **[Macro Catalyst 2]**: [Detailed, highly exhaustive description of second major positive macro force]\\n- **[Macro Catalyst 3]**: [Detailed, highly exhaustive description of third major positive macro force]",
+  "bearCase": "- **[Macro Risk 1]**: [Detailed, highly exhaustive markdown bullet point describing first major negative macro threat/tail-risk]\\n- **[Macro Risk 2]**: [Detailed, highly exhaustive description of second major negative macro threat]\\n- **[Macro Risk 3]**: [Detailed, highly exhaustive description of third major negative macro threat]",
+  "comments": "[Write a detailed global macro perspective paragraph of 3-4 sentences summarizing the economic landscape and expected near-term trends]"
 }
 TRACKER_METADATA_END -->
 
@@ -3043,21 +3444,37 @@ ${stationInput}
                             >
                               ← Back to Snapshots
                             </button>
-                            <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center justify-between mb-4 gap-2">
                               <h4 className="text-white text-lg font-black uppercase tracking-tight">Saved Configuration</h4>
-                              <div className="flex bg-white/5 border border-white/10 rounded-lg p-0.5">
-                                <button 
-                                  onClick={() => setSnapshotSortBy('raw' as any)}
-                                  className={cn("px-3 py-1 rounded-md text-[9px] uppercase font-black tracking-widest transition-all", snapshotSortBy === 'raw' ? "bg-white/10 text-emerald-400" : "text-white/40 hover:text-white")}
-                                >
-                                  Raw Table
-                                </button>
-                                <button 
-                                  onClick={() => setSnapshotSortBy('neural' as any)}
-                                  className={cn("px-3 py-1 rounded-md text-[9px] uppercase font-black tracking-widest transition-all", snapshotSortBy === 'neural' ? "bg-white/10 text-purple-400" : "text-white/40 hover:text-white")}
-                                >
-                                  Neural Analysis
-                                </button>
+                              <div className="flex items-center gap-3">
+                                <div className="flex bg-white/5 border border-white/10 rounded-lg p-0.5">
+                                  <button
+                                    onClick={() => setViewMode('tiles')}
+                                    className={cn("px-2 py-1 rounded-md text-[8px] uppercase font-black tracking-widest transition-all", viewMode === 'tiles' ? "bg-white/10 text-bento-accent" : "text-white/40 hover:text-white")}
+                                  >
+                                    Tiles
+                                  </button>
+                                  <button
+                                    onClick={() => setViewMode('table')}
+                                    className={cn("px-2 py-1 rounded-md text-[8px] uppercase font-black tracking-widest transition-all", viewMode === 'table' ? "bg-white/10 text-bento-accent" : "text-white/40 hover:text-white")}
+                                  >
+                                    Spreadsheet
+                                  </button>
+                                </div>
+                                <div className="flex bg-white/5 border border-white/10 rounded-lg p-0.5">
+                                  <button 
+                                    onClick={() => setSnapshotSortBy('raw' as any)}
+                                    className={cn("px-3 py-1 rounded-md text-[9px] uppercase font-black tracking-widest transition-all", snapshotSortBy === 'raw' ? "bg-white/10 text-emerald-400" : "text-white/40 hover:text-white")}
+                                  >
+                                    Raw Table
+                                  </button>
+                                  <button 
+                                    onClick={() => setSnapshotSortBy('neural' as any)}
+                                    className={cn("px-3 py-1 rounded-md text-[9px] uppercase font-black tracking-widest transition-all", snapshotSortBy === 'neural' ? "bg-white/10 text-purple-400" : "text-white/40 hover:text-white")}
+                                  >
+                                    Neural Analysis
+                                  </button>
+                                </div>
                               </div>
                             </div>
                             
@@ -3093,29 +3510,28 @@ ${stationInput}
                               <div className="flex-1 bg-black rounded-xl p-4 overflow-auto custom-scrollbar border border-white/10 h-full mb-6">
                                 {Array.isArray(activeSnapshot.rawResults) ? (
                                   <>
-                                    <div className="hidden md:block overflow-x-auto">
+                                    <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
                                       {activeSnapshot.screenerMode?.includes('Unified') ? (
-                                        <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap">
+                                        <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
                                           <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-bento-muted">
                                             <tr>
-                                              <th className="p-2">BUCKET</th>
-                                              <th className="p-2">TICKER</th>
-                                              <th className="p-2">PRICE</th>
-                                              <th className="p-2">GATE SIG</th>
-                                              <th className="p-2">REV STATE</th>
-                                              <th className="p-2">COMP</th>
-                                              <th className="p-2">STEAM</th>
-                                              <th className="p-2">G1</th>
-                                              <th className="p-2">G2</th>
-                                              <th className="p-2">G3</th>
-                                              <th className="p-2">G4</th>
-                                              <th className="p-2">UPSIDE</th>
-                                              <th className="p-2">STOP</th>
-                                              <th className="p-2">TARGET</th>
-                                              <th className="p-2">R:R</th>
-                                              <th className="p-2">MA STACK</th>
-                                              <th className="p-2">VOL↑</th>
-                                              <th className="p-2">SENTIMENT</th>
+                                              <th className="p-2 text-[9px]">BUCKET</th>
+                                              <th className="p-2 text-[9px]">TICKER</th>
+                                              <th className="p-2 text-[9px]">PRICE</th>
+                                              <th className="p-2 text-[9px]">GATE SIG</th>
+                                              <th className="p-2 text-[9px]">REV STATE</th>
+                                              <th className="p-2 text-[9px]">COMP</th>
+                                              <th className="p-2 text-[9px]">STEAM</th>
+                                              <th className="p-2 text-[9px]">QUALITY</th>
+                                              <th className="p-2 text-[9px]">VALUATION</th>
+                                              <th className="p-2 text-[9px]">TECHNICAL</th>
+                                              <th className="p-2 text-[9px]">RISK/REWARD</th>
+                                              <th className="p-2 text-[9px]">UPSIDE (FV)</th>
+                                              <th className="p-2 text-[9px]">STOP</th>
+                                              <th className="p-2 text-[9px]">TARGET</th>
+                                              <th className="p-2 text-[9px]">MA STACK</th>
+                                              <th className="p-2 text-[9px]">VOL↑</th>
+                                              <th className="p-2 text-[9px]">SENTIMENT</th>
                                             </tr>
                                           </thead>
                                           <tbody>
@@ -3130,14 +3546,13 @@ ${stationInput}
                                                 <td className="p-2" style={{color: r.rev_state?.includes("STEAM") ? "#ff4400" : r.rev_state?.includes("BOTTOM") ? "#aaffaa" : r.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{r.rev_state}</td>
                                                 <td className="p-2 text-emerald-400">{r.composite}</td>
                                                 <td className="p-2">{r.steam}/14</td>
-                                                <td className="p-2" style={{color: r.g1 === 'PASS' ? '#00ff44' : '#ff4444'}}>{r.g1}</td>
-                                                <td className="p-2" style={{color: r.g2 === 'DEEP VALUE' ? '#00ff44' : '#c9d1d9'}}>{r.g2}</td>
-                                                <td className="p-2" style={{color: r.g3 === 'STRONG CONFIRM' ? '#00ff44' : '#c9d1d9'}}>{r.g3}</td>
-                                                <td className="p-2" style={{color: r.g4 === 'EXCELLENT' ? '#00ff44' : '#c9d1d9'}}>{r.g4}</td>
-                                                <td className="p-2 text-emerald-400">+{r.upside_pct}%</td>
+                                                <td className="p-2" style={{color: r.g1?.includes('PASS') ? '#00ff44' : r.g1?.includes('WATCH') ? '#fbbf24' : '#ff4444'}}>{r.g1}</td>
+                                                <td className="p-2" style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : '#9ca3af'}}>{r.g2}</td>
+                                                <td className="p-2" style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}}>{r.g3}</td>
+                                                <td className="p-2" style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}}>{r.g4} ({r.rr || 'N/A'})</td>
+                                                <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
                                                 <td className="p-2 text-red-400">${r.algoExit || r.stop || r.n_exit}</td>
                                                 <td className="p-2 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
-                                                <td className="p-2 text-emerald-400">{r.rr}</td>
                                                 <td className="p-2" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
                                                 <td className="p-2 text-yellow-400">{r.vol_surge}</td>
                                                 <td className="p-2 text-emerald-400">{r.sentiment}</td>
@@ -3188,7 +3603,7 @@ ${stationInput}
                               <div className="flex-1 text-sm text-left text-white/80 overflow-auto custom-scrollbar p-4 bg-black border border-white/5 rounded-xl h-full">
                                 {Array.isArray(activeSnapshot.aiResults) && activeSnapshot.aiResults.length > 0 && activeSnapshot.aiResults[0].neuralScore ? (
                                   <>
-                                    <div className="hidden md:block overflow-x-auto">
+                                    <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
                                       <table className="w-full text-left text-sm text-white border-collapse">
                                         {activeSnapshot.screenerMode?.includes('Unified') ? (
                                           <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-bento-muted whitespace-nowrap">
@@ -3198,6 +3613,11 @@ ${stationInput}
                                               <th className="p-3">N-Score</th>
                                               <th className="p-3">Rec.</th>
                                               <th className="p-3">Price</th>
+                                              <th className="p-3 text-amber-400 font-bold">Upside</th>
+                                              <th className="p-3">N-Entry</th>
+                                              <th className="p-3">N-Exit</th>
+                                              <th className="p-3 text-emerald-400">N-TP1</th>
+                                              <th className="p-3 text-teal-400 font-bold">N-TP2</th>
                                               <th className="p-3">Gate Sig</th>
                                               <th className="p-3">Rev State</th>
                                               <th className="p-3">Comp</th>
@@ -3245,6 +3665,11 @@ ${stationInput}
                                                   <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                                   <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
                                                   <td className="p-3 font-mono">${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}</td>
+                                                  <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}` : rawMatch.upside_pct}%</td>
+                                                  <td className="p-3 font-mono">{cleanPrice(rawMatch.algoEntry || rawMatch.n_entry)}</td>
+                                                  <td className="p-3 font-mono text-red-400">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit)}</td>
+                                                  <td className="p-3 font-mono text-emerald-400">{cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1)}</td>
+                                                  <td className="p-3 font-mono text-teal-400">{cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2)}</td>
                                                   <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig}</td>
                                                   <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state}</td>
                                                   <td className="p-3 font-mono text-emerald-400">{rawMatch.composite}</td>
@@ -3271,10 +3696,10 @@ ${stationInput}
                                                 </td>
                                                 <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                                 <td className="p-3 uppercase font-bold tracking-widest text-[10px]">{r.neuralRecommendation}</td>
-                                                <td className="p-3 font-mono">${r.neuralEntry}</td>
-                                                <td className="p-3 font-mono">${r.neuralExit}</td>
-                                                <td className="p-3 font-mono">${r.neuralTP1}</td>
-                                                <td className="p-3 font-mono">${r.neuralTP2}</td>
+                                                <td className="p-3 font-mono">{cleanPrice(r.neuralEntry)}</td>
+                                                <td className="p-3 font-mono">{cleanPrice(r.neuralExit)}</td>
+                                                <td className="p-3 font-mono">{cleanPrice(r.neuralTP1)}</td>
+                                                <td className="p-3 font-mono">{cleanPrice(r.neuralTP2)}</td>
                                                 <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[200px]">{r.bullCase}</td>
                                                 <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[200px]">{r.bearCase}</td>
                                                 <td className="p-3 text-[11px] leading-relaxed text-blue-400/80 whitespace-normal min-w-[250px]">{r.finalTake}</td>
@@ -3380,10 +3805,10 @@ ${stationInput}
                                         return renderMultiStockReport(data);
                                       }
                                     } catch (err) {}
-                                    return <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{activeReport.output}</Markdown>;
+                                    return renderStockReportWithEli5(activeReport.output);
                                   })()
                                 ) : (
-                                  <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{activeReport.output}</Markdown>
+                                  renderStockReportWithEli5(activeReport.output)
                                 )}
                               </div>
                             </div>
@@ -3510,78 +3935,106 @@ ${stationInput}
                             );
                           })}
                         </div>
-                        <button 
-                          onClick={() => {
-                            const indexLabels: Record<string, string> = {
-                              'sp500': 'S&P 500',
-                              'nasdaq100': 'Nasdaq-100',
-                              'both': 'S&P 500 + NDX',
-                              'russell1000': 'Russell 1000',
-                              'russell2000': 'Russell 2000',
-                              'russell3000': 'Russell 3000'
-                            };
-                            const modeLabels: Record<string, string> = {
-                              'classic': 'Classic Screener (VCS)',
-                              'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
-                            };
-                            const horizonLabels: Record<string, string> = {
-                              'weeks': 'Swing (Weeks)',
-                              'months': 'Position (Months)',
-                              'days': 'Day/Momentum (Days)'
-                            };
-                            const newSnapData = {
-                              timestamp: new Date().toISOString(),
-                              source: "screener",
-                              index: indexLabels[screenIndex] || "Custom/Colab",
-                              screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
-                              horizon: horizonLabels[screenHorizon] || screenHorizon,
-                              rawResults: screenerResults,
-                              aiResults: (() => { try { return JSON.parse(neuralScreenerText || "[]"); } catch { return []; } })(),
-                              rawOutput: "",
-                              neuralOutput: "",
-                              tickerCount: screenerResults.length
-                            };
-                            
-                            if (user) {
-                              addDoc(collection(db, 'snapshots'), sanitizeForFirestore({ ...newSnapData, userId: user.uid }))
-                                .then(() => alert("Screener Snapshot preserved in History!"))
-                                .catch(e => console.error("Snapshot save failed", e));
-                            } else {
-                              setSavedSnapshots([{ id: Date.now().toString(), ...newSnapData }, ...savedSnapshots]);
-                              alert("Screener Snapshot preserved in local History!");
-                            }
-                          }}
-                          className="bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-2"
-                        >
-                          Save Snapshot
-                        </button>
+                        <div className="flex items-center gap-3">
+                          {/* Layout Mode Controls */}
+                          <div className="flex bg-[#11111b] border border-white/5 p-0.5 rounded-lg">
+                            <button
+                              onClick={() => setViewMode('tiles')}
+                              className={cn(
+                                "px-2 py-1 rounded-md text-[8px] uppercase font-black tracking-widest transition-all",
+                                viewMode === 'tiles'
+                                  ? "bg-purple-600/20 text-purple-400 border border-purple-500/20 shadow"
+                                  : "text-bento-muted hover:text-white"
+                              )}
+                            >
+                              Tiles
+                            </button>
+                            <button
+                              onClick={() => setViewMode('table')}
+                              className={cn(
+                                "px-2 py-1 rounded-md text-[8px] uppercase font-black tracking-widest transition-all",
+                                viewMode === 'table'
+                                  ? "bg-purple-600/20 text-purple-400 border border-purple-500/20 shadow"
+                                  : "text-bento-muted hover:text-white"
+                              )}
+                            >
+                              Spreadsheet
+                            </button>
+                          </div>
+
+                          <button 
+                            onClick={() => {
+                              const indexLabels: Record<string, string> = {
+                                'sp500': 'S&P 500',
+                                'nasdaq100': 'Nasdaq-100',
+                                'both': 'S&P 500 + NDX',
+                                'russell1000': 'Russell 1000',
+                                'russell2000': 'Russell 2000',
+                                'russell3000': 'Russell 3000'
+                              };
+                              const modeLabels: Record<string, string> = {
+                                'classic': 'Classic Screener (VCS)',
+                                'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
+                              };
+                              const horizonLabels: Record<string, string> = {
+                                'weeks': 'Swing (Weeks)',
+                                'months': 'Position (Months)',
+                                'days': 'Day/Momentum (Days)'
+                              };
+                              const newSnapData = {
+                                timestamp: new Date().toISOString(),
+                                source: "screener",
+                                index: indexLabels[screenIndex] || "Custom/Colab",
+                                screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
+                                horizon: horizonLabels[screenHorizon] || screenHorizon,
+                                rawResults: screenerResults,
+                                aiResults: (() => { try { return JSON.parse(neuralScreenerText || "[]"); } catch { return []; } })(),
+                                rawOutput: "",
+                                neuralOutput: "",
+                                tickerCount: screenerResults.length
+                              };
+                              
+                              if (user) {
+                                addDoc(collection(db, 'snapshots'), sanitizeForFirestore({ ...newSnapData, userId: user.uid }))
+                                  .then(() => alert("Screener Snapshot preserved in History!"))
+                                  .catch(e => console.error("Snapshot save failed", e));
+                              } else {
+                                setSavedSnapshots([{ id: Date.now().toString(), ...newSnapData }, ...savedSnapshots]);
+                                alert("Screener Snapshot preserved in local History!");
+                              }
+                            }}
+                            className="bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-2"
+                          >
+                            Save Snapshot
+                          </button>
+                        </div>
                       </div>
 
                       <div className="flex-1 overflow-y-auto custom-scrollbar border border-bento-border rounded-2xl bg-black/40 p-4">
                         {snapshotSortBy === 'raw' && (
-                          <div className="overflow-x-auto">
-                            {screenerMode === 'unified_v2' ? (
-                              <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap">
+                          <>
+                            <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
+                              {screenerMode === 'unified_v2' ? (
+                              <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
                                 <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-bento-muted">
                                   <tr>
-                                    <th className="p-2">BUCKET</th>
-                                    <th className="p-2">TICKER</th>
-                                    <th className="p-2">PRICE</th>
-                                    <th className="p-2">GATE SIG</th>
-                                    <th className="p-2">REV STATE</th>
-                                    <th className="p-2">COMP</th>
-                                    <th className="p-2">STEAM</th>
-                                    <th className="p-2">G1</th>
-                                    <th className="p-2">G2</th>
-                                    <th className="p-2">G3</th>
-                                    <th className="p-2">G4</th>
-                                    <th className="p-2">UPSIDE</th>
-                                    <th className="p-2">STOP</th>
-                                    <th className="p-2">TARGET</th>
-                                    <th className="p-2">R:R</th>
-                                    <th className="p-2">MA STACK</th>
-                                    <th className="p-2">VOL↑</th>
-                                    <th className="p-2">SENTIMENT</th>
+                                    <th className="p-2 text-[9px]">BUCKET</th>
+                                    <th className="p-2 text-[9px]">TICKER</th>
+                                    <th className="p-2 text-[9px]">PRICE</th>
+                                    <th className="p-2 text-[9px]">GATE SIG</th>
+                                    <th className="p-2 text-[9px]">REV STATE</th>
+                                    <th className="p-2 text-[9px]">COMP</th>
+                                    <th className="p-2 text-[9px]">STEAM</th>
+                                    <th className="p-2 text-[9px]">QUALITY</th>
+                                    <th className="p-2 text-[9px]">VALUATION</th>
+                                    <th className="p-2 text-[9px]">TECHNICAL</th>
+                                    <th className="p-2 text-[9px]">RISK/REWARD</th>
+                                    <th className="p-2 text-[9px]">UPSIDE (FV)</th>
+                                    <th className="p-2 text-[9px]">STOP</th>
+                                    <th className="p-2 text-[9px]">TARGET</th>
+                                    <th className="p-2 text-[9px]">MA STACK</th>
+                                    <th className="p-2 text-[9px]">VOL↑</th>
+                                    <th className="p-2 text-[9px]">SENTIMENT</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -3596,14 +4049,13 @@ ${stationInput}
                                       <td className="p-2" style={{color: r.rev_state?.includes("STEAM") ? "#ff4400" : r.rev_state?.includes("BOTTOM") ? "#aaffaa" : r.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{r.rev_state}</td>
                                       <td className="p-2 text-emerald-400">{r.composite}</td>
                                       <td className="p-2">{r.steam}/14</td>
-                                      <td className="p-2" style={{color: r.g1 === 'PASS' ? '#00ff44' : '#ff4444'}}>{r.g1}</td>
-                                      <td className="p-2" style={{color: r.g2 === 'DEEP VALUE' ? '#00ff44' : '#c9d1d9'}}>{r.g2}</td>
-                                      <td className="p-2" style={{color: r.g3 === 'STRONG CONFIRM' ? '#00ff44' : '#c9d1d9'}}>{r.g3}</td>
-                                      <td className="p-2" style={{color: r.g4 === 'EXCELLENT' ? '#00ff44' : '#c9d1d9'}}>{r.g4}</td>
-                                      <td className="p-2 text-emerald-400">+{r.upside_pct}%</td>
+                                      <td className="p-2" style={{color: r.g1?.includes('PASS') ? '#00ff44' : r.g1?.includes('WATCH') ? '#fbbf24' : '#ff4444'}}>{r.g1}</td>
+                                      <td className="p-2" style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : '#9ca3af'}}>{r.g2}</td>
+                                      <td className="p-2" style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}}>{r.g3}</td>
+                                      <td className="p-2" style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}}>{r.g4} ({r.rr || 'N/A'})</td>
+                                      <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
                                       <td className="p-2 text-red-400">${r.algoExit || r.stop || r.n_exit}</td>
                                       <td className="p-2 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
-                                      <td className="p-2 text-emerald-400">{r.rr}</td>
                                       <td className="p-2" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
                                       <td className="p-2 text-yellow-400">{r.vol_surge}</td>
                                       <td className="p-2 text-emerald-400">{r.sentiment}</td>
@@ -3643,17 +4095,21 @@ ${stationInput}
                               </tbody>
                             </table>
                             )}
-                          </div>
+                            </div>
+                            {renderRawScreenerMobile(screenerResults, screenerMode === 'unified_v2')}
+                          </>
                         )}
                         {snapshotSortBy === 'neural' && (
-                          <div className="overflow-x-auto">
+                          <>
                             {isNeuralLoading ? (
                               <div className="flex items-center gap-3 text-bento-muted mb-4 justify-center py-10">
                                 <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
                                 <span className="text-[12px] uppercase font-bold tracking-widest">Neural Engine Analyzing Setups...</span>
                               </div>
                             ) : (
-                              <table className="w-full text-left text-sm text-white border-collapse">
+                              <>
+                                <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
+                                  <table className="w-full text-left text-sm text-white border-collapse">
                                 {screenerMode === 'unified_v2' ? (
                                   <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-bento-muted whitespace-nowrap">
                                     <tr>
@@ -3662,6 +4118,11 @@ ${stationInput}
                                       <th className="p-3">N-Score</th>
                                       <th className="p-3">Rec.</th>
                                       <th className="p-3">Price</th>
+                                      <th className="p-3 text-amber-400 font-bold">Upside</th>
+                                      <th className="p-3">N-Entry</th>
+                                      <th className="p-3">N-Exit</th>
+                                      <th className="p-3 text-emerald-400">N-TP1</th>
+                                      <th className="p-3 text-teal-400">N-TP2</th>
                                       <th className="p-3">Gate Sig</th>
                                       <th className="p-3">Rev State</th>
                                       <th className="p-3">Comp</th>
@@ -3713,6 +4174,11 @@ ${stationInput}
                                               <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                               <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
                                               <td className="p-3 font-mono">${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}</td>
+                                              <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}` : rawMatch.upside_pct}%</td>
+                                              <td className="p-3 font-mono">{cleanPrice(rawMatch.algoEntry || rawMatch.n_entry)}</td>
+                                              <td className="p-3 font-mono text-red-400">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit)}</td>
+                                              <td className="p-3 font-mono text-emerald-400">{cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1)}</td>
+                                              <td className="p-3 font-mono text-teal-400">{cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2)}</td>
                                               <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig}</td>
                                               <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state}</td>
                                               <td className="p-3 font-mono text-emerald-400">{rawMatch.composite}</td>
@@ -3739,10 +4205,10 @@ ${stationInput}
                                             </td>
                                             <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                             <td className="p-3 uppercase font-bold tracking-widest text-[10px]">{r.neuralRecommendation}</td>
-                                            <td className="p-3 font-mono">${r.neuralEntry}</td>
-                                            <td className="p-3 font-mono">${r.neuralExit}</td>
-                                            <td className="p-3 font-mono">${r.neuralTP1}</td>
-                                            <td className="p-3 font-mono">${r.neuralTP2}</td>
+                                            <td className="p-3 font-mono">{cleanPrice(r.neuralEntry)}</td>
+                                            <td className="p-3 font-mono">{cleanPrice(r.neuralExit)}</td>
+                                            <td className="p-3 font-mono">{cleanPrice(r.neuralTP1)}</td>
+                                            <td className="p-3 font-mono">{cleanPrice(r.neuralTP2)}</td>
                                             <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[200px]">{r.bullCase}</td>
                                             <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[200px]">{r.bearCase}</td>
                                             <td className="p-3 text-[11px] leading-relaxed text-blue-400/80 whitespace-normal min-w-[250px]">{r.finalTake}</td>
@@ -3755,9 +4221,22 @@ ${stationInput}
                                   })()}
                                 </tbody>
                               </table>
+                            </div>
+                            {renderNeuralScreenerMobile(
+                              (function() {
+                                try {
+                                  return JSON.parse(neuralScreenerText || "[]");
+                                } catch(e) {
+                                  return [];
+                                }
+                              })(),
+                              screenerMode === 'unified_v2',
+                              screenerResults
                             )}
-                          </div>
+                          </>
                         )}
+                      </>
+                    )}
                         {snapshotSortBy === 'vcs' && (
                           <div className="space-y-4">
                             {screenerResults.map((r, i) => (
@@ -4687,10 +5166,10 @@ ${stationInput}
                           return renderMultiStockReport(data);
                         }
                       } catch (err) {}
-                      return <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{viewingReportFromTrack.output}</Markdown>;
+                      return renderStockReportWithEli5(viewingReportFromTrack.output);
                     })()
                   ) : (
-                    <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{viewingReportFromTrack.output}</Markdown>
+                    renderStockReportWithEli5(viewingReportFromTrack.output)
                   )}
                 </div>
               </div>
