@@ -1,0 +1,128 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      // Mandated by security guidelines
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validations ---
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['userId', 'ticker', 'prompt', 'output', 'analysisType', 'timestamp'])
+        && data.userId == request.auth.uid
+        && data.ticker is string && data.ticker.size() <= 128
+        && data.prompt is string && data.prompt.size() <= 100000
+        && data.output is string && data.output.size() <= 300000
+        && data.analysisType in ['stock', 'macro', 'multi_stock']
+        && data.timestamp == request.time;
+    }
+
+    function isValidStockTrack(data) {
+      return data.keys().hasAll(['userId', 'ticker', 'analysisDate', 'suggestion', 'entryPrice', 'timestamp'])
+        && data.userId == request.auth.uid
+        && data.ticker is string && data.ticker.size() <= 16
+        && data.get('reportId', '') is string && data.get('reportId', '').size() <= 128
+        && data.analysisDate is string && data.analysisDate.size() <= 20
+        && data.suggestion is string && data.suggestion.size() <= 32
+        && data.entryPrice is number
+        && data.get('tp1', 0) is number
+        && data.get('tp2', 0) is number
+        && data.get('fairValue', 0) is number
+        && data.get('bullCase', '') is string && data.get('bullCase', '').size() <= 2000
+        && data.get('bearCase', '') is string && data.get('bearCase', '').size() <= 2000
+        && data.get('comments', '') is string && data.get('comments', '').size() <= 5000
+        && data.timestamp == request.time;
+    }
+
+    function isValidMacroTrack(data) {
+      return data.keys().hasAll(['userId', 'analysisDate', 'sentiment', 'timestamp'])
+        && data.userId == request.auth.uid
+        && data.get('reportId', '') is string && data.get('reportId', '').size() <= 128
+        && data.analysisDate is string && data.analysisDate.size() <= 20
+        && data.sentiment is string && data.sentiment.size() <= 32
+        && data.get('indicators', '') is string && data.get('indicators', '').size() <= 500
+        && data.get('bullCase', '') is string && data.get('bullCase', '').size() <= 2000
+        && data.get('bearCase', '') is string && data.get('bearCase', '').size() <= 2000
+        && data.get('comments', '') is string && data.get('comments', '').size() <= 5000
+        && data.timestamp == request.time;
+    }
+
+    function isValidSnapshot(data) {
+        return data.userId == request.auth.uid;
+    }
+
+    function isValidBookmark(data) {
+        return data.userId == request.auth.uid;
+    }
+
+    // --- Collection Rules ---
+
+    match /reports/{reportId} {
+      allow get: if isOwner(existing().userId) && isValidId(reportId);
+      allow list: if isOwner(resource.data.userId); 
+      allow create: if isVerified() && isValidId(reportId) && isValidReport(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /snapshots/{snapId} {
+      allow get: if isOwner(existing().userId) && isValidId(snapId);
+      allow list: if isOwner(resource.data.userId);
+      allow create: if isVerified() && isValidId(snapId) && isValidSnapshot(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /intelligence_bookmarks/{bookmarkId} {
+      allow get: if isOwner(existing().userId) && isValidId(bookmarkId);
+      allow list: if isOwner(resource.data.userId);
+      allow create: if isVerified() && isValidId(bookmarkId) && isValidBookmark(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /stock_tracks/{trackId} {
+      allow get: if isOwner(existing().userId) && isValidId(trackId);
+      allow list: if isOwner(resource.data.userId);
+      allow create: if isVerified() && isValidId(trackId) && isValidStockTrack(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /macro_tracks/{trackId} {
+      allow get: if isOwner(existing().userId) && isValidId(trackId);
+      allow list: if isOwner(resource.data.userId);
+      allow create: if isVerified() && isValidId(trackId) && isValidMacroTrack(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow write: if isOwner(userId) && isValidId(userId);
+    }
+  }
+}

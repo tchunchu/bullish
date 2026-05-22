@@ -1,0 +1,85 @@
+{
+  "entities": {
+    "Report": {
+      "title": "Report",
+      "description": "A generated stock or macro research report.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The UID of the user who generated the report." },
+        "ticker": { "type": "string", "description": "The stock ticker symbol (or 'MACRO')." },
+        "prompt": { "type": "string", "description": "The full prompt sent to Gemini." },
+        "output": { "type": "string", "description": "The generated output from Gemini." },
+        "analysisType": { "type": "string", "enum": ["stock", "macro", "multi_stock"], "description": "Type of analysis." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the report was generated." },
+        "config": { "type": "object", "description": "The configuration options used for generation." }
+      },
+      "required": ["userId", "ticker", "prompt", "output", "analysisType", "timestamp"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User specific data and preferences.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "lastActive": { "type": "string", "format": "date-time" }
+      }
+    },
+    "StockTrack": {
+      "title": "StockTrack",
+      "description": "Logged trade setups for stock analysis.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "ticker": { "type": "string" },
+        "reportId": { "type": "string", "description": "Link to the original research report." },
+        "analysisDate": { "type": "string", "format": "date" },
+        "suggestion": { "type": "string" },
+        "entryPrice": { "type": "number" },
+        "tp1": { "type": "number" },
+        "tp2": { "type": "number" },
+        "fairValue": { "type": "number" },
+        "bullCase": { "type": "string" },
+        "bearCase": { "type": "string" },
+        "comments": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "ticker", "analysisDate", "suggestion", "entryPrice"]
+    },
+    "MacroTrack": {
+      "title": "MacroTrack",
+      "description": "Logged macro sentiment and indicators.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "reportId": { "type": "string", "description": "Link to the original research report." },
+        "analysisDate": { "type": "string", "format": "date" },
+        "sentiment": { "type": "string" },
+        "indicators": { "type": "string" },
+        "bullCase": { "type": "string" },
+        "bearCase": { "type": "string" },
+        "comments": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "analysisDate", "sentiment"]
+    }
+  },
+  "firestore": {
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Collection of research reports."
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Public user profiles."
+    },
+    "/stock_tracks/{trackId}": {
+      "schema": "StockTrack",
+      "description": "Logged trade ideas for stocks."
+    },
+    "/macro_tracks/{trackId}": {
+      "schema": "MacroTrack",
+      "description": "Logged macro shifts."
+    }
+  }
+}

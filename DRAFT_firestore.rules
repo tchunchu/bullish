@@ -1,0 +1,103 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validations ---
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['userId', 'ticker', 'prompt', 'output', 'analysisType', 'timestamp'])
+        && data.userId == request.auth.uid
+        && data.ticker is string && data.ticker.size() <= 16
+        && data.prompt is string && data.prompt.size() <= 100000
+        && data.output is string && data.output.size() <= 300000
+        && data.analysisType in ['stock', 'macro']
+        && data.timestamp == request.time;
+    }
+
+    function isValidStockTrack(data) {
+      return data.keys().hasAll(['userId', 'ticker', 'analysisDate', 'suggestion', 'entryPrice', 'timestamp'])
+        && data.userId == request.auth.uid
+        && data.ticker is string && data.ticker.size() <= 16
+        && data.analysisDate is string && data.analysisDate.size() <= 20
+        && data.suggestion is string && data.suggestion.size() <= 32
+        && data.entryPrice is number
+        && data.tp1 is number
+        && data.tp2 is number
+        && data.fairValue is number
+        && data.bullCase is string && data.bullCase.size() <= 2000
+        && data.bearCase is string && data.bearCase.size() <= 2000
+        && data.comments is string && data.comments.size() <= 5000
+        && data.timestamp == request.time;
+    }
+
+    function isValidMacroTrack(data) {
+      return data.keys().hasAll(['userId', 'analysisDate', 'sentiment', 'timestamp'])
+        && data.userId == request.auth.uid
+        && data.analysisDate is string && data.analysisDate.size() <= 20
+        && data.sentiment is string && data.sentiment.size() <= 32
+        && data.indicators is string && data.indicators.size() <= 500
+        && data.bullCase is string && data.bullCase.size() <= 2000
+        && data.bearCase is string && data.bearCase.size() <= 2000
+        && data.comments is string && data.comments.size() <= 5000
+        && data.timestamp == request.time;
+    }
+
+    // --- Collection Rules ---
+
+    match /reports/{reportId} {
+      allow get: if isOwner(existing().userId) && isValidId(reportId);
+      allow list: if isOwner(resource.data.userId); // Mandatory query filter enforcement
+      allow create: if isVerified() && isValidId(reportId) && isValidReport(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /stock_tracks/{trackId} {
+      allow get: if isOwner(existing().userId) && isValidId(trackId);
+      allow list: if isOwner(resource.data.userId);
+      allow create: if isVerified() && isValidId(trackId) && isValidStockTrack(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /macro_tracks/{trackId} {
+      allow get: if isOwner(existing().userId) && isValidId(trackId);
+      allow list: if isOwner(resource.data.userId);
+      allow create: if isVerified() && isValidId(trackId) && isValidMacroTrack(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow write: if isOwner(userId) && isValidId(userId);
+    }
+  }
+}
