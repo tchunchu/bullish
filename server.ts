@@ -28,6 +28,26 @@ const yahooFinance = "default" in yahooFinanceImport ? new (yahooFinanceImport a
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function getRawValue(val: any, fallback: number = 0): number {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === 'number') return val;
+  if (typeof val.raw === 'number') return val.raw;
+  if (typeof val === 'string') {
+    const parsed = parseFloat(val);
+    return isNaN(parsed) ? fallback : parsed;
+  }
+  return fallback;
+}
+
+function isEtfOrIndex(ticker: string): boolean {
+  const norm = ticker.toUpperCase().trim();
+  if (norm.startsWith('^')) return true;
+  const popularEtfs = new Set([
+    'SPY', 'QQQ', 'DIA', 'IWM', 'VTI', 'VOO', 'IVV', 'VEA', 'VWO', 'BND', 'AGG', 'GLD', 'SLV', 'TLT', 'EEM', 'EFA', 'IWF', 'IWD', 'VUG', 'VTV', 'XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLE', 'XLB', 'XLU', 'XLRE', 'XLC', 'ARKK'
+  ]);
+  return popularEtfs.has(norm);
+}
+
 // --- Index Ticker Management ---
 let LIST_CACHE: { [key: string]: { tickers: string[], expiry: number } } = {};
 const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
@@ -588,17 +608,40 @@ async function startServer() {
       }
 
       const fd = yfData?.financialData || {};
+      const isEtf = isEtfOrIndex(ticker);
       
       // Gate 1: Business Quality 
-      // operatingCashflow > 0 AND revenue growth > 0
-      const opCashflow = fd.operatingCashflow || 0;
-      const revGrowth = fd.revenueGrowth || 0;
-      const gate1Pass = opCashflow > 0 && revGrowth > 0;
+      // operatingCashflow > 0 AND revenue growth > 0 (Diversified ETFs / Indices automatically pass this corporate filter)
+      const opCashflow = getRawValue(fd.operatingCashflow, 0);
+      const revGrowth = getRawValue(fd.revenueGrowth, 0);
+      const gate1Pass = isEtf ? true : (opCashflow > 0 && revGrowth > 0);
 
-      // Gate 2: Valuation
-      // analyst target price > current price * 1.15
-      const targetMeanPrice = fd.targetMeanPrice || latestPrice;
-      const gate2Pass = targetMeanPrice > latestPrice * 1.15;
+      // Gate 2: Valuation with Dynamic Profile adaptation (Growth, Value, Defensive, Core Blend, Index/ETF)
+      const beta = getRawValue(yfData?.defaultKeyStatistics?.beta, 1.0);
+      const peg = getRawValue(yfData?.defaultKeyStatistics?.pegRatio, 0);
+      const divYield = getRawValue(fd.dividendYield, 0);
+      let styleProfile = isEtf ? "ETF / Benchmark Index 📈" : "Core Blend";
+      let valuationUpsideThreshold = isEtf ? 0.05 : 0.15; // default 15% upside, indices have a lower premium bar of 5%
+
+      const isHighGrowth = !isEtf && (revGrowth >= 0.20 || (peg > 0 && peg < 1.2 && revGrowth >= 0.12));
+      const isConservativeStable = !isEtf && ((beta < 0.95 && revGrowth < 0.10) || divYield > 0.02);
+
+      if (isHighGrowth) {
+        styleProfile = "Hyper Growth 🚀";
+        valuationUpsideThreshold = 0.18; // Requires steeper discount/upside (18%) to offset high-growth risk
+      } else if (isConservativeStable) {
+        styleProfile = "Defensive Value/Yield 🏦";
+        valuationUpsideThreshold = 0.08; // 8% upside plus stable dividends is fully acceptable
+      } else if (!isEtf && beta > 1.3) {
+        styleProfile = "High Beta Volatility ⚡";
+        valuationUpsideThreshold = 0.15;
+      }
+
+      const rawTarget = getRawValue(fd.targetMeanPrice, 0);
+      const targetMeanPrice = rawTarget > 0 ? rawTarget : (isEtf ? latestPrice * 1.05 : latestPrice);
+      const targetUpsidePercent = (targetMeanPrice / latestPrice) - 1;
+      const gate2Pass = targetUpsidePercent >= valuationUpsideThreshold;
+      const g2Val = gate2Pass ? 'P' : (targetMeanPrice < latestPrice ? 'O' : 'F');
 
       // Gate 3: Technical Confirmation (v2.1 aligned)
       const v = qs.map((q: any) => q.volume);
@@ -672,7 +715,7 @@ async function startServer() {
           ticker,
           close: round(latestPrice, 2),
           signal,
-          state: `G1:${gate1Pass?'P':'F'} G2:${gate2Pass?'P':'F'} G3:${gate3Pass?'P':'F'} G4:${gate4Pass?'P':'F'} G3STATE:${gate3State}`,
+          state: `G1:${gate1Pass?'P':'F'} G2:${g2Val} G3:${gate3Pass?'P':'F'} G4:${gate4Pass?'P':'F'} G3STATE:${gate3State}`,
           bull_score: score,
           strength: score >= 75 ? 5 : score >= 50 ? 3 : 1,
           rsi: round(rsiValue, 1),
@@ -928,7 +971,7 @@ async function startServer() {
           return val === "P" ? "PASS" : val === "W" ? "WATCH" : "FAIL";
         }
         if (field === "G2") {
-          return val === "P" ? "DEEP VALUE" : "FAIR";
+          return val === "P" ? "DEEP VALUE" : (val === "O" ? "OVERVALUED" : "FAIR");
         }
         if (field === "G3") {
           const g3statePart = parts.find(p => p.startsWith("G3STATE:"));
@@ -948,7 +991,7 @@ async function startServer() {
       return state.includes("G1:P") ? "PASS" : state.includes("G1:W") ? "WATCH" : "FAIL";
     }
     if (field === "G2") {
-      return state.includes("G2:P") ? "DEEP VALUE" : "FAIR";
+      return state.includes("G2:P") ? "DEEP VALUE" : (state.includes("G2:O") ? "OVERVALUED" : "FAIR");
     }
     if (field === "G3") {
       return state.includes("G3STATE:STRONG CONFIRM") || state.includes("G3:P") ? "STRONG CONFIRM"
@@ -1280,7 +1323,7 @@ async function startServer() {
       return r.bull_score > 0;
     });
 
-    const sorted = filteredResults
+    const sortedFull = filteredResults
       .map(r => {
         const boost = (r.go_long ? 20 : 0) + (r.prior_sqz ? 5 : 0);
         const atr = r.atr_pct || 2;
@@ -1301,8 +1344,10 @@ async function startServer() {
           algoTP2
         };
       })
-      .sort((a, b) => b.sort_score - a.sort_score)
-      .slice(0, 100); 
+      .sort((a, b) => b.sort_score - a.sort_score);
+
+    const resultsLimit = isCustom ? 1000 : topN;
+    const sorted = sortedFull.slice(0, resultsLimit); 
 
     const indexLabels: Record<string, string> = {
       'sp500': 'S&P 500',

@@ -691,7 +691,14 @@ export default function App() {
               <div className="border-b border-white/5 bg-bento-card/30 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="font-display text-2xl font-black text-bento-accent tracking-wider uppercase">
-                    {r.ticker}
+                    <a 
+                      href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="hover:underline"
+                    >
+                      {r.ticker}
+                    </a>
                   </div>
                   {(r.currentPrice || r.price) && (
                     <span className="font-mono text-base font-black text-emerald-400 bg-emerald-500/5 border border-emerald-500/15 px-2.5 py-0.5 rounded-lg shadow-sm">
@@ -887,7 +894,7 @@ export default function App() {
                     </div>
                     <div className="bg-white/5 p-1.5 rounded border border-white/5">
                       <span className="block text-[7px] text-pink-300 font-extrabold uppercase leading-tight mb-0.5">Valuation Gate (G2)</span>
-                      <span style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : '#9ca3af'}} className="block text-[9px] font-mono leading-tight truncate">{r.g2 || '—'}</span>
+                      <span style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : r.g2?.includes('OVERVALUED') ? '#ef4444' : '#9ca3af'}} className="block text-[9px] font-mono leading-tight truncate">{r.g2 || '—'}</span>
                     </div>
                     <div className="bg-white/5 p-1.5 rounded border border-white/5">
                       <span className="block text-[7px] text-amber-300 font-extrabold uppercase leading-tight mb-0.5">Technical Gate (G3)</span>
@@ -1042,7 +1049,7 @@ export default function App() {
                     </div>
                     <div className="bg-white/5 p-1.5 rounded border border-white/5">
                       <span className="block text-[7px] text-pink-300 font-extrabold uppercase leading-tight mb-0.5">Valuation Gate (G2)</span>
-                      <span style={{color: rawMatch.g2?.includes('DEEP VALUE') ? '#00ff44' : '#9ca3af'}} className="block text-[9px] font-mono leading-tight truncate">{rawMatch.g2 || '—'}</span>
+                      <span style={{color: rawMatch.g2?.includes('DEEP VALUE') ? '#00ff44' : rawMatch.g2?.includes('OVERVALUED') ? '#ef4444' : '#9ca3af'}} className="block text-[9px] font-mono leading-tight truncate">{rawMatch.g2 || '—'}</span>
                     </div>
                     <div className="bg-white/5 p-1.5 rounded border border-white/5">
                       <span className="block text-[7px] text-amber-300 font-extrabold uppercase leading-tight mb-0.5">Technical Gate (G3)</span>
@@ -1166,6 +1173,7 @@ export default function App() {
   const [screenHorizon, setScreenHorizon] = useState('weeks');
   const [screenTickers, setScreenTickers] = useState('');
   const [screenIndex, setScreenIndex] = useState('sp500');
+  const [maxScreenerCount, setMaxScreenerCount] = useState<number>(25);
   const [screenerMode, setScreenerMode] = useState<'classic' | 'unified_v2'>('unified_v2');
   const [isScreening, setIsScreening] = useState(false);
   const [isScreened, setIsScreened] = useState(false);
@@ -1667,7 +1675,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       tickers: screenTickers,
       index: screenIndex,
       screenerType: screenerMode,
-      topN: "100"
+      topN: maxScreenerCount.toString()
     });
 
     const ev = new EventSource(`/api/vcs-run?${queryParams.toString()}`);
@@ -1753,7 +1761,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             const overlap_results = results.filter((r: any) => r.cs_signal && r.cs_signal.includes("COLD"));
             
             const commentary_skeleton: any = {};
-            for (const r of results.slice(0, 50)) {
+            for (const r of results) {
                let rec = "WATCH";
                if (r.cs_signal === "HOT_BREAKOUT" || r.signal === "STRONG BUY") rec = "ACCUMULATE";
                else if (r.cs_signal === "DROP_BREAKDOWN") rec = "SHORT";
@@ -1790,9 +1798,9 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
                };
             }
             const structuredPayload = {
-               gate_results: gate_results.slice(0, 50),
-               reversal_results: reversal_results.slice(0, 50),
-               overlap_results: overlap_results.slice(0, 50),
+               gate_results: gate_results,
+               reversal_results: reversal_results,
+               overlap_results: overlap_results,
                neural_commentary: commentary_skeleton
             };
             prompt = coiledSpringMacroPrompt + `\n\nHere are the algorithmic setups:\n${JSON.stringify(structuredPayload, null, 2)}`;
@@ -1815,7 +1823,7 @@ You must respond ONLY with a valid JSON array of objects, with NO additional mar
 ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry, neuralExit, neuralTP1, neuralTP2, technical, fundamentals, news, moat, competition, insider, overallBull (1 sentence), overallBear (1 sentence), finalComment (1 sentence synthesis of charts+news).
           
           Here are the algorithmic setups:
-          ${JSON.stringify(results.slice(0, 50), null, 2)}`;
+          ${JSON.stringify(results, null, 2)}`;
           }
 
           const response = await ai.models.generateContent({
@@ -3547,7 +3555,7 @@ ${stationInput}
                                                 <td className="p-2 text-emerald-400">{r.composite}</td>
                                                 <td className="p-2">{r.steam}/14</td>
                                                 <td className="p-2" style={{color: r.g1?.includes('PASS') ? '#00ff44' : r.g1?.includes('WATCH') ? '#fbbf24' : '#ff4444'}}>{r.g1}</td>
-                                                <td className="p-2" style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : '#9ca3af'}}>{r.g2}</td>
+                                                <td className="p-2" style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : r.g2?.includes('OVERVALUED') ? '#f87171' : '#9ca3af'}}>{r.g2}</td>
                                                 <td className="p-2" style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}}>{r.g3}</td>
                                                 <td className="p-2" style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}}>{r.g4} ({r.rr || 'N/A'})</td>
                                                 <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
@@ -3837,7 +3845,7 @@ ${stationInput}
                     <p className="text-[10px] text-bento-muted font-bold tracking-widest text-left uppercase">Multi-Factor Real-Time Market Scanning</p>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">Index</label>
                       <select 
@@ -3873,6 +3881,22 @@ ${stationInput}
                       >
                         <option value="unified_v2">Unified Alpha (Reversal-First v3.0)</option>
                         <option value="classic">Classic</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">AI Target count</label>
+                      <select 
+                        value={maxScreenerCount}
+                        onChange={(e) => setMaxScreenerCount(parseInt(e.target.value) || 25)}
+                        className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none hover:border-bento-accent transition-all"
+                      >
+                        <option value="10">Top 10 Setups</option>
+                        <option value="15">Top 15 Setups</option>
+                        <option value="20">Top 20 Setups</option>
+                        <option value="25">Top 25 Setups (Default)</option>
+                        <option value="30">Top 30 Setups</option>
+                        <option value="40">Top 40 Setups</option>
+                        <option value="50">Top 50 Setups</option>
                       </select>
                     </div>
                     <div className="space-y-1.5">
@@ -4050,7 +4074,7 @@ ${stationInput}
                                       <td className="p-2 text-emerald-400">{r.composite}</td>
                                       <td className="p-2">{r.steam}/14</td>
                                       <td className="p-2" style={{color: r.g1?.includes('PASS') ? '#00ff44' : r.g1?.includes('WATCH') ? '#fbbf24' : '#ff4444'}}>{r.g1}</td>
-                                      <td className="p-2" style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : '#9ca3af'}}>{r.g2}</td>
+                                      <td className="p-2" style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : r.g2?.includes('OVERVALUED') ? '#f87171' : '#9ca3af'}}>{r.g2}</td>
                                       <td className="p-2" style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}}>{r.g3}</td>
                                       <td className="p-2" style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}}>{r.g4} ({r.rr || 'N/A'})</td>
                                       <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
@@ -4243,7 +4267,16 @@ ${stationInput}
                               <div key={i} className="bg-[#12121e] border border-white/5 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between hover:border-white/10 transition-colors">
                                 <div className="flex items-center gap-4 w-full md:w-auto text-left">
                                   <div className="flex flex-col">
-                                    <h4 className="text-xl font-black text-white">{r.ticker}</h4>
+                                    <h4 className="text-xl font-black text-white">
+                                      <a 
+                                        href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} 
+                                        target="_blank" 
+                                        rel="noreferrer" 
+                                        className="text-blue-400 hover:underline"
+                                      >
+                                        {r.ticker}
+                                      </a>
+                                    </h4>
                                     <span className="text-[10px] font-mono text-bento-muted">${r.close}</span>
                                   </div>
                                   <div className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest", r.signal?.includes("BUY") ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-white/10 text-white/60 border border-white/5")}>
@@ -4518,7 +4551,98 @@ ${stationInput}
                   <div className="flex-1 space-y-8 overflow-y-auto custom-scrollbar pr-2">
                     <div className="space-y-4">
                       <h4 className="text-[10px] text-emerald-400 font-black uppercase tracking-widest flex items-center gap-2 text-left">Equity Log</h4>
-                      <div className="bg-black/20 rounded-2xl border border-bento-border overflow-hidden">
+                      {/* Mobile View for Equity Log */}
+                      <div className="block md:hidden space-y-3">
+                        {stockTracks.map(t => (
+                          <div 
+                            key={t.id} 
+                            onClick={() => setExpandedRowId(expandedRowId === t.id ? null : t.id)} 
+                            className={cn(
+                              "bg-[#0a0a14] border border-white/5 rounded-xl p-4 space-y-3 shadow-md cursor-pointer transition-all hover:border-white/10 text-left",
+                              expandedRowId === t.id && "bg-[#12121e]/80 border-white/10"
+                            )}
+                          >
+                            <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-display font-black text-sm text-bento-accent tracking-wider uppercase">{t.ticker}</span>
+                                <span className="text-[9px] text-bento-muted font-mono">{t.analysisDate}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={cn(
+                                  "px-1.5 py-0.5 rounded text-[8px] font-bold uppercase",
+                                  t.suggestion.toLowerCase().includes('buy') || t.suggestion.toLowerCase().includes('accumulate') ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                                  t.suggestion.toLowerCase().includes('sell') || t.suggestion.toLowerCase().includes('distribute') || t.suggestion.toLowerCase().includes('bearish') ? "bg-red-500/10 text-red-400 border border-red-500/20" :
+                                  t.suggestion.toLowerCase().includes('hold') || t.suggestion.toLowerCase().includes('watch') ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+                                  "bg-bento-border text-bento-muted"
+                                )}>{t.suggestion}</span>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); deleteDoc(doc(db, 'stock_tracks', t.id)); }} 
+                                  className="text-red-400 hover:text-red-300 transition-colors p-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-2 text-xs bg-black/40 p-2.5 rounded-lg border border-white/5">
+                              <div>
+                                <span className="block text-[8px] text-bento-muted uppercase font-bold">Current Price</span>
+                                <span className="text-white font-mono font-bold">{t.price !== undefined && t.price !== null && t.price !== 0 ? `$${t.price}` : '—'}</span>
+                              </div>
+                              <div>
+                                <span className="block text-[8px] text-bento-muted uppercase font-bold">Entry Price</span>
+                                <span className="text-white/60 font-mono">${t.entryPrice}</span>
+                              </div>
+                              <div className="col-span-2">
+                                <span className="block text-[8px] text-bento-muted uppercase font-bold">Targets</span>
+                                <span className="text-emerald-400 font-mono text-[10px] leading-tight block">
+                                  {t.tp1 ? `T1: $${t.tp1}` : ''} {t.tp1 && t.tp2 ? ' | ' : ''} {t.tp2 ? `T2: $${t.tp2}` : ''} {!t.tp1 && !t.tp2 ? '—' : ''}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="block text-[8px] text-bento-muted uppercase font-bold">Fair Value (FV)</span>
+                                <span className="text-white/80 font-mono">${t.fairValue || '—'}</span>
+                              </div>
+                            </div>
+
+                            {expandedRowId === t.id && (
+                              <div className="pt-3 border-t border-white/5 space-y-3 text-left animate-in fade-in duration-200">
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase font-black text-emerald-400 tracking-widest">Bull Thesis</p>
+                                  <div className="text-xs text-gray-200 leading-relaxed font-sans prose prose-invert max-w-none">
+                                    {t.bullCase ? <Markdown components={markdownComponents}>{t.bullCase}</Markdown> : <span className="text-bento-muted italic">No summary.</span>}
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase font-black text-red-400 tracking-widest">Risk Factors</p>
+                                  <div className="text-xs text-gray-200 leading-relaxed font-sans prose prose-invert max-w-none">
+                                    {t.bearCase ? <Markdown components={markdownComponents}>{t.bearCase}</Markdown> : <span className="text-bento-muted italic">No summary.</span>}
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase font-bold text-bento-accent tracking-[0.2em]">Perspective</p>
+                                  <div className="text-xs text-gray-200 leading-relaxed font-sans prose prose-invert max-w-none">
+                                    {t.comments ? <Markdown components={markdownComponents}>{t.comments}</Markdown> : <span className="text-bento-muted italic">No comments.</span>}
+                                  </div>
+                                </div>
+                                {t.reportId && (
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); handleViewReportFromTrack(t.reportId); }}
+                                    className="flex items-center gap-1 text-[9px] font-black uppercase text-bento-accent/95 hover:underline pt-1.5"
+                                  >
+                                    <ArrowUpRight className="w-3 h-3" />
+                                    RECALL_RESEARCH_DATA
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {stockTracks.length === 0 && <div className="p-8 text-center text-bento-muted italic opacity-50 bg-black/20 border border-white/5 rounded-xl">No equity setups found.</div>}
+                      </div>
+
+                      {/* Desktop View for Equity Log */}
+                      <div className="hidden md:block bg-black/20 rounded-2xl border border-bento-border overflow-hidden">
                         <table className="w-full text-left">
                           <thead className="bg-bento-card/50 text-[9px] text-bento-muted uppercase font-bold border-b border-bento-border">
                             <tr>
@@ -4644,7 +4768,81 @@ ${stationInput}
 
                     <div className="space-y-4 text-left">
                       <h4 className="text-[10px] text-purple-400 font-black uppercase tracking-widest flex items-center gap-2">Macro Pulse</h4>
-                      <div className="bg-black/20 rounded-2xl border border-bento-border overflow-hidden">
+                      {/* Mobile View for Macro Pulse */}
+                      <div className="block md:hidden space-y-3">
+                        {macroTracks.map(t => (
+                          <div 
+                            key={t.id} 
+                            onClick={() => setExpandedRowId(expandedRowId === t.id ? null : t.id)} 
+                            className={cn(
+                              "bg-[#0a0a14] border border-white/5 rounded-xl p-4 space-y-3 shadow-md cursor-pointer transition-all hover:border-white/10 text-left",
+                              expandedRowId === t.id && "bg-[#12121e]/80 border-white/10"
+                            )}
+                          >
+                            <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                              <span className="text-[9px] text-bento-muted font-mono">{t.analysisDate}</span>
+                              <div className="flex items-center gap-2">
+                                <span className={cn(
+                                  "px-1.5 py-0.5 rounded text-[8px] font-bold uppercase",
+                                  t.sentiment.toLowerCase().includes('bullish') ? "text-emerald-400 bg-emerald-400/5 border border-emerald-400/10" :
+                                  t.sentiment.toLowerCase().includes('bearish') ? "text-red-400 bg-red-400/5 border border-red-400/10" : 
+                                  t.sentiment.toLowerCase().includes('neutral') ? "text-amber-400 bg-amber-400/5 border border-amber-400/10" :
+                                  "text-bento-muted"
+                                )}>{t.sentiment}</span>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); deleteDoc(doc(db, 'macro_tracks', t.id)); }} 
+                                  className="text-red-400 hover:text-red-300 transition-colors p-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {t.indicators && (
+                              <div className="text-xs text-white/80 bg-black/40 p-2.5 rounded-lg border border-white/5 text-left">
+                                <span className="block text-[8px] text-bento-muted uppercase font-bold mb-1">Indicators</span>
+                                {t.indicators}
+                              </div>
+                            )}
+
+                            {expandedRowId === t.id && (
+                              <div className="pt-3 border-t border-white/5 space-y-3 text-left animate-in fade-in duration-200">
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase font-black text-emerald-400 tracking-widest">Optimistic Scenario</p>
+                                  <div className="text-xs text-gray-200 leading-relaxed font-sans prose prose-invert max-w-none">
+                                    {t.bullCase ? <Markdown components={markdownComponents}>{t.bullCase}</Markdown> : <span className="text-bento-muted italic">No summary.</span>}
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase font-black text-red-400 tracking-widest">Macro Risks</p>
+                                  <div className="text-xs text-gray-200 leading-relaxed font-sans prose prose-invert max-w-none">
+                                    {t.bearCase ? <Markdown components={markdownComponents}>{t.bearCase}</Markdown> : <span className="text-bento-muted italic">No summary.</span>}
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase font-bold text-bento-accent tracking-[0.2em]">Strategic Outlook</p>
+                                  <div className="text-xs text-gray-200 leading-relaxed font-sans prose prose-invert max-w-none">
+                                    {t.comments ? <Markdown components={markdownComponents}>{t.comments}</Markdown> : <span className="text-bento-muted italic">No comments.</span>}
+                                  </div>
+                                </div>
+                                {t.reportId && (
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); handleViewReportFromTrack(t.reportId); }}
+                                    className="flex items-center gap-1 text-[9px] font-black uppercase text-indigo-400 hover:text-indigo-300 transition-all pt-1.5"
+                                  >
+                                    <ArrowUpRight className="w-3 h-3" />
+                                    View Macro Analysis
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {macroTracks.length === 0 && <div className="p-8 text-center text-bento-muted italic opacity-50 bg-black/20 border border-white/5 rounded-xl">No macro snapshots found.</div>}
+                      </div>
+
+                      {/* Desktop View for Macro Pulse */}
+                      <div className="hidden md:block bg-black/20 rounded-2xl border border-bento-border overflow-hidden">
                         <table className="w-full text-left">
                           <thead className="bg-bento-card/50 text-[9px] text-bento-muted uppercase font-bold border-b border-bento-border">
                             <tr>
@@ -4724,7 +4922,7 @@ ${stationInput}
                                                <ArrowUpRight className="w-3 h-3 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform" />
                                                View Macro Analysis
                                              </button>
-                                           )}
+                                          )}
                                         </div>
                                       </div>
                                     </td>
@@ -4732,7 +4930,7 @@ ${stationInput}
                                 )}
                               </React.Fragment>
                             ))}
-                             {macroTracks.length === 0 && <tr><td colSpan={3} className="p-8 text-center text-bento-muted italic opacity-50">No macro snapshots found.</td></tr>}
+                            {macroTracks.length === 0 && <tr><td colSpan={3} className="p-8 text-center text-bento-muted italic opacity-50">No macro snapshots found.</td></tr>}
                           </tbody>
                         </table>
                       </div>
