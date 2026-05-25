@@ -1659,7 +1659,8 @@ ${chatDigest}
 Generate the completed, fully integrated updated report:`,
         config: {
           tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true }
+          toolConfig: { includeServerSideToolInvocations: true },
+          temperature: 0.0
         }
       });
 
@@ -1737,7 +1738,8 @@ Perform deep analytical and logical calculations where applicable. Feel free to 
 Respond in professional, clean, scannable markdown formatting. Keep your answer highly data-grounded, fact-based, and completely integrated with the original report context.`,
           config: {
             tools: [{ googleSearch: {} }],
-            toolConfig: { includeServerSideToolInvocations: true }
+            toolConfig: { includeServerSideToolInvocations: true },
+            temperature: 0.0
           }
         });
 
@@ -2320,7 +2322,8 @@ User Clarification Inquiry:
 "${queryText}"`,
         config: {
           tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true }
+          toolConfig: { includeServerSideToolInvocations: true },
+          temperature: 0.0
         }
       });
 
@@ -3745,7 +3748,8 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
             config: {
               responseMimeType: "application/json",
               tools: [{ googleSearch: {} }],
-              toolConfig: { includeServerSideToolInvocations: true }
+              toolConfig: { includeServerSideToolInvocations: true },
+              temperature: 0.0
             }
           });
 
@@ -3860,7 +3864,7 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
     setScreenerResults([]);
     
     try {
-      const gAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_MYKEY || '' });
+      const gAI = ai;
       const indexContext = screenIndex === 'sp500' ? 'S&P 500' : screenIndex === 'nasdaq100' ? 'Nasdaq 100' : 'Russell 2000';
       const prompt = `Act as a ruthless, disciplined "Money Mindset" equity research analyst. 
       Perform a high-intensity market scan for the top 40 breakout stocks within the ${indexContext} index for the '${screenHorizon}' time horizon. 
@@ -5178,7 +5182,8 @@ Do NOT include any extra explanations, do not write markdown fences, literally j
               model: selectedModel,
               contents: peerPrompt,
               config: {
-                responseMimeType: "application/json"
+                responseMimeType: "application/json",
+                temperature: 0.0
               }
             });
             
@@ -5411,7 +5416,8 @@ print(json.dumps(results, indent=2))
               : promptForTicker,
             config: {
               tools: [{ googleSearch: {} }],
-              toolConfig: { includeServerSideToolInvocations: true }
+              toolConfig: { includeServerSideToolInvocations: true },
+              temperature: 0.0
             }
           });
 
@@ -5654,7 +5660,8 @@ ${instructionsForFooter}
         contents: promptWithGroundedContext,
         config: {
           tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true }
+          toolConfig: { includeServerSideToolInvocations: true },
+          temperature: 0.0
         }
       });
 
@@ -5814,7 +5821,8 @@ ${instructionsForFooter}
         config: {
           responseMimeType: "application/json",
           tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true }
+          toolConfig: { includeServerSideToolInvocations: true },
+          temperature: 0.0
         }
       });
 

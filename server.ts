@@ -340,7 +340,83 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
+
+  // --- Secure Server-Side Gemini Proxies ---
+  app.post("/api/generate", async (req, res) => {
+    try {
+      let { model, contents, config } = req.body;
+      let response;
+      try {
+        response = await ai.models.generateContent({
+          model,
+          contents,
+          config,
+        });
+      } catch (e: any) {
+        if (e?.message?.includes("429") || e?.status === 429 || e?.message?.includes("RESOURCE_EXHAUSTED")) {
+          console.warn(`[API] Rate limit on ${model}, falling back to gemini-1.5-pro...`);
+          response = await ai.models.generateContent({
+            model: "gemini-1.5-pro",
+            contents,
+            config,
+          });
+        } else {
+          throw e;
+        }
+      }
+      res.json({ text: response.text });
+    } catch (err: any) {
+      console.error("[PROXIED GENERATE ERROR]", err);
+      res.status(500).json({ error: err?.message || "Failed to generate content" });
+    }
+  });
+
+  app.post("/api/generate-stream", async (req, res) => {
+    try {
+      let { model, contents, config } = req.body;
+      let responseStream;
+      try {
+        responseStream = await ai.models.generateContentStream({
+          model,
+          contents,
+          config,
+        });
+      } catch (e: any) {
+        if (e?.message?.includes("429") || e?.status === 429 || e?.message?.includes("RESOURCE_EXHAUSTED")) {
+          console.warn(`[API] Rate limit on ${model}, falling back to gemini-1.5-pro...`);
+          responseStream = await ai.models.generateContentStream({
+            model: "gemini-1.5-pro",
+            contents,
+            config,
+          });
+        } else {
+          throw e;
+        }
+      }
+      
+      res.setHeader('Content-Type', 'application/x-ndjson');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      
+      for await (const chunk of responseStream) {
+        const text = chunk.text || "";
+        res.write(JSON.stringify({ text }) + "\n");
+        if (typeof (res as any).flush === 'function') {
+          (res as any).flush();
+        }
+      }
+      res.end();
+    } catch (err: any) {
+      console.error("[PROXIED GENERATE STREAM ERROR]", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err?.message || "Failed to stream content" });
+      } else {
+        res.write(JSON.stringify({ error: err?.message }) + "\n");
+        res.end();
+      }
+    }
+  });
 
   // --- Dynamic Python Environment Validation and Auto-repair ---
   try {
