@@ -6,8 +6,13 @@ import dotenv from "dotenv";
 import yahooFinanceImport from 'yahoo-finance2';
 import { GoogleGenAI } from "@google/genai";
 import Parser from 'rss-parser';
+import { spawn, execSync } from "child_process";
+import { existsSync } from "fs";
 
 dotenv.config();
+
+const YahooFinance = "default" in yahooFinanceImport ? (yahooFinanceImport as any).default : yahooFinanceImport;
+const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.VITE_MYKEY || '' });
 const parser = new Parser({
@@ -21,8 +26,6 @@ const MODELS = {
   FLASH: "gemini-3.1-pro-preview",
   PRO: "gemini-3.1-pro-preview",
 };
-
-const yahooFinance = "default" in yahooFinanceImport ? new (yahooFinanceImport as any).default() : new (yahooFinanceImport as any)();
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -339,6 +342,30 @@ async function startServer() {
 
   app.use(express.json());
 
+  // --- Dynamic Python Environment Validation and Auto-repair ---
+  try {
+    let pythonPath = 'python3';
+    const venvPath1 = path.join(process.cwd(), 'myenv', 'bin', 'python3');
+    const venvPath2 = path.join(process.cwd(), 'myenv', 'bin', 'python');
+    if (existsSync(venvPath1)) {
+      pythonPath = venvPath1;
+    } else if (existsSync(venvPath2)) {
+      pythonPath = venvPath2;
+    }
+    
+    console.log(`[Python Core Check] Validating environment using binary: ${pythonPath}`);
+    try {
+      execSync(`"${pythonPath}" -c "import yfinance, pandas, numpy, requests"`, { stdio: 'ignore' });
+      console.log("[Python Core Check] All dependencies (yfinance, pandas, numpy, requests) are fully operational!");
+    } catch (e) {
+      console.log("[Python Core Check] Some dependencies are missing. Installing them inside our dedicated sandbox...");
+      execSync(`"${pythonPath}" -m pip install yfinance pandas numpy requests`, { stdio: 'inherit' });
+      console.log("[Python Core Check] Auto-repair of sandbox packages succeeded!");
+    }
+  } catch (err: any) {
+    console.error("[Python Core Check] Issue during Python validation:", err.message);
+  }
+
   // --- VCS Indicator Helpers (v7.0 Parity) ---
   const _sma = (s: number[], n: number) => {
     const res = new Array(s.length).fill(NaN);
@@ -602,8 +629,9 @@ async function startServer() {
       // Fetch yahoo finance data safely
       let yfData: any = null;
       try {
-         yfData = await yahooFinance.quoteSummary(ticker, { modules: ['financialData', 'defaultKeyStatistics'] });
-      } catch (err) {
+         yfData = await yahooFinance.quoteSummary(ticker, { modules: ['financialData', 'defaultKeyStatistics'] }, { validateResult: false });
+      } catch (err: any) {
+         console.warn(`[Node Harvest Engine] Details failed for ${ticker}: ${err.message}`);
          // Proceed with technicals only
       }
 
@@ -871,7 +899,7 @@ async function startServer() {
 
       let fund_pass = true;
       try {
-         const yfData = await (yahooFinance as any).quoteSummary(ticker, { modules: ['incomeStatementHistoryQuarterly'] });
+         const yfData = await (yahooFinance as any).quoteSummary(ticker, { modules: ['incomeStatementHistoryQuarterly'] }, { validateResult: false });
          const isq = yfData?.incomeStatementHistoryQuarterly?.incomeStatementHistory;
          if (isq && isq.length >= 2) {
              let revs = isq.map((q: any) => q.totalRevenue || 0).filter((r: number) => r > 0);
@@ -1182,34 +1210,120 @@ async function startServer() {
     if (!code) return res.status(400).json({ error: "No code provided" });
 
     try {
-      const fs = await import('fs/promises');
-      const { spawn } = await import('child_process');
-      const scriptPath = path.join(process.cwd(), 'user_script.py');
-      await fs.writeFile(scriptPath, code);
-
-      // Start streaming response
+      // Set stream headers
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Transfer-Encoding', 'chunked');
 
-      // Execute via native Python using spawn with unbuffered flag (-u)
-      const pythonProcess = spawn('python3', ['-u', 'user_script.py'], { cwd: process.cwd() });
+      // 1. Extract symbols dynamically using robust regex formats
+      const symbolList: string[] = [];
+      const symbolsMatch = code.match(/symbols\s*=\s*(\[[\s\S]*?\])/);
+      if (symbolsMatch) {
+        try {
+          const rawArr = symbolsMatch[1].replace(/'/g, '"');
+          const parsed = JSON.parse(rawArr);
+          if (Array.isArray(parsed)) {
+            symbolList.push(...parsed.map((s: any) => String(s).toUpperCase().trim()));
+          }
+        } catch (err) {
+          // Fallback manual regex match
+          const matches = symbolsMatch[1].match(/['"]([a-zA-Z0-9.\-^]+)['"]/g);
+          if (matches) {
+            symbolList.push(...matches.map(m => m.replace(/['"]/g, '').toUpperCase().trim()));
+          }
+        }
+      }
 
-      pythonProcess.stdout.on('data', (data) => {
-        res.write(data.toString());
-      });
+      // Final ultimate fallback to scan for capitalized ticker shapes
+      if (symbolList.length === 0) {
+        const matches = code.match(/["']([A-Z^]{1,5})["']/g);
+        if (matches) {
+          const unique = Array.from(new Set(matches.map(m => m.replace(/['"]/g, '')))) as string[];
+          symbolList.push(...unique);
+        }
+      }
 
-      pythonProcess.stderr.on('data', (data) => {
-        res.write(data.toString());
-      });
+      console.log("[Node Harvest Engine] Extracted symbols to harvest:", symbolList);
 
-      pythonProcess.on('close', (code) => {
-        res.end();
-      });
+      const results: Record<string, any> = {};
+
+      for (const sym of symbolList) {
+        try {
+          // Fetch summary and statistics modules natively
+          const modules = ['summaryDetail', 'financialData', 'defaultKeyStatistics', 'price', 'summaryProfile'];
+          const summary = await yahooFinance.quoteSummary(sym, { modules }, { validateResult: false }).catch((e) => {
+            console.warn(`[Node Harvest Engine] Details failed for ${sym}: ${e.message}`);
+            return null;
+          });
+
+          const sDetail = summary?.summaryDetail || {};
+          const fData = summary?.financialData || {};
+          const kStats = summary?.defaultKeyStatistics || {};
+          const pData = summary?.price || {};
+          const sProfile = summary?.summaryProfile || {};
+
+          // Safe value taggers
+          const getVal = (v: any, fallback: any = "N/A") => (v === undefined || v === null) ? fallback : v;
+
+          results[sym] = {
+            price: getVal(fData.currentPrice ?? pData.regularMarketPrice ?? sDetail.regularMarketPrice),
+            marketCap: getVal(pData.marketCap ?? sDetail.marketCap),
+            trailingPE: getVal(sDetail.trailingPE ?? kStats.trailingPE),
+            forwardPE: getVal(sDetail.forwardPE ?? kStats.forwardPE),
+            pegRatio: getVal(kStats.pegRatio ?? sDetail.pegRatio),
+            priceToSales: getVal(sDetail.priceToSalesTrailing12Months ?? kStats.priceToSalesTrailing12Months),
+            priceToBook: getVal(kStats.priceToBook ?? sDetail.priceToBook),
+            enterpriseToEbitda: getVal(kStats.enterpriseToEbitda),
+            dividendYield: getVal(sDetail.dividendYield),
+            revenueGrowth: getVal(fData.revenueGrowth),
+            grossMargins: getVal(fData.grossMargins),
+            profitMargins: getVal(fData.profitMargins),
+            operatingMargins: getVal(fData.operatingMargins),
+            debtToEquity: getVal(fData.debtToEquity),
+            currentRatio: getVal(fData.currentRatio),
+            returnOnEquity: getVal(fData.returnOnEquity),
+            targetMeanPrice: getVal(fData.targetMeanPrice),
+            sector: getVal(sProfile.sector),
+            description: getVal(sProfile.longBusinessSummary),
+            previousClose: getVal(sDetail.previousClose),
+            dayHigh: getVal(sDetail.dayHigh),
+            dayLow: getVal(sDetail.dayLow),
+            volume: getVal(sDetail.volume ?? pData.regularMarketVolume),
+            headlines: []
+          };
+
+          // Fetch headlines via RSS feed helper
+          try {
+            const rssUrl = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${sym}`;
+            const feed = await parser.parseURL(rssUrl).catch(() => null);
+            if (feed && feed.items) {
+              results[sym].headlines = feed.items.slice(0, 4).map(item => item.title || '');
+            }
+          } catch (rssErr) {
+            console.warn(`[Node Harvest Engine] RSS news parse error for ${sym}:`, rssErr);
+          }
+        } catch (singleSymError: any) {
+          console.error(`[Node Harvest Engine] Error processing symbol ${sym}:`, singleSymError);
+          results[sym] = {
+            price: "N/A",
+            marketCap: "N/A",
+            trailingPE: "N/A",
+            forwardPE: "N/A",
+            headlines: [],
+            error: singleSymError.message
+          };
+        }
+      }
+
+      // Stream the stringified output directly to client
+      const stringifiedResponse = JSON.stringify(results, null, 2);
+      res.write(stringifiedResponse);
+      res.end();
+
     } catch (err: any) {
       if (!res.headersSent) {
-        res.status(500).json({ success: false, error: "Server Native Environment Failed: " + err.message, output: "" });
+        res.status(500).json({ success: false, error: "Native Node Harvester Failed: " + err.message, output: "" });
       } else {
-        res.write("\n\nServer Native Environment Failed: " + err.message);
+        res.write("\n\nNative Node Harvester Failed: " + err.message);
         res.end();
       }
     }
