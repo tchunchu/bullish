@@ -89,11 +89,6 @@ service cloud.firestore {
       allow get: if isOwner(existing().userId) && isValidId(reportId);
       allow list: if isOwner(resource.data.userId); 
       allow create: if isVerified() && isValidId(reportId) && isValidReport(incoming());
-      allow update: if isOwner(existing().userId)
-        && isValidId(reportId)
-        && incoming().diff(existing()).affectedKeys().hasOnly(['output', 'timestamp'])
-        && incoming().output is string && incoming().output.size() <= 300000
-        && incoming().timestamp == request.time;
       allow delete: if isOwner(existing().userId);
     }
 

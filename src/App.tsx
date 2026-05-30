@@ -1405,12 +1405,44 @@ export default function App() {
     }
 
     // 7. Technical Verdict
-    const techMatch = text.match(/(?:Technical Verdict|Technical Setup)[^\n:]*?:\s*\*?([A-Za-z]+)\*?/i) ||
-                      text.match(/Technical Verdict:\s*\*?(Bullish|Bearish|Neutral)\*?/i) ||
-                      text.match(/technical\s*verdict\s*[-:\s]+(Bullish|Bearish|Neutral)/i) ||
-                      text.match(/## 8\.\s*📐\s*TECHNICAL SETUP[\s\S]*?Technical Verdict:\s*(Bullish|Bearish|Neutral)/i);
-    if (techMatch) {
-      metrics.techVerdict = techMatch[1].trim().toUpperCase();
+    let extractedTechVerdict = "";
+    // Grab text following Technical Verdict to the end of the line to search for keywords first
+    const techLineMatch = text.match(/(?:Technical Verdict|Technical Setup|Technical Setup Verdict|Technical\s+Rating)[^\n:]*?:\s*(.*)/i);
+    if (techLineMatch) {
+      const restOfLine = techLineMatch[1].toLowerCase();
+      if (restOfLine.includes('strongly bullish') || restOfLine.includes('strong bullish') || restOfLine.includes('strongly_bullish')) {
+        extractedTechVerdict = 'STRONGLY BULLISH';
+      } else if (restOfLine.includes('strongly bearish') || restOfLine.includes('strong bearish') || restOfLine.includes('strongly_bearish')) {
+        extractedTechVerdict = 'STRONGLY BEARISH';
+      } else if (restOfLine.includes('bullish')) {
+        extractedTechVerdict = 'BULLISH';
+      } else if (restOfLine.includes('bearish')) {
+        extractedTechVerdict = 'BEARISH';
+      } else if (restOfLine.includes('neutral')) {
+        extractedTechVerdict = 'NEUTRAL';
+      }
+    }
+
+    if (!extractedTechVerdict) {
+      // Robust fallback regexes
+      const techMatch = text.match(/(?:Technical Verdict|Technical Setup)[^\n:]*?:\s*[^A-Za-z0-9]*(Strongly\s+Bullish|Strongly\s+Bearish|Bullish|Bearish|Neutral)/i) ||
+                        text.match(/technical\s*verdict\s*[-:\s]+[^A-Za-z0-9]*(Strongly\s+Bullish|Strongly\s+Bearish|Bullish|Bearish|Neutral)/i) ||
+                        text.match(/## 8\.\s*📐\s*TECHNICAL SETUP[\s\S]*?Technical Verdict:\s*[^A-Za-z0-9]*(Strongly\s+Bullish|Strongly\s+Bearish|Bullish|Bearish|Neutral)/i) ||
+                        text.match(/(?:Technical Verdict|Technical Setup)[^\n:]*?:\s*[^A-Za-z0-9]*([A-Za-z]+)/i);
+      if (techMatch) {
+        const rawWord = techMatch[1].trim().toUpperCase();
+        if (rawWord.includes('BULLISH')) extractedTechVerdict = rawWord.includes('STRONLY') || rawWord.includes('STRONGLY') ? 'STRONGLY BULLISH' : 'BULLISH';
+        if (rawWord.includes('BEARISH')) extractedTechVerdict = rawWord.includes('STRONLY') || rawWord.includes('STRONGLY') ? 'STRONGLY BEARISH' : 'BEARISH';
+        if (rawWord === 'STRONGLY') {
+          extractedTechVerdict = 'STRONGLY BULLISH';
+        } else if (!extractedTechVerdict) {
+          extractedTechVerdict = rawWord;
+        }
+      }
+    }
+
+    if (extractedTechVerdict) {
+      metrics.techVerdict = extractedTechVerdict;
     }
 
     // 8. Technical Levels
@@ -1433,7 +1465,9 @@ export default function App() {
     if (tp2Match) metrics.tp2 = `$${tp2Match[1].trim()}`;
 
     // 9. Moat
-    const moatMatch = text.match(/(?:Moat Assessment|Economic Moat|Moat Strength|Moat\s*Strength)[^\n:]*?:\s*\*?([A-Za-z]+)\*?/i) ||
+    const moatMatch = text.match(/(?:Moat Assessment|Economic Moat|Moat Strength|Moat\s*Strength)[^\n:]*?:\s*[^A-Za-z0-9]*(Narrow|Wide|None)/i) ||
+                      text.match(/(?:Strength|Moat)\s*:\s*[^A-Za-z0-9]*(Narrow|Wide|None)/i) ||
+                      text.match(/(?:Moat Assessment|Economic Moat|Moat Strength|Moat\s*Strength)[^\n:]*?:\s*[^A-Za-z0-9]*([A-Za-z]+)/i) ||
                       text.match(/(?:Strength|Moat)\s*:\s*\*?(Narrow|Wide|None)\*?/i);
     if (moatMatch) {
       metrics.moat = moatMatch[1].trim();
@@ -1630,72 +1664,37 @@ export default function App() {
     currentType?: "stock" | "macro" | "multi_stock",
     customMessages?: { role: 'user' | 'assistant', content: string }[]
   ) => {
-    if (isRebuildingReport) return;
-    setIsRebuildingReport(true);
-    setRebuildStage('Analyzing discussions & research parameters...');
-
     try {
       const messagesToUse = customMessages || followUpMessages;
-      const chatDigest = messagesToUse.map(msg => `[${msg.role.toUpperCase()}]: ${msg.content}`).join('\n\n');
-      setRebuildStage('Splicing and synthesizing new data streams into report template...');
+      if (messagesToUse.length === 0) {
+        alert("No conversational context found to rebuild report.");
+        return;
+      }
 
-      const responseStream = await ai.models.generateContentStream({
-        model: selectedModel,
-        contents: `You are an elite institutional "Money Mindset" equity research director.
-Your goal is to rebuild, regenerate, and update an existing research report to successfully incorporate and integrate new structural insights, news catalysts, and numerical calculations derived from a recent follow-up Q&A and search findings.
+      // Format a high-fidelity chat discussion summary to feed into prompt
+      const chatDigest = messagesToUse
+        .map(msg => `[${msg.role === 'user' ? 'USER REQUEST' : 'ASSISTANT INSIGHT'}]:\n${msg.content}`)
+        .join('\n\n');
 
-### ORIGINAL STOCK/MACRO REPORT:
-${currentOutput}
+      const compiledInstructions = `### REBUILD INTEGRATION DIRECTIVES:
+Please integrate these critical discussion points, news catalysts, and calculations from our recent conversation directly into the corresponding sections of this ${currentTicker} research report:
 
-### NEW INSIGHTS, METRICS, AND QA DEVELOPMENTS TO SYNC:
 ${chatDigest}
 
-### ABSOLUTE DIRECTIVES FOR REBUILDING:
-1. Preserve the structural integrity and headings of the original report (e.g., STORY, PEER COMPARISON, SUPPLY CHAIN, CATALYSTS, COMPLETE ANALYSIS DELIVERABLES, and especially the [ELI5_START] / [ELI5_END] tags).
-2. Synthesize these materials coherently. Adjust core models, target earnings, margin profiles, bull/bear cases, scores, and entry prices throughout ALL sections so there are ZERO conflicting figures or narrative gaps. Every detail must flow logically from the updated context.
-3. Keep the tone elite, direct, and completely factual.
-4. Output the complete, rebuilt report from top to bottom.
+Ensure all valuation steps, growth estimates, technical levels (especially technical verdict), and overall ratings reflect these developments coherently throughout the dossier with zero numeric or analytic discrepancies.`;
 
-Generate the completed, fully integrated updated report:`,
-        config: {
-          tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true },
-          temperature: 0.0
-        }
-      });
+      // Set state fields on the main Research tab so the prompt is fully synchronized visually
+      setTicker(currentTicker);
+      setAnalysisType(currentType || 'stock');
+      setCustomInstructions(compiledInstructions);
+      setActiveTab('generate');
 
-      setRebuildStage('Reconstructing report outputs dynamically...');
-      let rebuiltOutput = "";
+      // Trigger the comprehensive standard research pipeline with these added custom instructions
+      await runAnalysis(compiledInstructions, currentTicker, currentId);
 
-      for await (const chunk of responseStream) {
-        const textChunk = chunk.text;
-        if (textChunk) {
-          rebuiltOutput += textChunk;
-        }
-      }
-
-      if (rebuiltOutput.trim()) {
-        setRebuildStage('Saving changes to Cloud Sync database...');
-
-        if (currentId) {
-          const reportRef = doc(db, 'reports', currentId);
-          await updateDoc(reportRef, { 
-            output: rebuiltOutput,
-            timestamp: serverTimestamp()
-          });
-          setActiveReport(prev => prev ? { ...prev, output: rebuiltOutput, timestamp: new Date() } : null);
-        } else {
-          setRawOutput(rebuiltOutput);
-        }
-
-        setFollowUpMessages([]);
-      }
     } catch (e: any) {
       console.error("Rebuild report error:", e);
-      alert(`Failed to rebuild report: ${e?.message || 'Error occurred.'}`);
-    } finally {
-      setIsRebuildingReport(false);
-      setRebuildStage('');
+      alert(`Failed to trigger rebuild: ${e?.message || 'Error occurred.'}`);
     }
   };
 
@@ -1738,8 +1737,7 @@ Perform deep analytical and logical calculations where applicable. Feel free to 
 Respond in professional, clean, scannable markdown formatting. Keep your answer highly data-grounded, fact-based, and completely integrated with the original report context.`,
           config: {
             tools: [{ googleSearch: {} }],
-            toolConfig: { includeServerSideToolInvocations: true },
-            temperature: 0.0
+            toolConfig: { includeServerSideToolInvocations: true }
           }
         });
 
@@ -2322,8 +2320,7 @@ User Clarification Inquiry:
 "${queryText}"`,
         config: {
           tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true },
-          temperature: 0.0
+          toolConfig: { includeServerSideToolInvocations: true }
         }
       });
 
@@ -3748,8 +3745,7 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
             config: {
               responseMimeType: "application/json",
               tools: [{ googleSearch: {} }],
-              toolConfig: { includeServerSideToolInvocations: true },
-              temperature: 0.0
+              toolConfig: { includeServerSideToolInvocations: true }
             }
           });
 
@@ -3864,7 +3860,7 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
     setScreenerResults([]);
     
     try {
-      const gAI = ai;
+      const gAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_MYKEY || '' });
       const indexContext = screenIndex === 'sp500' ? 'S&P 500' : screenIndex === 'nasdaq100' ? 'Nasdaq 100' : 'Russell 2000';
       const prompt = `Act as a ruthless, disciplined "Money Mindset" equity research analyst. 
       Perform a high-intensity market scan for the top 40 breakout stocks within the ${indexContext} index for the '${screenHorizon}' time horizon. 
@@ -5081,16 +5077,46 @@ Format output as:
     customInstructions
   ]);
 
-  const runAnalysis = async () => {
-    const finalPrompt = isEditingPrompt ? moddedPrompt : generatedPrompt;
-    
-    if (!finalPrompt) {
-      alert("Please generate a prompt first");
-      return;
+  const runAnalysis = async (
+    overrideCustomInstructions?: any,
+    overrideTicker?: string,
+    overrideReportId?: string
+  ) => {
+    const isOverrideValid = typeof overrideCustomInstructions === 'string';
+    const currentTicker = overrideTicker !== undefined ? overrideTicker : ticker;
+    const currentInstructions = isOverrideValid ? overrideCustomInstructions : customInstructions;
+
+    // Unify targetTickersArr resolution right up front
+    const targetTickersArr = analysisType === 'stock'
+      ? currentTicker.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+      : multiTickers.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+
+    const resolvedTicker = targetTickersArr[0] || 'TICKER';
+
+    let finalPrompt = "";
+    if (overrideTicker !== undefined) {
+      if (analysisType === 'stock') {
+        const userPeers = peers ? peers.split(',').map(s => s.trim().toUpperCase()).filter(Boolean) : [];
+        finalPrompt = buildStockPrompt(resolvedTicker, userPeers);
+      } else {
+        finalPrompt = isEditingPrompt ? moddedPrompt : generatedPrompt;
+      }
+    } else {
+      finalPrompt = isEditingPrompt ? moddedPrompt : generatedPrompt;
     }
 
-    const enhancedPrompt = customInstructions 
-      ? `${finalPrompt}\n\n**ADDITIONAL INSTRUCTIONS:**\n${customInstructions}`
+    if (!finalPrompt) {
+      if (analysisType === 'stock') {
+        const userPeers = peers ? peers.split(',').map(s => s.trim().toUpperCase()).filter(Boolean) : [];
+        finalPrompt = buildStockPrompt(resolvedTicker, userPeers);
+      } else {
+        alert("Please generate a prompt first");
+        return;
+      }
+    }
+
+    const enhancedPrompt = currentInstructions 
+      ? `${finalPrompt}\n\n**ADDITIONAL INSTRUCTIONS:**\n${currentInstructions}`
       : finalPrompt;
 
     if (!user) {
@@ -5106,11 +5132,6 @@ Format output as:
     
     let pythonDataContext = "";
     let rawPythonOut = "";
-    
-    // Unify targetTickersArr resolution right up front
-    const targetTickersArr = analysisType === 'stock'
-      ? ticker.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
-      : multiTickers.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
 
     try {
       // Step 1: Resolve Peer Group Tickers with AI if Stock or Multi-Stock analysis
@@ -5182,8 +5203,7 @@ Do NOT include any extra explanations, do not write markdown fences, literally j
               model: selectedModel,
               contents: peerPrompt,
               config: {
-                responseMimeType: "application/json",
-                temperature: 0.0
+                responseMimeType: "application/json"
               }
             });
             
@@ -5349,7 +5369,7 @@ print(json.dumps(results, indent=2))
           setHarvestedRaw(rawPythonOut);
           if (rawPythonOut && !rawPythonOut.includes("Server Native Environment Failed")) {
             if (analysisType === 'stock') {
-              pythonDataContext = formatPythonStockData(rawPythonOut, ticker);
+              pythonDataContext = formatPythonStockData(rawPythonOut, resolvedTicker);
             } else if (analysisType === 'multi_stock') {
               pythonDataContext = formatPythonMultiStockData(rawPythonOut);
             } else {
@@ -5416,8 +5436,7 @@ print(json.dumps(results, indent=2))
               : promptForTicker,
             config: {
               tools: [{ googleSearch: {} }],
-              toolConfig: { includeServerSideToolInvocations: true },
-              temperature: 0.0
+              toolConfig: { includeServerSideToolInvocations: true }
             }
           });
 
@@ -5633,7 +5652,7 @@ At the absolute bottom of the report, you MUST include a dedicated footer sectio
 In this footer section, format and output the following items neatly:
 1. **Model Powered**: Tell the user that the report was generated by the high-intelligence **${selectedModel}** engine.
 2. **Harvested Datasets (Ground Truth)**: List the exact datasets provided in this prompt context that were fetched outside the AI limits by the native Python subprocess daemon (e.g., yfinance pricing, Trailing/Forward PE, PEG ratio, Price/Sales, EV/EBITDA, Gross margins, Debt-to-Equity, Solvency Ratios, and news headlines).
-3. **Ecosystem Links & Grounded References**: Provide markdown links citing relevant financial sites or lookup pages. For example, for ticker ${ticker.toUpperCase() || 'TICKER'}, print: \`- [Yahoo Finance ${ticker.toUpperCase()}](https://finance.yahoo.com/quote/${ticker.toUpperCase()})\`. Also include similar links for target comparable competitors researched today.
+3. **Ecosystem Links & Grounded References**: Provide markdown links citing relevant financial sites or lookup pages. For example, for ticker ${resolvedTicker.toUpperCase() || 'TICKER'}, print: \`- [Yahoo Finance ${resolvedTicker.toUpperCase()}](https://finance.yahoo.com/quote/${resolvedTicker.toUpperCase()})\`. Also include similar links for target comparable competitors researched today.
 `;
 
       const promptWithGroundedContext = pythonDataContext 
@@ -5660,8 +5679,7 @@ ${instructionsForFooter}
         contents: promptWithGroundedContext,
         config: {
           tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true },
-          temperature: 0.0
+          toolConfig: { includeServerSideToolInvocations: true }
         }
       });
 
@@ -5691,7 +5709,7 @@ ${instructionsForFooter}
       finalFooter += `  - Balance sheet health and debt ratios: debt-to-equity and current asset ratios\n`;
       finalFooter += `  - Multi-source live stock RSS news feeds dynamically fetched outside of limits\n`;
       finalFooter += `- **Ecosystem Exploration Grounded References**:\n`;
-      finalFooter += `  - [Yahoo Finance Link - ${ticker.toUpperCase() || 'SUBJECT'}](https://finance.yahoo.com/quote/${ticker.toUpperCase() || ''})\n`;
+      finalFooter += `  - [Yahoo Finance Link - ${resolvedTicker.toUpperCase() || 'SUBJECT'}](https://finance.yahoo.com/quote/${resolvedTicker.toUpperCase() || ''})\n`;
 
       if (resolvedPeers.length > 0) {
         finalFooter += `  - target Competitors Researched: ` + resolvedPeers.map(p => `[Yahoo Finance ${p}](https://finance.yahoo.com/quote/${p})`).join(', ') + `\n`;
@@ -5718,7 +5736,7 @@ ${instructionsForFooter}
       const docData = {
         userId: user.uid,
         ticker: analysisType === 'stock' 
-          ? (ticker.toUpperCase() || 'TICKER') 
+          ? (resolvedTicker.toUpperCase() || 'TICKER') 
           : 'MACRO',
         prompt: promptWithGroundedContext,
         output: finalReportOutput,
@@ -5726,10 +5744,24 @@ ${instructionsForFooter}
         timestamp: serverTimestamp(),
         config: { model: selectedModel }
       };
-      const docRef = await addDoc(collection(db, 'reports'), docData);
+
+      let finalReportId = "";
+      if (overrideReportId) {
+        finalReportId = overrideReportId;
+        const reportRef = doc(db, 'reports', overrideReportId);
+        await updateDoc(reportRef, {
+          output: finalReportOutput,
+          prompt: promptWithGroundedContext,
+          timestamp: serverTimestamp()
+        });
+        setActiveReport(prev => prev && prev.id === overrideReportId ? { ...prev, output: finalReportOutput, timestamp: new Date() } : prev);
+      } else {
+        const docRef = await addDoc(collection(db, 'reports'), docData);
+        finalReportId = docRef.id;
+      }
       
       // Auto-populate log form for this output with high-fidelity tickerHint for optimal yfinance ground truth routing
-      autoPopulateLogData(finalReportOutput, docRef.id, analysisType === 'stock' ? ticker.toUpperCase() : undefined);
+      autoPopulateLogData(finalReportOutput, finalReportId, analysisType === 'stock' ? resolvedTicker.toUpperCase() : undefined);
 
     } catch (err) {
       console.error(err);
@@ -5821,8 +5853,7 @@ ${instructionsForFooter}
         config: {
           responseMimeType: "application/json",
           tools: [{ googleSearch: {} }],
-          toolConfig: { includeServerSideToolInvocations: true },
-          temperature: 0.0
+          toolConfig: { includeServerSideToolInvocations: true }
         }
       });
 
