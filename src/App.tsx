@@ -3683,7 +3683,59 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       
       if (data.msg === "FINAL_REPORT") {
         setTerminal(prev => [...prev, "--- ANALYSIS COMPLETE ---"]);
-        const results = data.results || [];
+        let results = data.results || [];
+        
+        // Filter out tickers with comp score < 50 and limit to specific rev states
+        // UNLESS the user is actively screening their own custom watchlist
+        if (screenIndex !== 'watchlist') {
+          results = results.filter((r: any) => {
+            const compScore = parseFloat(r.composite || "0");
+            if (isNaN(compScore) || compScore < 50) return false;
+            
+            const rev = (r.rev_state || "").toUpperCase();
+            const isGroupA = rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
+            const isGroupB = rev.includes("SQUEEZE") || rev.includes("NEUTRAL") || rev.includes("ACCUM") || rev.includes("BOTTOM");
+            
+            return isGroupA || isGroupB;
+          });
+        }
+
+        // Custom bucket sorting: Gate Signal grouped with Rev State
+        results.sort((a: any, b: any) => {
+          const getBucket = (gateSig: string, revState: string) => {
+            const sig = (gateSig || "").toUpperCase();
+            const rev = (revState || "").toUpperCase();
+            
+            let sigRank = 4;
+            if (sig === "STRONG BUY") sigRank = 1;
+            else if (sig === "BUY") sigRank = 2;
+            else if (sig === "WATCH") sigRank = 3;
+            
+            const isHotBreakout = rev.includes("HOT BREAKOUT");
+            const isBreakout = rev.includes("BREAKOUT") && !isHotBreakout;
+            const isEarlySteam = rev.includes("EARLY STEAM");
+            const isGroupA = isHotBreakout || isBreakout || isEarlySteam;
+            
+            if (isGroupA) return sigRank;
+            return sigRank + 3; // Group B and others
+          };
+
+          const bucketA = getBucket(a.gate_sig, a.rev_state);
+          const bucketB = getBucket(b.gate_sig, b.rev_state);
+          
+          if (bucketA !== bucketB) return bucketA - bucketB;
+
+          // Sort by steam score descending
+          const steamA = parseFloat(a.steam || "0") || 0;
+          const steamB = parseFloat(b.steam || "0") || 0;
+          if (steamA !== steamB) return steamB - steamA;
+          
+          // Sort by composite score descending
+          const compA = parseFloat(a.composite || "0") || 0;
+          const compB = parseFloat(b.composite || "0") || 0;
+          return compB - compA;
+        });
+
         setScreenerResults(results);
         setIsScreened(true);
         ev.close();
@@ -4074,7 +4126,55 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
 
       const data = JSON.parse(response.text);
       if (data.results) {
-        setScreenerResults(data.results);
+        let results = data.results || [];
+        
+        if (screenIndex !== 'watchlist') {
+          results = results.filter((r: any) => {
+            const compScore = parseFloat(r.composite || "0");
+            if (isNaN(compScore) || compScore < 50) return false;
+            
+            const rev = (r.rev_state || "").toUpperCase();
+            const isGroupA = rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
+            const isGroupB = rev.includes("SQUEEZE") || rev.includes("NEUTRAL") || rev.includes("ACCUM") || rev.includes("BOTTOM");
+            
+            return isGroupA || isGroupB;
+          });
+        }
+
+        results.sort((a: any, b: any) => {
+          const getBucket = (gateSig: string, revState: string) => {
+            const sig = (gateSig || "").toUpperCase();
+            const rev = (revState || "").toUpperCase();
+            
+            let sigRank = 4;
+            if (sig === "STRONG BUY") sigRank = 1;
+            else if (sig === "BUY") sigRank = 2;
+            else if (sig === "WATCH") sigRank = 3;
+            
+            const isHotBreakout = rev.includes("HOT BREAKOUT");
+            const isBreakout = rev.includes("BREAKOUT") && !isHotBreakout;
+            const isEarlySteam = rev.includes("EARLY STEAM");
+            const isGroupA = isHotBreakout || isBreakout || isEarlySteam;
+            
+            if (isGroupA) return sigRank;
+            return sigRank + 3; // Group B and others
+          };
+
+          const bucketA = getBucket(a.gate_sig, a.rev_state);
+          const bucketB = getBucket(b.gate_sig, b.rev_state);
+          
+          if (bucketA !== bucketB) return bucketA - bucketB;
+
+          const steamA = parseFloat(a.steam || "0") || 0;
+          const steamB = parseFloat(b.steam || "0") || 0;
+          if (steamA !== steamB) return steamB - steamA;
+
+          const compA = parseFloat(a.composite || "0") || 0;
+          const compB = parseFloat(b.composite || "0") || 0;
+          return compB - compA;
+        });
+
+        setScreenerResults(results);
         setIsScreened(true);
       }
     } catch (error) {
