@@ -49,7 +49,8 @@ import {
   Network,
   Cloud,
   CloudOff,
-  Database
+  Database,
+  X
 } from 'lucide-react';
 import { format } from 'date-fns';
 import Markdown from 'react-markdown';
@@ -2976,9 +2977,10 @@ User Clarification Inquiry:
   const [watchlistTickers, setWatchlistTickers] = useState<string>(() => {
     return localStorage.getItem('watchlist_tickers') || 'AAPL, MSFT, GOOGL, NVDA, TSLA, AMD, META, NFLX, AMZN, AVGO';
   });
+  const [watchlistInputValue, setWatchlistInputValue] = useState('');
   const [watchlistSyncStatus, setWatchlistSyncStatus] = useState<'saved' | 'saving' | 'local' | 'error'>('saved');
   const [maxScreenerCount, setMaxScreenerCount] = useState<number>(30);
-  const [screenerPreset, setScreenerPreset] = useState<'full' | 'phase1' | 'phase2'>('phase1');
+  const [screenerPreset, setScreenerPreset] = useState<'full' | 'phase1' | 'phase2'>('full');
   const [rawScreenerCount, setRawScreenerCount] = useState<number>(30);
   const [screenerMode, setScreenerMode] = useState<'classic' | 'unified_v2'>('unified_v2');
 
@@ -3692,10 +3694,10 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
     const queryParams = new URLSearchParams({
       horizon: screenHorizon,
-      tickers: screenIndex === 'watchlist' ? watchlistTickers : screenTickers,
+      tickers: screenIndex === 'watchlist' ? watchlistTickers : (screenIndex === 'custom' ? screenTickers : screenTickers),
       index: screenIndex,
       screenerType: screenerMode,
-      topN: (screenIndex === 'watchlist' ? "200" : "150") // fetch more to allow client-side raw limit
+      topN: (screenIndex === 'watchlist' || screenIndex === 'custom' ? "200" : "150") // fetch more to allow client-side raw limit
     });
 
     const ev = new EventSource(`/api/vcs-run?${queryParams.toString()}`);
@@ -3708,8 +3710,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         let results = data.results || [];
         
         // Filter out tickers with comp score < 50 and limit to specific rev states
-        // UNLESS the user is actively screening their own custom watchlist
-        if (screenIndex !== 'watchlist') {
+        // UNLESS the user is actively screening their own custom watchlist or ad-hoc custom tickers
+        if (screenIndex !== 'watchlist' && screenIndex !== 'custom') {
           results = results.filter((r: any) => {
             const compScore = parseFloat(r.composite || "0") || 0;
             const steamScore = parseFloat(r.steam || "0") || 0;
@@ -3793,7 +3795,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         'russell1000': 'Russell 1000',
         'russell2000': 'Russell 2000',
         'russell3000': 'Russell 3000',
-        'watchlist': 'Watchlist'
+        'watchlist': 'Watchlist',
+        'custom': 'Custom Tickers'
       };
       const modeLabels: Record<string, string> = {
         'classic': 'Classic Screener (VCS)',
@@ -7187,6 +7190,7 @@ ${stationInput}
                         <option value="russell2000">Russell 2000</option>
                         <option value="russell3000">Russell 3000</option>
                         <option value="watchlist">Watchlist 📂</option>
+                        <option value="custom">Custom (Ad-hoc) 🎯</option>
                       </select>
                     </div>
                     <div className="space-y-1.5">
@@ -7299,41 +7303,120 @@ ${stationInput}
                         </select>
                       )}
                     </div>
-                     <div className="space-y-1.5">
-                       <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">Custom Tickers</label>
+                  </div>
+
+                  {screenIndex === 'custom' && (
+                     <div className="space-y-1.5 animate-in fade-in transition-all duration-300">
+                       <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold text-emerald-400">Ad-Hoc Tickers To Run</label>
                        <input 
                          type="text" 
                          value={screenTickers}
                          onChange={(e) => setScreenTickers(e.target.value)}
-                         placeholder="e.g. AAPL, MSFT (Overrides Index)"
-                         className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 focus:border-bento-accent outline-none font-mono text-slate-400 text-xs transition-all"
+                         placeholder="e.g. AAPL, MSFT, TSLA"
+                         className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 focus:border-bento-accent outline-none font-mono text-white text-xs transition-all"
                        />
                      </div>
-                   </div>
+                  )}
 
                   {screenIndex === 'watchlist' && (
-                    <div className="p-4 border border-indigo-500/20 bg-indigo-500/5 rounded-xl space-y-2.5 text-left transition-all duration-300 animate-in fade-in slide-in-from-top-2">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] text-indigo-400 uppercase tracking-widest font-black flex items-center gap-1.5 font-sans">
+                    <div className="p-4 border border-indigo-500/20 bg-indigo-500/5 rounded-xl space-y-4 text-left transition-all duration-300 animate-in fade-in slide-in-from-top-2">
+                      <div className="flex justify-between items-center bg-black/20 p-2 rounded-lg">
+                        <label className="text-[10px] text-indigo-400 uppercase tracking-widest font-black flex items-center gap-2 font-sans">
                           <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
                           My Saved Screener Watchlist
                         </label>
-                        <span className="text-[9px] text-bento-muted font-mono bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/10">
-                          {watchlistTickers ? watchlistTickers.split(',').map(t => t.trim()).filter(Boolean).length : 0} Tickers Saved
+                        <span className="text-[10px] font-black text-indigo-300 font-mono bg-indigo-500/20 px-2 py-1 rounded-md border border-indigo-500/20 shadow-inner">
+                          {watchlistTickers ? new Set(watchlistTickers.split(',').map(t => t.trim().toUpperCase()).filter(Boolean)).size : 0} TICKERS
                         </span>
                       </div>
-                      <textarea
-                        value={watchlistTickers}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setWatchlistTickers(val);
-                          localStorage.setItem('watchlist_tickers', val);
-                        }}
-                        placeholder="Enter tickers separated by commas, e.g. AAPL, MSFT, TSLA, NVDA"
-                        rows={3}
-                        className="w-full bg-black/40 border border-bento-border focus:border-indigo-500/40 outline-none font-mono text-indigo-300 text-xs transition-all placeholder:text-gray-700 focus:ring-1 focus:ring-indigo-500/10 rounded-xl p-3"
-                      />
-                      <div className="flex justify-between items-center text-[9px] text-bento-muted font-sans gap-2 flex-wrap">
+                      
+                      <div className="flex flex-col gap-3">
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={watchlistInputValue}
+                            onChange={(e) => setWatchlistInputValue(e.target.value.toUpperCase())}
+                            onPaste={(e) => {
+                              e.preventDefault();
+                              const pastedText = e.clipboardData.getData('text').toUpperCase();
+                              const newToAdd = pastedText.split(/[, \t\n]+/).map(t => t.trim()).filter(Boolean);
+                              const existing = watchlistTickers.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
+                              const uniqueNew = Array.from(new Set([...existing, ...newToAdd]));
+                              const val = uniqueNew.join(', ');
+                              setWatchlistTickers(val);
+                              localStorage.setItem('watchlist_tickers', val);
+                              setWatchlistInputValue('');
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ',') {
+                                e.preventDefault();
+                                const inputVal = e.currentTarget.value.trim().toUpperCase();
+                                if (!inputVal) return;
+                                const newToAdd = inputVal.split(/[, \t]+/).map(t => t.trim()).filter(Boolean);
+                                const existing = watchlistTickers.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
+                                const uniqueNew = Array.from(new Set([...existing, ...newToAdd]));
+                                const val = uniqueNew.join(', ');
+                                setWatchlistTickers(val);
+                                localStorage.setItem('watchlist_tickers', val);
+                                setWatchlistInputValue('');
+                              }
+                            }}
+                            placeholder="Add ticker(s) separated by comma or space..."
+                            className="flex-1 bg-black/40 border border-bento-border focus:border-indigo-500/40 outline-none font-mono text-white text-xs transition-all placeholder:text-gray-700 focus:ring-1 focus:ring-indigo-500/10 rounded-lg p-2.5"
+                          />
+                          <button
+                            onClick={() => {
+                              const inputVal = watchlistInputValue.trim().toUpperCase();
+                              if (!inputVal) return;
+                              const newToAdd = inputVal.split(/[, \t]+/).map(t => t.trim()).filter(Boolean);
+                              const existing = watchlistTickers.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
+                              const uniqueNew = Array.from(new Set([...existing, ...newToAdd]));
+                              const val = uniqueNew.join(', ');
+                              setWatchlistTickers(val);
+                              localStorage.setItem('watchlist_tickers', val);
+                              setWatchlistInputValue('');
+                            }}
+                            className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-xs px-4 rounded-lg transition-colors cursor-pointer"
+                          >
+                            Add
+                          </button>
+                        </div>
+                        
+                        <div className="bg-black/30 border border-white/5 rounded-lg max-h-[160px] overflow-y-auto custom-scrollbar p-2">
+                          <table className="w-full text-left font-mono text-xs">
+                            <tbody>
+                              {Array.from(new Set(watchlistTickers.split(',').map(t => t.trim().toUpperCase()).filter(Boolean))).map((ticker, idx) => (
+                                <tr key={idx} className="border-b border-white/5 group hover:bg-white/5 transition-colors">
+                                  <td className="p-2 text-indigo-300 font-black w-full">{ticker}</td>
+                                  <td className="p-2">
+                                    <button 
+                                      onClick={() => {
+                                        const newTickers = watchlistTickers.split(',').map(t => t.trim().toUpperCase()).filter(Boolean).filter(t => t !== ticker);
+                                        const val = newTickers.join(', ');
+                                        setWatchlistTickers(val);
+                                        localStorage.setItem('watchlist_tickers', val);
+                                      }}
+                                      className="text-white/20 group-hover:text-red-400 hover:bg-red-400/10 rounded px-2 py-1 transition-all"
+                                      title="Remove Ticker"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                              {!watchlistTickers && (
+                                <tr>
+                                  <td colSpan={2} className="p-4 text-center text-white/30 font-sans italic text-xs">
+                                    No tickers in watchlist.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-[9px] text-bento-muted font-sans gap-2 flex-wrap px-1">
                         <div className="flex items-center gap-1.5 py-1">
                           {watchlistSyncStatus === 'local' && (
                             <span className="text-amber-500/90 flex items-center gap-1 font-semibold uppercase tracking-wider text-[8px]">
@@ -7476,7 +7559,8 @@ ${stationInput}
                                 'russell1000': 'Russell 1000',
                                 'russell2000': 'Russell 2000',
                                 'russell3000': 'Russell 3000',
-                                'watchlist': 'Watchlist'
+                                'watchlist': 'Watchlist',
+                                'custom': 'Custom Tickers'
                               };
                               const modeLabels: Record<string, string> = {
                                 'classic': 'Classic Screener (VCS)',
