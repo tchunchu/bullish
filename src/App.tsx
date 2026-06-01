@@ -8,7 +8,7 @@
  * 
  * Keep this version as a safe rollback point.
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { 
@@ -2978,8 +2978,30 @@ User Clarification Inquiry:
   });
   const [watchlistSyncStatus, setWatchlistSyncStatus] = useState<'saved' | 'saving' | 'local' | 'error'>('saved');
   const [maxScreenerCount, setMaxScreenerCount] = useState<number>(30);
+  const [screenerPreset, setScreenerPreset] = useState<'full' | 'phase1' | 'phase2'>('phase1');
   const [rawScreenerCount, setRawScreenerCount] = useState<number>(30);
   const [screenerMode, setScreenerMode] = useState<'classic' | 'unified_v2'>('unified_v2');
+
+  const displayedScreenerResults = useMemo(() => {
+    let filtered = [...screenerResults];
+    if (screenerPreset !== 'full') {
+      filtered = filtered.filter((r: any) => {
+        const rev = (r.rev_state || "").toUpperCase();
+        if (screenerPreset === 'phase1') {
+          return rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
+        }
+        if (screenerPreset === 'phase2') {
+          return rev.includes("SQUEEZE") || rev.includes("NEUTRAL") || rev.includes("ACCUM") || rev.includes("BOTTOM");
+        }
+        return true;
+      });
+    }
+    if (screenerPreset === 'full') {
+      return filtered;
+    }
+    return filtered.slice(0, rawScreenerCount);
+  }, [screenerResults, screenerPreset, screenIndex, rawScreenerCount]);
+
   const [isScreening, setIsScreening] = useState(false);
   const [isScreened, setIsScreened] = useState(false);
   const [analysisType, setAnalysisType] = useState<'stock' | 'macro' | 'multi_stock'>('stock');
@@ -3673,7 +3695,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       tickers: screenIndex === 'watchlist' ? watchlistTickers : screenTickers,
       index: screenIndex,
       screenerType: screenerMode,
-      topN: rawScreenerCount.toString()
+      topN: (screenIndex === 'watchlist' ? "200" : "150") // fetch more to allow client-side raw limit
     });
 
     const ev = new EventSource(`/api/vcs-run?${queryParams.toString()}`);
@@ -3689,14 +3711,10 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         // UNLESS the user is actively screening their own custom watchlist
         if (screenIndex !== 'watchlist') {
           results = results.filter((r: any) => {
-            const compScore = parseFloat(r.composite || "0");
-            if (isNaN(compScore) || compScore < 50) return false;
-            
-            const rev = (r.rev_state || "").toUpperCase();
-            const isGroupA = rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
-            const isGroupB = rev.includes("SQUEEZE") || rev.includes("NEUTRAL") || rev.includes("ACCUM") || rev.includes("BOTTOM");
-            
-            return isGroupA || isGroupB;
+            const compScore = parseFloat(r.composite || "0") || 0;
+            const steamScore = parseFloat(r.steam || "0") || 0;
+            if (compScore < 50 || steamScore < 5) return false;
+            return true;
           });
         }
 
@@ -3740,202 +3758,164 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         setIsScreened(true);
         ev.close();
         setIsScreening(false);
+        setIsNeuralLoading(false);
+        setNeuralScreenerText(""); 
+        setSnapshotSortBy(screenerMode === 'unified_v2' ? 'raw' : 'vcs');
+        setTerminal(prev => [...prev, "[SYSTEM] Done! Screener populated."]);
+      } else {
+        setTerminal(prev => [...prev, data.msg].slice(-20)); // Keep last 20 lines
+      }
+    };
 
-        if (selectedScreenerModel === 'no_neural' || disableNeural) {
-          setIsNeuralLoading(false);
-          setNeuralScreenerText(""); 
-          setSnapshotSortBy(screenerMode === 'unified_v2' ? 'raw' : 'vcs');
-          
-          const indexLabels: Record<string, string> = {
-            'sp500': 'S&P 500',
-            'nasdaq100': 'Nasdaq-100',
-            'both': 'S&P 500 + NDX',
-            'russell1000': 'Russell 1000',
-            'russell2000': 'Russell 2000',
-            'russell3000': 'Russell 3000',
-            'watchlist': 'Watchlist'
-          };
-          const modeLabels: Record<string, string> = {
-            'classic': 'Classic Screener (VCS)',
-            'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
-          };
-          const horizonLabels: Record<string, string> = {
-            'weeks': 'Swing (Weeks)',
-            'months': 'Position (Months)',
-            'days': 'Day/Momentum (Days)'
-          };
-          const saveSnap = async (aiArr: any[]) => {
-            try {
-              if (user) {
-                await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
-                  timestamp: new Date().toISOString(),
-                  source: "screener",
-                  index: indexLabels[screenIndex] || "Custom/Colab",
-                  screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
-                  horizon: horizonLabels[screenHorizon] || screenHorizon,
-                  rawResults: results,
-                  aiResults: aiArr,
-                  rawOutput: "",
-                  neuralOutput: "",
-                  tickerCount: results.length,
-                  userId: user.uid
-                }));
-              } else {
-                setSavedSnapshots(prev => {
-                  const newSnapshot = {
-                    id: Date.now().toString(),
-                    timestamp: new Date().toISOString(),
-                    source: "screener",
-                    index: indexLabels[screenIndex] || "Custom/Colab",
-                    screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
-                    horizon: horizonLabels[screenHorizon] || screenHorizon,
-                    rawResults: results,
-                    aiResults: aiArr,
-                    rawOutput: "",
-                    neuralOutput: "",
-                    tickerCount: results.length
-                  };
-                  return [newSnapshot, ...prev];
-                });
-              }
-            } catch(err) {
-              console.error("Failed to save snapshot to db", err);
-            }
-          };
-          await saveSnap([]);
-          setTerminal(prev => [...prev, "[SYSTEM] Done! Saved raw screening snapshot."]);
-          return;
-        }
+    ev.onerror = () => {
+      setTerminal(prev => [...prev, "!! CONNECTION INTERRUPTED !!"]);
+      ev.close();
+      setIsScreening(false);
+    };
+  };
 
-        // -- COMMENCE NEURAL SYNTHESIS --
-        setIsNeuralLoading(true);
-        setNeuralScreenerText(""); // Keep for backwards compatibility
-        setSnapshotSortBy('neural');
+  const handleDismissTicker = (tickerToRemove: string) => {
+    setScreenerResults(prev => prev.filter(r => r.ticker !== tickerToRemove));
+  };
 
-        // Auto-save snapshot helper
-        const saveSnap = async (aiArr: any[]) => {
-          const indexLabels: Record<string, string> = {
-            'sp500': 'S&P 500',
-            'nasdaq100': 'Nasdaq-100',
-            'both': 'S&P 500 + NDX',
-            'russell1000': 'Russell 1000',
-            'russell2000': 'Russell 2000',
-            'russell3000': 'Russell 3000',
-            'watchlist': 'Watchlist'
-          };
-          const modeLabels: Record<string, string> = {
-            'classic': 'Classic Screener (VCS)',
-            'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
-          };
-          const horizonLabels: Record<string, string> = {
-            'weeks': 'Swing (Weeks)',
-            'months': 'Position (Months)',
-            'days': 'Day/Momentum (Days)'
-          };
-          try {
-            if (user) {
-              await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
-                timestamp: new Date().toISOString(),
-                source: "screener",
-                index: indexLabels[screenIndex] || "Custom/Colab",
-                screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
-                horizon: horizonLabels[screenHorizon] || screenHorizon,
-                rawResults: results,
-                aiResults: aiArr,
-                rawOutput: "",
-                neuralOutput: "",
-                tickerCount: results.length,
-                userId: user.uid
-              }));
-            } else {
-              setSavedSnapshots(prev => {
-                const newSnapshot = {
-                  id: Date.now().toString(),
-                  timestamp: new Date().toISOString(),
-                  source: "screener",
-                  index: indexLabels[screenIndex] || "Custom/Colab",
-                  screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
-                  horizon: horizonLabels[screenHorizon] || screenHorizon,
-                  rawResults: results,
-                  aiResults: aiArr,
-                  rawOutput: "",
-                  neuralOutput: "",
-                  tickerCount: results.length
-                };
-                return [newSnapshot, ...prev];
-              });
-            }
-          } catch(err) {
-            console.error("Failed to save snapshot to db", err);
-          }
-        };
+  const handleRunNeuralSynthesis = async () => {
+    if (!displayedScreenerResults.length) return;
+    setIsNeuralLoading(true);
+    setNeuralScreenerText("");
+    setSnapshotSortBy('neural');
+    setTerminal(prev => [...prev, "[SYSTEM] Establishing Neural Link..."]);
 
-        try {
-          let prompt = "";
-          if (screenerMode === 'unified_v2' && typeof coiledSpringMacroPrompt !== 'undefined') {
-            const aiTargetResults = results.slice(0, maxScreenerCount);
-            const gate_results = aiTargetResults.filter((r: any) => r.cs_signal === "HOT_BREAKOUT" || r.signal === "HOT_BREAKOUT");
-            const reversal_results = aiTargetResults.filter((r: any) => r.cs_signal === "DROP_BREAKDOWN" || r.signal === "DROP_BREAKDOWN" || (r.rev_state && r.rev_state.includes("STEAM")));
-            const overlap_results = aiTargetResults.filter((r: any) => r.cs_signal && r.cs_signal.includes("COLD"));
-            
-            // New explicit top bucket for classic high-conf STRONG BUY / BUY tickers
-            const top_quality_bulls = aiTargetResults
-              .filter((r: any) => r.signal === "STRONG BUY" || r.signal === "BUY" || r.gate_sig === "STRONG BUY" || r.gate_sig === "BUY")
-              .sort((a: any, b: any) => {
-                 const scoreA = a.neural_score || a.bull_score || a.score || a.steam_score || 0;
-                 const scoreB = b.neural_score || b.bull_score || b.score || b.steam_score || 0;
-                 return scoreB - scoreA;
-              })
-              .slice(0, 15);
-            
-            const commentary_skeleton: any = {};
-            for (const r of aiTargetResults) {
-               let rec = "WATCH";
-               if (r.cs_signal === "HOT_BREAKOUT" || r.signal === "STRONG BUY" || r.gate_sig === "STRONG BUY") rec = "STRONG BUY";
-               else if (r.signal === "BUY" || r.gate_sig === "BUY") rec = "ACCUMULATE";
-               else if (r.cs_signal === "DROP_BREAKDOWN") rec = "SHORT";
-               else if (r.cs_signal === "COLD_UP_TRAP") rec = "AVOID";
+    const saveSnap = async (aiArr: any[], isNeural = true) => {
+      const indexLabels: Record<string, string> = {
+        'sp500': 'S&P 500',
+        'nasdaq100': 'Nasdaq-100',
+        'both': 'S&P 500 + NDX',
+        'russell1000': 'Russell 1000',
+        'russell2000': 'Russell 2000',
+        'russell3000': 'Russell 3000',
+        'watchlist': 'Watchlist'
+      };
+      const modeLabels: Record<string, string> = {
+        'classic': 'Classic Screener (VCS)',
+        'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
+      };
+      const horizonLabels: Record<string, string> = {
+        'weeks': 'Swing (Weeks)',
+        'months': 'Position (Months)',
+        'days': 'Day/Momentum (Days)'
+      };
+      
+      let presetLabel = "Full";
+      if (screenerPreset === "phase1") presetLabel = "Phase 1";
+      if (screenerPreset === "phase2") presetLabel = "Phase 2";
+      
+      const snapTitle = (indexLabels[screenIndex] || "Custom/Colab") + (isNeural ? ` (Neural - ${presetLabel})` : ` (${presetLabel})`);
 
-               commentary_skeleton[r.ticker] = {
-                   "signal_state": (screenerMode === 'unified_v2') ? (r.rev_state || r.cs_signal || r.signal || r.gate_sig) : r.signal,
-                   "neural_score": r.neural_score || r.bull_score || r.steam_score || 50,
-                   "recommendation": rec,
-                   "n_entry": r.n_entry || "N/A",
-                   "n_exit": r.n_exit || "N/A",
-                   "n_tp1": r.n_tp1 || "N/A",
-                   "n_tp2": r.n_tp2 || "N/A",
-                   "technical": "",
-                   "fundamentals": "",
-                   "news": "",
-                   "moat": "",
-                   "competition": "",
-                   "insider": "",
-                   "overall_bull": "",
-                   "overall_bear": "",
-                   "final_comment": "",
-                   "_context": { 
-                       "price": r.price, 
-                       "box_high": r.box_high, 
-                       "box_low": r.box_low, 
-                       "box_spread": r.box_spread,
-                       "acc_ratio": r.acc_ratio,
-                       "dist_ratio": r.dist_ratio,
-                       "fund_pass": r.fund_pass,
-                       "rev_state": r.rev_state,
-                       "gate_signal": r.signal || r.gate_sig
-                   }
-               };
-            }
-            const structuredPayload = {
-               top_quality_bulls: top_quality_bulls,
-               gate_results: gate_results,
-               reversal_results: reversal_results,
-               overlap_results: overlap_results,
-               neural_commentary: commentary_skeleton
+      try {
+        if (user) {
+          await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
+            timestamp: new Date().toISOString(),
+            source: "screener",
+            index: snapTitle,
+            screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
+            horizon: horizonLabels[screenHorizon] || screenHorizon,
+            rawResults: displayedScreenerResults,
+            aiResults: aiArr,
+            rawOutput: "",
+            neuralOutput: "",
+            tickerCount: displayedScreenerResults.length,
+            userId: user.uid
+          }));
+        } else {
+          setSavedSnapshots(prev => {
+            const newSnapshot = {
+              id: Date.now().toString(),
+              timestamp: new Date().toISOString(),
+              source: "screener",
+              index: snapTitle,
+              screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
+              horizon: horizonLabels[screenHorizon] || screenHorizon,
+              rawResults: displayedScreenerResults,
+              aiResults: aiArr,
+              rawOutput: "",
+              neuralOutput: "",
+              tickerCount: displayedScreenerResults.length
             };
-            prompt = coiledSpringMacroPrompt + `\n\nHere are the algorithmic setups grouped in buckets. Pay specific attention to the highly scored top_quality_bulls:\n${JSON.stringify(structuredPayload, null, 2)}`;
-          } else {
-            prompt = `Analyze these top algorithmic setups. 
+            return [newSnapshot, ...prev];
+          });
+        }
+      } catch(err) {
+        console.error("Failed to save snapshot to db", err);
+      }
+    };
+
+    try {
+      const gAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_MYKEY || '' });
+      let prompt = "";
+      if (screenerMode === 'unified_v2' && typeof coiledSpringMacroPrompt !== 'undefined') {
+        const aiTargetResults = displayedScreenerResults.slice(0, maxScreenerCount);
+        const gate_results = aiTargetResults.filter((r: any) => r.cs_signal === "HOT_BREAKOUT" || r.signal === "HOT_BREAKOUT");
+        const reversal_results = aiTargetResults.filter((r: any) => r.cs_signal === "DROP_BREAKDOWN" || r.signal === "DROP_BREAKDOWN" || (r.rev_state && r.rev_state.includes("STEAM")));
+        const overlap_results = aiTargetResults.filter((r: any) => r.cs_signal && r.cs_signal.includes("COLD"));
+        
+        const top_quality_bulls = aiTargetResults
+          .filter((r: any) => r.signal === "STRONG BUY" || r.signal === "BUY" || r.gate_sig === "STRONG BUY" || r.gate_sig === "BUY")
+          .sort((a: any, b: any) => {
+             const scoreA = a.neural_score || a.bull_score || a.score || a.steam_score || 0;
+             const scoreB = b.neural_score || b.bull_score || b.score || b.steam_score || 0;
+             return scoreB - scoreA;
+          })
+          .slice(0, 15);
+        
+        const commentary_skeleton: any = {};
+        for (const r of aiTargetResults) {
+           let rec = "WATCH";
+           if (r.cs_signal === "HOT_BREAKOUT" || r.signal === "STRONG BUY" || r.gate_sig === "STRONG BUY") rec = "STRONG BUY";
+           else if (r.signal === "BUY" || r.gate_sig === "BUY") rec = "ACCUMULATE";
+           else if (r.cs_signal === "DROP_BREAKDOWN") rec = "SHORT";
+           else if (r.cs_signal === "COLD_UP_TRAP") rec = "AVOID";
+
+           commentary_skeleton[r.ticker] = {
+               "signal_state": (screenerMode === 'unified_v2') ? (r.rev_state || r.cs_signal || r.signal || r.gate_sig) : r.signal,
+               "neural_score": r.neural_score || r.bull_score || r.steam_score || 50,
+               "recommendation": rec,
+               "n_entry": r.n_entry || "N/A",
+               "n_exit": r.n_exit || "N/A",
+               "n_tp1": r.n_tp1 || "N/A",
+               "n_tp2": r.n_tp2 || "N/A",
+               "technical": "",
+               "fundamentals": "",
+               "news": "",
+               "moat": "",
+               "competition": "",
+               "insider": "",
+               "overall_bull": "",
+               "overall_bear": "",
+               "final_comment": "",
+               "_context": { 
+                   "price": r.price, 
+                   "box_high": r.box_high, 
+                   "box_low": r.box_low, 
+                   "box_spread": r.box_spread,
+                   "acc_ratio": r.acc_ratio,
+                   "dist_ratio": r.dist_ratio,
+                   "fund_pass": r.fund_pass,
+                   "rev_state": r.rev_state,
+                   "gate_signal": r.signal || r.gate_sig
+               }
+           };
+        }
+        const structuredPayload = {
+           top_quality_bulls: top_quality_bulls,
+           gate_results: gate_results,
+           reversal_results: reversal_results,
+           overlap_results: overlap_results,
+           neural_commentary: commentary_skeleton
+        };
+        prompt = coiledSpringMacroPrompt + `\n\nHere are the algorithmic setups grouped in buckets. Pay specific attention to the highly scored top_quality_bulls:\n${JSON.stringify(structuredPayload, null, 2)}`;
+      } else {
+        const aiTargetResults = displayedScreenerResults.slice(0, maxScreenerCount);
+        prompt = `Analyze these top algorithmic setups. 
 CRITICAL: DO NOT use internal knowledge for headlines. You MUST perform a fresh Google Search for EVERY ticker to find news from the LAST 20 DAYS. If no news is found within the last 20 days, state "No recent material catalyst found" rather than providing outdated historical data.
 
 STRICT REQUIREMENTS:
@@ -3951,96 +3931,83 @@ EVALUATION CRITERIA:
 
 You must respond ONLY with a valid JSON array of objects, with NO additional markdown. Each object MUST contain these exact keys: 
 ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry, neuralExit, neuralTP1, neuralTP2, technical, fundamentals, news, moat, competition, insider, overallBull (1 sentence), overallBear (1 sentence), finalComment (1 sentence synthesis of charts+news).
-          
-          Here are the algorithmic setups:
-          ${JSON.stringify(results, null, 2)}`;
-          }
-
-          const response = await ai.models.generateContent({
-            model: selectedScreenerModel,
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              tools: [{ googleSearch: {} }],
-              toolConfig: { includeServerSideToolInvocations: true }
-            }
-          });
-
-          const rawText = response.text || "[]";
-          let neuralParsed: any = [];
-          try {
-            let jsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-            const match = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-            if (match) {
-              jsonText = match[1].trim();
-            } else {
-              // Attempt to aggressively strip non-json from the start/end if possible
-              const firstBrace = Math.min(
-                jsonText.indexOf('{') !== -1 ? jsonText.indexOf('{') : Infinity,
-                jsonText.indexOf('[') !== -1 ? jsonText.indexOf('[') : Infinity
-              );
-              const lastBrace = Math.max(jsonText.lastIndexOf('}'), jsonText.lastIndexOf(']'));
-              
-              if (firstBrace !== Infinity && lastBrace !== -1 && lastBrace >= firstBrace) {
-                jsonText = jsonText.substring(firstBrace, lastBrace + 1);
-              }
-            }
-            if (jsonText) {
-              neuralParsed = JSON.parse(jsonText);
-            }
-          } catch (e) {
-            console.error("Failed to parse Neural JSON:", e);
-            console.log("Raw Text was:", rawText);
-          }
-          
-          let parsedAiArray: any[] = [];
-          if (screenerMode === 'unified_v2' && typeof neuralParsed === 'object' && !Array.isArray(neuralParsed)) {
-            const commentary = neuralParsed.neural_commentary || neuralParsed;
-            parsedAiArray = Object.keys(commentary)
-              .filter(ticker => commentary[ticker] && typeof commentary[ticker] === 'object' && (commentary[ticker].neural_score || commentary[ticker].recommendation || commentary[ticker].neuralScore))
-              .map(ticker => ({
-              ticker: ticker,
-              neuralScore: commentary[ticker].neural_score || commentary[ticker].neuralScore || 50,
-              neuralRecommendation: commentary[ticker].recommendation || commentary[ticker].neuralRecommendation || 'HOLD',
-              neuralEntry: commentary[ticker].n_entry || commentary[ticker].neuralEntry || 'N/A',
-              neuralExit: commentary[ticker].n_exit || commentary[ticker].neuralExit || 'N/A',
-              neuralTP1: commentary[ticker].n_tp1 || commentary[ticker].neuralTP1 || 'N/A',
-              neuralTP2: commentary[ticker].n_tp2 || commentary[ticker].neuralTP2 || 'N/A',
-              technical: commentary[ticker].technical || '',
-              fundamentals: commentary[ticker].fundamentals || '',
-              news: commentary[ticker].news || '',
-              moat: commentary[ticker].moat || '',
-              competition: commentary[ticker].competition || '',
-              insider: commentary[ticker].insider || '',
-              bullCase: commentary[ticker].overall_bull || commentary[ticker].overallBull || commentary[ticker].bull_case || commentary[ticker].bullCase || '',
-              bearCase: commentary[ticker].overall_bear || commentary[ticker].overallBear || commentary[ticker].bear_case || commentary[ticker].bearCase || '',
-              finalTake: commentary[ticker].final_comment || commentary[ticker].finalComment || commentary[ticker].final_take || commentary[ticker].finalTake || ''
-            }));
-          } else {
-            parsedAiArray = Array.isArray(neuralParsed) ? neuralParsed : [];
-          }
-
-          setNeuralScreenerText(JSON.stringify(parsedAiArray)); // Store parsed array to render table properly
-          setTerminal(prev => [...prev, "[SYSTEM] Neural AI Synthesis Complete."]);
-          
-          setIsNeuralLoading(false);
-          await saveSnap(parsedAiArray);
-        } catch (e) {
-          console.error("Neural analysis failed:", e);
-          setTerminal(prev => [...prev, "[SYSTEM ERROR] Neural Engine Failed."]);
-          setIsNeuralLoading(false);
-          await saveSnap([]); // still save snapshot with raw results
-        }
-      } else {
-        setTerminal(prev => [...prev, data.msg].slice(-20)); // Keep last 20 lines
+      
+      Here are the algorithmic setups:
+      ${JSON.stringify(aiTargetResults, null, 2)}`;
       }
-    };
 
-    ev.onerror = () => {
-      setTerminal(prev => [...prev, "!! CONNECTION INTERRUPTED !!"]);
-      ev.close();
-      setIsScreening(false);
-    };
+      const response = await gAI.models.generateContent({
+        model: selectedScreenerModel,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          tools: [{ googleSearch: {} }],
+          toolConfig: { includeServerSideToolInvocations: true }
+        }
+      });
+
+      const rawText = response.text || "[]";
+      let neuralParsed: any = [];
+      try {
+        let jsonText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const match = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (match) {
+          jsonText = match[1].trim();
+        } else {
+          const firstBrace = Math.min(
+            jsonText.indexOf('{') !== -1 ? jsonText.indexOf('{') : Infinity,
+            jsonText.indexOf('[') !== -1 ? jsonText.indexOf('[') : Infinity
+          );
+          const lastBrace = Math.max(jsonText.lastIndexOf('}'), jsonText.lastIndexOf(']'));
+          
+          if (firstBrace !== Infinity && lastBrace !== -1 && lastBrace >= firstBrace) {
+            jsonText = jsonText.substring(firstBrace, lastBrace + 1);
+          }
+        }
+        if (jsonText) {
+          neuralParsed = JSON.parse(jsonText);
+        }
+      } catch (e) {
+        console.error("Failed to parse Neural JSON:", e);
+      }
+      
+      let parsedAiArray: any[] = [];
+      if (screenerMode === 'unified_v2' && typeof neuralParsed === 'object' && !Array.isArray(neuralParsed)) {
+        const commentary = neuralParsed.neural_commentary || neuralParsed;
+        parsedAiArray = Object.keys(commentary)
+          .filter(ticker => commentary[ticker] && typeof commentary[ticker] === 'object' && (commentary[ticker].neural_score || commentary[ticker].recommendation || commentary[ticker].neuralScore))
+          .map(ticker => ({
+          ticker: ticker,
+          neuralScore: commentary[ticker].neural_score || commentary[ticker].neuralScore || 50,
+          neuralRecommendation: commentary[ticker].recommendation || commentary[ticker].neuralRecommendation || 'HOLD',
+          neuralEntry: commentary[ticker].n_entry || commentary[ticker].neuralEntry || 'N/A',
+          neuralExit: commentary[ticker].n_exit || commentary[ticker].neuralExit || 'N/A',
+          neuralTP1: commentary[ticker].n_tp1 || commentary[ticker].neuralTP1 || 'N/A',
+          neuralTP2: commentary[ticker].n_tp2 || commentary[ticker].neuralTP2 || 'N/A',
+          technical: commentary[ticker].technical || '',
+          fundamentals: commentary[ticker].fundamentals || '',
+          news: commentary[ticker].news || '',
+          moat: commentary[ticker].moat || '',
+          competition: commentary[ticker].competition || '',
+          insider: commentary[ticker].insider || '',
+          bullCase: commentary[ticker].overall_bull || commentary[ticker].overallBull || commentary[ticker].bull_case || commentary[ticker].bullCase || '',
+          bearCase: commentary[ticker].overall_bear || commentary[ticker].overallBear || commentary[ticker].bear_case || commentary[ticker].bearCase || '',
+          finalTake: commentary[ticker].final_comment || commentary[ticker].finalComment || commentary[ticker].final_take || commentary[ticker].finalTake || ''
+        }));
+      } else {
+        parsedAiArray = Array.isArray(neuralParsed) ? neuralParsed : [];
+      }
+
+      setNeuralScreenerText(JSON.stringify(parsedAiArray));
+      setTerminal(prev => [...prev, "[SYSTEM] Neural AI Synthesis Complete."]);
+      
+      setIsNeuralLoading(false);
+      await saveSnap(parsedAiArray, true);
+    } catch (e) {
+      console.error("Neural analysis failed:", e);
+      setTerminal(prev => [...prev, "[SYSTEM ERROR] Neural Engine Failed."]);
+      setIsNeuralLoading(false);
+    }
   };
 
   const deleteSnapshot = async (id: string) => {
@@ -4068,119 +4035,6 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
       await Promise.all(deletePromises);
     } catch (e) {
       console.error("Failed to clear snapshots", e);
-    }
-  };
-
-  const runNeuralScreen = async () => {
-    setIsScreening(true);
-    setIsScreened(false);
-    setScreenerResults([]);
-    
-    try {
-      const gAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_MYKEY || '' });
-      const indexContext = screenIndex === 'sp500' ? 'S&P 500' : screenIndex === 'nasdaq100' ? 'Nasdaq 100' : screenIndex === 'watchlist' ? 'Watchlist' : 'Russell 2000';
-      const prompt = `Act as a ruthless, disciplined "Money Mindset" equity research analyst. 
-      Perform a high-intensity market scan for the top 40 breakout stocks within the ${indexContext} index for the '${screenHorizon}' time horizon. 
-      Your judgment must be cold, calculating, and devoid of emotion. Identify legitimate wealth-building opportunities without ever loading bags.
-      ${(screenIndex === 'watchlist' ? watchlistTickers : screenTickers) ? `Focus specifically on these tickers: ${screenIndex === 'watchlist' ? watchlistTickers : screenTickers}.` : `Search across the entire ${indexContext} for high-conviction momentum stocks.`}
-      
-      For each stock, calculate:
-      1. bull_score (0-100) based on current volume confluence and price structure.
-      2. state (e.g., BREAKOUT ↑, MOMENTUM CORE, ACCUMULATION, SQUEEZE, NEUTRAL).
-      3. RSI (approximate current).
-      4. ATR% (volatility).
-      5. Current Price.
-      
-      Use googleSearch to get current market sentiment and recent price action data as of ${new Date().toISOString()}.
-      Return as many bullish stocks as possible up to 40, ranked by bull_score.`;
-
-      const response = await gAI.models.generateContent({
-        model: selectedScreenerModel,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              results: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    ticker: { type: Type.STRING },
-                    state: { type: Type.STRING },
-                    bull_score: { type: Type.NUMBER },
-                    close: { type: Type.NUMBER },
-                    rsi: { type: Type.NUMBER },
-                    atr_pct: { type: Type.NUMBER }
-                  },
-                  required: ["ticker", "state", "bull_score", "close", "rsi", "atr_pct"]
-                }
-              }
-            },
-            required: ["results"]
-          }
-        }
-      });
-
-      const data = JSON.parse(response.text);
-      if (data.results) {
-        let results = data.results || [];
-        
-        if (screenIndex !== 'watchlist') {
-          results = results.filter((r: any) => {
-            const compScore = parseFloat(r.composite || "0");
-            if (isNaN(compScore) || compScore < 50) return false;
-            
-            const rev = (r.rev_state || "").toUpperCase();
-            const isGroupA = rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
-            const isGroupB = rev.includes("SQUEEZE") || rev.includes("NEUTRAL") || rev.includes("ACCUM") || rev.includes("BOTTOM");
-            
-            return isGroupA || isGroupB;
-          });
-        }
-
-        results.sort((a: any, b: any) => {
-          const getBucket = (gateSig: string, revState: string) => {
-            const sig = (gateSig || "").toUpperCase();
-            const rev = (revState || "").toUpperCase();
-            
-            let sigRank = 4;
-            if (sig === "STRONG BUY") sigRank = 1;
-            else if (sig === "BUY") sigRank = 2;
-            else if (sig === "WATCH") sigRank = 3;
-            
-            const isHotBreakout = rev.includes("HOT BREAKOUT");
-            const isBreakout = rev.includes("BREAKOUT") && !isHotBreakout;
-            const isEarlySteam = rev.includes("EARLY STEAM");
-            const isGroupA = isHotBreakout || isBreakout || isEarlySteam;
-            
-            if (isGroupA) return sigRank;
-            return sigRank + 3; // Group B and others
-          };
-
-          const bucketA = getBucket(a.gate_sig, a.rev_state);
-          const bucketB = getBucket(b.gate_sig, b.rev_state);
-          
-          if (bucketA !== bucketB) return bucketA - bucketB;
-
-          const steamA = parseFloat(a.steam || "0") || 0;
-          const steamB = parseFloat(b.steam || "0") || 0;
-          if (steamA !== steamB) return steamB - steamA;
-
-          const compA = parseFloat(a.composite || "0") || 0;
-          const compB = parseFloat(b.composite || "0") || 0;
-          return compB - compA;
-        });
-
-        setScreenerResults(results);
-        setIsScreened(true);
-      }
-    } catch (error) {
-      console.error("Neural Screen Error:", error);
-    } finally {
-      setIsScreening(false);
     }
   };
 
@@ -6841,9 +6695,12 @@ ${stationInput}
                                   <Trash2 className="w-3 h-3" />
                                 </button>
                               </div>
+                              <div className="text-[11px] font-bold text-white mb-2 truncate">
+                                {snap.index || 'Screener Session'}
+                              </div>
                               <div className="flex gap-2">
                                 <div className="flex bg-purple-500/20 text-purple-400 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded">
-                                  {snap.aiResults?.length || 0} Tickers Chained
+                                  {snap.aiResults?.length > 0 ? `${snap.aiResults.length} Tickers Chained` : `${snap.rawResults?.length || 0} Tickers`}
                                 </div>
                               </div>
                             </div>
@@ -6957,32 +6814,50 @@ ${stationInput}
                               </div>
                             </div>
                             
-                            <div className="text-[10px] text-bento-muted font-mono mb-4 text-left border-b border-bento-border/50 pb-4">
-                              {activeSnapshot.source === 'colab_paste' ? (
-                                <>
-                                  Source: Colab Paste |{' '}
-                                  Algo: {activeSnapshot.screenerMode} |{' '}
-                                  Tickers: {activeSnapshot.tickerCount || 0} |{' '}
-                                </>
-                              ) : (
-                                <>
-                                  Source: {activeSnapshot.source || 'screener'} |{' '}
-                                  Index: {activeSnapshot.index || 'N/A'} |{' '}
-                                  Mode: {activeSnapshot.screenerMode || 'N/A'} |{' '}
-                                  Horizon: {activeSnapshot.horizon || 'N/A'} |{' '}
-                                </>
-                              )}
-                              {new Date(activeSnapshot.timestamp).toLocaleString()}
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteSnapshot(activeSnapshot.id);
-                                  setActiveSnapshot(null);
-                                }}
-                                className="ml-auto inline-flex items-center gap-1 text-[10px] text-red-500/70 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded transition-colors uppercase tracking-widest font-bold"
-                              >
-                                <Trash2 className="w-3 h-3" /> Delete
-                              </button>
+                            <div className="text-[10px] text-bento-muted font-mono mb-4 text-left border-b border-bento-border/50 pb-4 flex items-center justify-between flex-wrap gap-2">
+                              <span>
+                                {activeSnapshot.source === 'colab_paste' ? (
+                                  <>
+                                    Source: Colab Paste |{' '}
+                                    Algo: {activeSnapshot.screenerMode} |{' '}
+                                    Tickers: {activeSnapshot.tickerCount || 0} |{' '}
+                                  </>
+                                ) : (
+                                  <>
+                                    Source: {activeSnapshot.source || 'screener'} |{' '}
+                                    Index: {activeSnapshot.index || 'N/A'} |{' '}
+                                    Mode: {activeSnapshot.screenerMode || 'N/A'} |{' '}
+                                    Horizon: {activeSnapshot.horizon || 'N/A'} |{' '}
+                                  </>
+                                )}
+                                {new Date(activeSnapshot.timestamp).toLocaleString()}
+                              </span>
+                              <div className="ml-auto flex items-center gap-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (activeSnapshot.rawResults && Array.isArray(activeSnapshot.rawResults)) {
+                                      setScreenerResults(activeSnapshot.rawResults);
+                                      setNeuralScreenerText(activeSnapshot.aiResults ? JSON.stringify(activeSnapshot.aiResults) : "");
+                                      setIsScreened(true);
+                                      setActiveTab('screener');
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[10px] text-emerald-500 hover:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded transition-colors uppercase tracking-widest font-bold"
+                                >
+                                  Load
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteSnapshot(activeSnapshot.id);
+                                    setActiveSnapshot(null);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[10px] text-red-500/70 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded transition-colors uppercase tracking-widest font-bold"
+                                >
+                                  <Trash2 className="w-3 h-3" /> Delete
+                                </button>
+                              </div>
                             </div>
 
                             {snapshotSortBy === 'raw' ? (
@@ -7336,6 +7211,19 @@ ${stationInput}
                         <option value="classic">Classic</option>
                       </select>
                     </div>
+                    
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">Raw Preset Filter</label>
+                      <select 
+                        value={screenerPreset}
+                        onChange={(e) => setScreenerPreset(e.target.value as any)}
+                        className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none hover:border-bento-accent h-[34px]"
+                      >
+                        <option value="full">Raw Only Full</option>
+                        <option value="phase1">Raw Only Phase 1 (Hot Breakout, Breakout, Early Steam)</option>
+                        <option value="phase2">Raw Only Phase 2 (Squeeze, Neutral, Bottom, Accum)</option>
+                      </select>
+                    </div>
                     <div className="space-y-1.5">
                       <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">Neural Engine</label>
                       <button
@@ -7385,13 +7273,10 @@ ${stationInput}
                           onChange={(e) => setMaxScreenerCount(parseInt(e.target.value) || 30)}
                           className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none hover:border-bento-accent transition-all h-[34px]"
                         >
-                          <option value="10">Top 10</option>
-                          <option value="15">Top 15</option>
-                          <option value="20">Top 20</option>
-                          <option value="25">Top 25</option>
-                          <option value="30">Top 30</option>
-                          <option value="40">Top 40</option>
-                          <option value="50">Top 50</option>
+                          <option value="10">Top 10 Targets</option>
+                          <option value="20">Top 20 Targets</option>
+                          <option value="30">Top 30 Targets</option>
+                          <option value="40">Top 40 Targets</option>
                         </select>
                       )}
                     </div>
@@ -7497,8 +7382,19 @@ ${stationInput}
                     className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[10px] px-6 py-3 rounded-lg font-black uppercase tracking-widest transition-all flex justify-center items-center gap-2 shadow-[0_0_20px_rgba(79,70,229,0.2)]"
                   >
                     {isScreening ? <Loader2 className="w-4 h-4 animate-spin" /> : <ListFilter className="w-4 h-4" />}
-                    Execute Screening Job
+                    Execute Raw Screen
                   </button>
+
+                  {isScreened && !disableNeural && selectedScreenerModel !== 'no_neural' && (
+                    <button 
+                      onClick={handleRunNeuralSynthesis}
+                      disabled={isNeuralLoading}
+                      className="w-full mt-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[10px] px-6 py-3 rounded-lg font-black uppercase tracking-widest transition-all flex justify-center items-center gap-2 shadow-[0_0_20px_rgba(147,51,234,0.2)]"
+                    >
+                      {isNeuralLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ListFilter className="w-4 h-4" />}
+                      Run Neural Analysis
+                    </button>
+                  )}
 
                   {isScreening && (
                     <div className="mt-4 bg-black/80 border border-emerald-500/30 rounded-xl p-4 font-mono text-[10px] h-[200px] overflow-y-auto custom-scrollbar flex flex-col-reverse shadow-[0_0_15px_rgba(16,185,129,0.05)]">
@@ -7594,14 +7490,14 @@ ${stationInput}
                               const newSnapData = {
                                 timestamp: new Date().toISOString(),
                                 source: "screener",
-                                index: indexLabels[screenIndex] || "Custom/Colab",
+                                index: (indexLabels[screenIndex] || "Custom/Colab") + (screenerPreset === 'full' ? ' (Full)' : screenerPreset === 'phase1' ? ' (Phase 1)' : ' (Phase 2)'),
                                 screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
                                 horizon: horizonLabels[screenHorizon] || screenHorizon,
-                                rawResults: screenerResults,
+                                rawResults: displayedScreenerResults,
                                 aiResults: (() => { try { return JSON.parse(neuralScreenerText || "[]"); } catch { return []; } })(),
                                 rawOutput: "",
                                 neuralOutput: "",
-                                tickerCount: screenerResults.length
+                                tickerCount: displayedScreenerResults.length
                               };
                               
                               if (user) {
@@ -7628,6 +7524,7 @@ ${stationInput}
                               <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
                                 <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-bento-muted">
                                   <tr>
+                                    <th className="p-2 text-[9px] text-center">X</th>
                                     <th className="p-2 text-[9px]">BUCKET</th>
                                     <th className="p-2 text-[9px]">TICKER</th>
                                     <th className="p-2 text-[9px]">PRICE</th>
@@ -7647,8 +7544,11 @@ ${stationInput}
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {screenerResults.map((r, i) => (
+                                  {displayedScreenerResults.map((r, i) => (
                                     <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                      <td className="p-2 text-center">
+                                        <button onClick={() => handleDismissTicker(r.ticker)} className="text-red-500/50 hover:text-red-400 font-bold px-1" title="Dismiss">×</button>
+                                      </td>
                                       <td className="p-2 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: r.bucket?.includes("3-WAY") ? "#a78bfa" : r.bucket?.includes("STRONG BUY") ? "#00ff66" : r.bucket?.includes("BUY ") ? "#10b981" : r.bucket?.includes("CS+Gate") ? "#f97316" : r.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{r.bucket}</td>
                                       <td className="p-2 font-bold text-blue-400">
                                         <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
@@ -7675,6 +7575,7 @@ ${stationInput}
                             <table className="w-full text-left text-sm text-white border-collapse">
                               <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-bento-muted">
                                 <tr>
+                                  <th className="p-3 text-center">X</th>
                                   <th className="p-3">Ticker</th>
                                   <th className="p-3">Score</th>
                                   <th className="p-3">State</th>
@@ -7685,8 +7586,11 @@ ${stationInput}
                                 </tr>
                               </thead>
                               <tbody>
-                                {screenerResults.map((r, i) => (
+                                {displayedScreenerResults.map((r, i) => (
                                   <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                    <td className="p-3 text-center">
+                                      <button onClick={() => handleDismissTicker(r.ticker)} className="text-red-500/50 hover:text-red-400 font-bold px-1" title="Dismiss">×</button>
+                                    </td>
                                     <td className="p-3">
                                       <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-bold">
                                         {r.ticker}
@@ -7704,7 +7608,7 @@ ${stationInput}
                             </table>
                             )}
                             </div>
-                            {renderRawScreenerMobile(screenerResults, screenerMode === 'unified_v2')}
+                            {renderRawScreenerMobile(displayedScreenerResults, screenerMode === 'unified_v2')}
                           </>
                         )}
                         {snapshotSortBy === 'neural' && (
@@ -7770,7 +7674,7 @@ ${stationInput}
                                       if (!Array.isArray(neuralData)) return <tr><td colSpan={10} className="p-4 text-center text-red-400 font-mono text-xs whitespace-pre-wrap">{neuralScreenerText}</td></tr>;
                                       return neuralData.map((r: any, i: number) => {
                                         if (screenerMode === 'unified_v2') {
-                                           const rawMatch = screenerResults.find(sr => sr.ticker === r.ticker) || {} as any;
+                                           const rawMatch = displayedScreenerResults.find(sr => sr.ticker === r.ticker) || {} as any;
                                            return (
                                             <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors align-top whitespace-nowrap">
                                               <td className="p-3 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: rawMatch.bucket?.includes("3-WAY") ? "#a78bfa" : rawMatch.bucket?.includes("CS+Gate") ? "#f97316" : rawMatch.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{rawMatch.bucket || "N/A"}</td>
@@ -7839,7 +7743,7 @@ ${stationInput}
                                 }
                               })(),
                               screenerMode === 'unified_v2',
-                              screenerResults
+                              displayedScreenerResults
                             )}
                           </>
                         )}
@@ -7847,7 +7751,7 @@ ${stationInput}
                     )}
                         {snapshotSortBy === 'vcs' && (
                           <div className="space-y-4">
-                            {screenerResults.map((r, i) => (
+                            {displayedScreenerResults.map((r, i) => (
                               <div key={i} className="bg-[#12121e] border border-white/5 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between hover:border-white/10 transition-colors">
                                 <div className="flex items-center gap-4 w-full md:w-auto text-left">
                                   <div className="flex flex-col">
@@ -7879,7 +7783,7 @@ ${stationInput}
                                 </div>
                               </div>
                             ))}
-                            {screenerResults.length === 0 && (
+                            {displayedScreenerResults.length === 0 && (
                               <div className="text-center p-8 text-bento-muted italic test-xs">No results found matching criteria.</div>
                             )}
                           </div>
