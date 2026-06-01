@@ -87,6 +87,8 @@ async function getTickersForIndex(index: string): Promise<string[]> {
       }
     } else if (index === 'nasdaq100') {
       tickers = ['AAPL','MSFT','NVDA','AMZN','META','GOOGL','GOOG','TSLA','AVGO','COST','NFLX','TMUS','AMD','LIN','CSCO','ADBE','PEP','INTU','TXN','QCOM','HON','AMGN','AMAT','ISRG','BKNG','SBUX','GILD','MDLZ','ADI','VRTX','MU','REGN','LRCX','KLAC','MELI','SNPS','CDNS','PANW','ABNB','CRWD','MRVL','ADP','ORLY','MAR','FTNT','CTAS','WDAY','CEG','PAYX','KDP','MRNA','ODFL','PCAR','MNST','DXCM','FAST','ROST','CPRT','KHC','GEHC','DDOG','TEAM','IDXX','EXC','AEP','BKR','XEL','EA','CTSH','NXPI','ON','FANG','ZS','MCHP','TTWO','BIIB','TTD','VRSK','ILMN','DLTR','ALGN','ENPH','OKTA','MTCH','SWKS','ZBRA','NTNX','PAYC','LULU','EBAY','PDD','JD','BIDU','BILI','NTES','CSGP','ACGL','FSLR','ARM','DASH','ROP','CSX','UAL'];
+    } else if (index === 'watchlist') {
+      tickers = ["AAPL", "MSFT", "GOOGL", "NVDA", "TSLA", "AMD", "META", "NFLX", "AMZN", "AVGO"];
     } else if (index === 'russell1000' || index === 'russell2000' || index === 'russell3000') {
        try {
          // Source 1: SEC EDGAR 
@@ -154,6 +156,7 @@ async function getTickersForIndex(index: string): Promise<string[]> {
       const FALLBACKS: { [key: string]: string[] } = {
         sp500: ["AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "BRK-B", "UNH", "LLY", "JPM", "V", "XOM", "AVGO", "MA", "PG", "COST", "HD", "MRK", "ABBV", "CVX", "KO", "PEP", "WMT", "ADBE", "AMD", "CRM", "TMO", "ACN", "MCD", "CSCO", "BAC", "ABT", "NFLX", "LIN", "DHR", "ORCL", "TXN", "NEE", "PM", "DIS", "QCOM", "VZ", "INTC", "IBM", "AMGN", "CAT", "GS", "HON", "SPGI"],
         nasdaq100: ['AAPL','MSFT','NVDA','AMZN','META','GOOGL','GOOG','TSLA','AVGO','COST','NFLX','TMUS','AMD','LIN','CSCO','ADBE','PEP','INTU','TXN','QCOM','HON','AMGN','AMAT','ISRG','BKNG','SBUX','GILD','MDLZ','ADI','VRTX','MU','REGN','LRCX','KLAC','MELI','SNPS','CDNS','PANW','ABNB','CRWD','MRVL','ADP','ORLY','MAR','FTNT','CTAS','WDAY','CEG','PAYX','KDP','MRNA','ODFL','PCAR','MNST','DXCM','FAST','ROST','CPRT','KHC','GEHC','DDOG','TEAM','IDXX','EXC','AEP','BKR','XEL','EA','CTSH','NXPI','ON','FANG','ZS','MCHP','TTWO','BIIB','TTD','VRSK','ILMN','DLTR','ALGN','ENPH','OKTA','MTCH','SWKS','ZBRA','NTNX','PAYC','LULU','EBAY','PDD','JD','BIDU','BILI','NTES','CSGP','ACGL','FSLR','ARM','DASH','ROP','CSX','UAL'],
+        watchlist: ["AAPL", "MSFT", "GOOGL", "NVDA", "TSLA", "AMD", "META", "NFLX", "AMZN", "AVGO"],
         russell2000: ["SMCI", "VRT", "ANF", "CELH", "ELF", "LITE", "PI", "RAMP", "SFBS", "TNDM", "WFRD", "XPO", "ZS", "APP", "BHC", "CHX", "DKNG", "FRPT", "GTLB", "HIMS", "IOT", "MDB", "NCNO", "OPCH", "PATH", "RIOT", "ROKU", "SOFI", "TOST", "UPST", "VAL", "W", "YOU", "GME", "AMC", "KPTI", "SWAV", "MEDP", "COHR", "ACAD", "NBIX", "RGEN"]
       };
       tickers = FALLBACKS[index] || ["AAPL", "MSFT", "NVDA"];
@@ -1048,8 +1051,12 @@ async function startServer() {
 
     // ── 1. Rev state — priority is explicit ────
     let rev_state = vcs.state || "UNKNOWN";
-    if (vcs.trend === "UP" && (vcs.vcs_delta ?? 0) > 10) {
+    if (coiled.signal === "HOT_BREAKOUT") {
+      rev_state = "HOT BREAKOUT 🔥";
+    } else if (vcs.trend === "UP" && (vcs.vcs_delta ?? 0) > 10) {
       rev_state = "EARLY STEAM 🚀";
+    } else if (vcs.squeeze === "YES") {
+      rev_state = "SQUEEZE READY 🗜️";
     } else if ((vcs.rsi ?? 50) >= 35 && (vcs.rsi ?? 50) < 50 && vcs.accum === "YES") {
       rev_state = "ACCUMULATION 📦";
     } else if ((vcs.rsi ?? 50) < 35 && (vcs.vcs_delta ?? 0) > 0) {
@@ -1065,18 +1072,22 @@ async function startServer() {
     );
     const isRev = rev_state.includes("STEAM") ||
                   rev_state.includes("BOTTOM") ||
-                  rev_state.includes("ACCUMULATION");
+                  rev_state.includes("ACCUMULATION") ||
+                  rev_state.includes("BREAKOUT") ||
+                  rev_state.includes("SQUEEZE");
 
     let bucket = "NONE";
-    let bucket_rank = 4;
+    let bucket_rank = 6;
 
     if (isCSHot && isGate && isRev) { bucket = "3-WAY 🎯"; bucket_rank = 0; }
-    else if (isCSHot && isGate) { bucket = "CS+Gate 🔥"; bucket_rank = 1; }
-    else if (isCSHot && isRev) { bucket = "CS+Rev 🌱"; bucket_rank = 2; }
-    else if (isGate && isRev) { bucket = "Gate+Rev ⚙️"; bucket_rank = 3; }
-    else if (isCSHot) { bucket = "CS Only"; bucket_rank = 5; }
+    else if (gate.signal === "STRONG BUY") { bucket = "STRONG BUY ⭐"; bucket_rank = 1; }
+    else if (gate.signal === "BUY") { bucket = "BUY ⭐"; bucket_rank = 2; }
+    else if (isCSHot && isGate) { bucket = "CS+Gate 🔥"; bucket_rank = 3; }
+    else if (isCSHot && isRev) { bucket = "CS+Rev 🌱"; bucket_rank = 4; }
+    else if (isGate && isRev) { bucket = "Gate+Rev ⚙️"; bucket_rank = 5; }
+    else if (isCSHot) { bucket = "CS Only"; bucket_rank = 6; }
 
-    // Require at least 2-signal overlap — single-signal setups have too much noise (unless custom list run)
+    // Require at least 2-signal overlap, OR a pure high-conviction BUY/STRONG BUY signal
     if (!isCustom && (bucket === "NONE" || bucket === "CS Only")) return null;
 
     // ── 3. Steam score — max 14 ────────────────────────────────
@@ -1163,6 +1174,19 @@ async function startServer() {
         return null;
       })();
 
+    // Calculate Gate Base Score
+    let gate_score = 0;
+    if (gate.signal === "STRONG BUY") gate_score = 50000;
+    else if (gate.signal === "BUY") gate_score = 30000;
+    else if (isCSHot) gate_score = 10000; // Standalone breakout baseline if no gate signal
+
+    let rev_rank_score = 0;
+    if (rev_state.includes("BREAKOUT")) rev_rank_score = 40000;
+    else if (rev_state.includes("STEAM")) rev_rank_score = 35000;
+    else if (rev_state.includes("BOTTOM")) rev_rank_score = 25000;
+    else if (rev_state.includes("ACCUMULATION")) rev_rank_score = 20000;
+    else if (rev_state.includes("SQUEEZE")) rev_rank_score = 15000;
+
     return {
        bucket,
        bucket_rank,
@@ -1181,7 +1205,6 @@ async function startServer() {
        rr,
        ma_stack: vcs.trend === "UP" ? "BULLISH" : vcs.trend === "DOWN" ? "BEARISH" : "MIXED",
        vol_surge: coiled.acc_ratio ? coiled.acc_ratio.toFixed(2) + "x" : "1.00x",
-       sentiment: "NEUTRAL",
        cs_signal: coiled.signal,
        neural_score: Math.max(coiled.neural_score || 0, gate.bull_score || 0, vcs.bull_score || 0),
        bull_score: Math.max(coiled.neural_score || 0, gate.bull_score || 0, vcs.bull_score || 0),
@@ -1200,7 +1223,7 @@ async function startServer() {
        trend: vcs.trend || "NONE",
        rsi: Math.round(vcs.rsi || coiled.rsi || 50),
        atr_pct: atr_pct,
-       sort_score: (4 - bucket_rank) * 1000 + compositeScore * 10,
+       sort_score: gate_score + rev_rank_score + (compositeScore * 10),
     };
   }
 
@@ -1264,6 +1287,116 @@ async function startServer() {
           // Safe value taggers
           const getVal = (v: any, fallback: any = "N/A") => (v === undefined || v === null) ? fallback : v;
 
+          // Compute ROIC, WACC and Value Spread dynamically and safely
+          let computedROIC: any = "N/A";
+          let computedWACC: any = "N/A";
+          let computedSpread: any = "N/A";
+
+          try {
+            const rawDebt = fData.totalDebt;
+            const rawCash = fData.totalCash;
+            const rawMcap = pData.marketCap ?? sDetail.marketCap;
+            const rawRev = fData.totalRevenue;
+            const rawOpMargin = fData.operatingMargins;
+            const rawDToE = fData.debtToEquity;
+            const rawPB = kStats.priceToBook ?? sDetail.priceToBook;
+            const rawBeta = sDetail.beta ?? kStats.beta ?? 1.0;
+
+            // 1. Calculate EBIT
+            let ebit = 0;
+            if (rawRev && rawOpMargin) {
+              ebit = rawRev * rawOpMargin;
+            } else if (rawMcap) {
+              // fallback estimation using market cap and an average margin
+              ebit = rawMcap * 0.15 * 0.10; // estimate 15% rev, 10% margin
+            }
+
+            // 2. Tax Rate standard default
+            const taxRate = 0.21;
+
+            // 3. Stockholders Equity resolution
+            let totalEquity = 0;
+            if (rawDebt && rawDToE && rawDToE > 0) {
+              totalEquity = rawDebt / (rawDToE / 100);
+            } else if (rawMcap && rawPB && rawPB > 0) {
+              totalEquity = rawMcap / rawPB;
+            } else if (rawMcap) {
+              totalEquity = rawMcap * 0.4;
+            }
+
+            // 4. Invested Capital & Captive Finance Adjustment Selection
+            const debt = rawDebt || 0;
+            const cash = rawCash || 0;
+            
+            const industry = (sProfile.industry || "").toLowerCase();
+            const sector = (sProfile.sector || "").toLowerCase();
+            
+            // Standard industries or profiles that operate captive banking arms to leverage lease/receivables books (e.g., DE, CAT, GM, F)
+            const isCaptiveFinance = 
+              industry.includes("farm") || 
+              industry.includes("construction") || 
+              industry.includes("machinery") ||
+              industry.includes("heavy trucks") ||
+              industry.includes("auto manufacturer") || 
+              (sector !== "financial services" && rawDToE && rawDToE > 150);
+
+            let operatingDebt = debt;
+            let adjustedNopat = ebit * (1 - taxRate);
+            let captiveFinanceAdjusted = false;
+
+            if (isCaptiveFinance && debt > 0) {
+              // Extract/deduct non-operating financial debt: limit operating industrial debt to 35% of total consolidation debt or index to equity
+              operatingDebt = debt * 0.35;
+              const maxOperatingDebt = totalEquity > 0 ? totalEquity * 1.2 : debt * 0.35;
+              if (operatingDebt > maxOperatingDebt) {
+                operatingDebt = maxOperatingDebt;
+              }
+              // Normalizing operating earnings (NOPAT) to exclude financial services division interest spreads, targeting industrial operations
+              adjustedNopat = (ebit * 0.65) * (1 - taxRate);
+              captiveFinanceAdjusted = true;
+            }
+
+            let investedCapital = totalEquity + operatingDebt - cash;
+            if (investedCapital <= 0) {
+              investedCapital = totalEquity > 0 ? totalEquity : (rawMcap ? rawMcap * 0.4 : 1e9);
+            }
+
+            // 5. Consolidated / Industrial ROIC
+            let roicVal = adjustedNopat / investedCapital;
+
+            // 6. Cost of Equity (CAPM)
+            const rf = 0.042; // US 10Y Yield
+            const erp = 0.050; // Equity Risk Premium
+            const beta = Math.max(0.4, Math.min(2.5, rawBeta));
+            const costOfEquity = rf + (beta * erp);
+
+            // 7. Cost of Debt standard default
+            const costOfDebt = 0.06;
+
+            // 8. WACC with adjusted operating cap structure
+            const valTotal = (rawMcap || totalEquity) + operatingDebt;
+            let waccVal = costOfEquity;
+            if (valTotal > 0 && rawMcap) {
+              const we = rawMcap / valTotal;
+              const wd = operatingDebt / valTotal;
+              waccVal = (we * costOfEquity) + (wd * costOfDebt * (1 - taxRate));
+            }
+
+            // 9. Bounds checking to prevent crazy outliers in output
+            if (roicVal > 2.0) roicVal = 0.25;
+            if (roicVal < -1.0) roicVal = -0.05;
+            if (waccVal > 0.25) waccVal = 0.09;
+            if (waccVal < 0.02) waccVal = 0.065;
+
+            const spreadVal = roicVal - waccVal;
+
+            computedROIC = roicVal;
+            computedWACC = waccVal;
+            computedSpread = spreadVal;
+          } catch (calcErr) {
+            console.warn(`[Node Harvest Engine] ROIC/WACC computation error for ${sym}:`, calcErr);
+          }
+
           results[sym] = {
             price: getVal(fData.currentPrice ?? pData.regularMarketPrice ?? sDetail.regularMarketPrice),
             marketCap: getVal(pData.marketCap ?? sDetail.marketCap),
@@ -1282,6 +1415,9 @@ async function startServer() {
             currentRatio: getVal(fData.currentRatio),
             returnOnEquity: getVal(fData.returnOnEquity),
             targetMeanPrice: getVal(fData.targetMeanPrice),
+            roic: computedROIC,
+            wacc: computedWACC,
+            valSpread: computedSpread,
             sector: getVal(sProfile.sector),
             description: getVal(sProfile.longBusinessSummary),
             previousClose: getVal(sDetail.previousClose),

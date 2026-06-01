@@ -46,7 +46,10 @@ import {
   Terminal,
   ListFilter,
   Play,
-  Network
+  Network,
+  Cloud,
+  CloudOff,
+  Database
 } from 'lucide-react';
 import { format } from 'date-fns';
 import Markdown from 'react-markdown';
@@ -65,7 +68,8 @@ import {
   doc, 
   serverTimestamp,
   Timestamp,
-  updateDoc 
+  updateDoc,
+  setDoc
 } from 'firebase/firestore';
 import { ai, MODELS } from './lib/gemini';
 import { clsx, type ClassValue } from 'clsx';
@@ -2291,21 +2295,41 @@ Respond in professional, clean, scannable markdown formatting. Keep your answer 
     setIsKnowledgeLoading(true);
 
     try {
-      // Find what ticker we are currently analyzing
+      const isScreenerActive = (activeTab === 'screener' && !isScreening && screenerResults.length > 0) || (activeTab === 'history' && historySubTab === 'screener' && activeSnapshot);
+
       let activeTicker = ticker || 'TICKER';
       let reportText = rawOutput;
       
-      if (activeReport) {
-        activeTicker = activeReport.ticker;
-        reportText = activeReport.output;
-      } else if (viewingReportFromTrack) {
-        activeTicker = viewingReportFromTrack.ticker;
-        reportText = viewingReportFromTrack.output;
+      if (isScreenerActive) {
+         if (activeSnapshot) {
+             reportText = "Screener Raw Results: " + JSON.stringify(activeSnapshot.rawResults) + "\n\nNeural Insights: " + JSON.stringify(activeSnapshot.aiResults);
+         } else {
+             reportText = "Screener Raw Results: " + JSON.stringify(screenerResults) + "\n\nNeural Insights: " + neuralScreenerText;
+         }
+      } else {
+        if (activeReport) {
+          activeTicker = activeReport.ticker;
+          reportText = activeReport.output;
+        } else if (viewingReportFromTrack) {
+          activeTicker = viewingReportFromTrack.ticker;
+          reportText = viewingReportFromTrack.output;
+        }
       }
 
-      const responseStream = await ai.models.generateContentStream({
-        model: selectedModel,
-        contents: `You are an elite institutional equity analyst and financial knowledge system. 
+      const promptContext = isScreenerActive
+        ? `You are an elite quantitative analyst and AI screener assistant. 
+You are answering a user's ad-hoc inquiry regarding the latest generated Screener output.
+### GUIDELINES:
+- Provide high density, direct, and factually grounded details.
+- Avoid generalities. Use specifics regarding the provided screener data. Use real-time Google search grounding if necessary to augment the screener data.
+- Keep the answer concise.
+
+Current Screener Data Details:
+${reportText ? reportText.substring(0, 20000) : "No screener output available."}
+
+User Clarification Inquiry:
+"${queryText}"`
+        : `You are an elite institutional equity analyst and financial knowledge system. 
 You are answering a user's ad-hoc knowledge/search inquiry regarding ${activeTicker} to clarify specific aspects of the research report or sector metrics up to today (May 24, 2026).
 
 ### GUIDELINES:
@@ -2317,7 +2341,11 @@ Current Report Context:
 ${reportText ? reportText.substring(0, 15000) : "No report context uploaded yet."}
 
 User Clarification Inquiry:
-"${queryText}"`,
+"${queryText}"`;
+
+      const responseStream = await ai.models.generateContentStream({
+        model: selectedModel,
+        contents: promptContext,
         config: {
           tools: [{ googleSearch: {} }],
           toolConfig: { includeServerSideToolInvocations: true }
@@ -2387,16 +2415,22 @@ User Clarification Inquiry:
   };
 
   const renderKnowledgeAssistant = () => {
+    const isScreenerActive = (activeTab === 'screener' && !isScreening && screenerResults.length > 0) || (activeTab === 'history' && historySubTab === 'screener' && activeSnapshot);
     const isViewingAnyReport = 
       (activeTab === 'generate' && rawOutput && !generating) ||
       (activeTab === 'history' && historySubTab === 'reports' && activeReport) ||
       (viewingReportFromTrack !== null);
 
-    if (!isViewingAnyReport) return null;
+    if (!isViewingAnyReport && !isScreenerActive) return null;
 
     let activeTicker = ticker || 'TICKER';
-    if (activeReport) activeTicker = activeReport.ticker;
-    else if (viewingReportFromTrack) activeTicker = viewingReportFromTrack.ticker;
+    if (isScreenerActive) {
+      activeTicker = "Screener Results";
+    } else if (activeReport) {
+       activeTicker = activeReport.ticker;
+    } else if (viewingReportFromTrack) {
+       activeTicker = viewingReportFromTrack.ticker;
+    }
 
     return (
       <div className="fixed bottom-6 right-6 z-[95] font-sans">
@@ -2436,15 +2470,24 @@ User Clarification Inquiry:
                       <Search className="w-4 h-4 text-purple-300" />
                     </div>
                     <p className="text-[10px] text-gray-300 leading-relaxed max-w-sm mx-auto">
-                      Clarify features, calculate valuation options, or lookup active drivers for <b className="text-purple-400">{activeTicker}</b>. You can rebuild the entire master dossier right from your findings.
+                      {isScreenerActive ? (
+                        <>Clarify insights, cross-reference data, or look up recent news for the current <b className="text-purple-400">Screener Output</b>.</>
+                      ) : (
+                        <>Clarify features, calculate valuation options, or lookup active drivers for <b className="text-purple-400">{activeTicker}</b>. You can rebuild the entire master dossier right from your findings.</>
+                      )}
                     </p>
                     <div className="grid grid-cols-2 gap-2 pt-2">
-                      {[
+                      {(isScreenerActive ? [
+                        `Summarize the top setups`,
+                        `Which tickers have highest neural score?`,
+                        `Explain the macro regime`,
+                        `Any recent news on the top ticker?`
+                      ] : [
                         `Detail active ${activeTicker} risks`,
                         `Explain their operational margins`,
                         `Worst-case downside limits`,
                         `Competitor technical metrics`
-                      ].map((item, idx) => (
+                      ]).map((item, idx) => (
                         <button
                           key={idx}
                           onClick={() => handleQueryKnowledge(item)}
@@ -2471,7 +2514,7 @@ User Clarification Inquiry:
                             {msg.content}
                           </Markdown>
                           
-                          {msg.role === 'assistant' && msg.content && !isKnowledgeLoading && (
+                          {msg.role === 'assistant' && msg.content && !isKnowledgeLoading && !isScreenerActive && (
                             <div className="mt-3 pt-3 border-t border-white/5 flex justify-end">
                               <button
                                 onClick={() => {
@@ -2571,7 +2614,11 @@ User Clarification Inquiry:
                     {r.ticker}
                   </a>
                   {isUnified && r.bucket && (
-                    <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                    <span className="px-1.5 py-0.5 rounded text-[8px] font-bold border" style={{
+                      backgroundColor: r.bucket?.includes("3-WAY") ? "rgba(167, 139, 250, 0.1)" : r.bucket?.includes("STRONG BUY") ? "rgba(0, 255, 102, 0.1)" : r.bucket?.includes("BUY ") ? "rgba(16, 185, 129, 0.1)" : r.bucket?.includes("CS+Gate") ? "rgba(249, 115, 22, 0.1)" : r.bucket?.includes("CS+Rev") ? "rgba(52, 211, 153, 0.1)" : "rgba(96, 165, 250, 0.1)",
+                      color: r.bucket?.includes("3-WAY") ? "#a78bfa" : r.bucket?.includes("STRONG BUY") ? "#00ff66" : r.bucket?.includes("BUY ") ? "#10b981" : r.bucket?.includes("CS+Gate") ? "#f97316" : r.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa",
+                      borderColor: r.bucket?.includes("3-WAY") ? "rgba(167, 139, 250, 0.2)" : r.bucket?.includes("STRONG BUY") ? "rgba(0, 255, 102, 0.2)" : r.bucket?.includes("BUY ") ? "rgba(16, 185, 129, 0.2)" : r.bucket?.includes("CS+Gate") ? "rgba(249, 115, 22, 0.2)" : r.bucket?.includes("CS+Rev") ? "rgba(52, 211, 153, 0.2)" : "rgba(96, 165, 250, 0.2)",
+                    }}>
                       {r.bucket}
                     </span>
                   )}
@@ -2594,9 +2641,6 @@ User Clarification Inquiry:
                     </span>
                     <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
                       State: {r.rev_state || '—'}
-                    </span>
-                    <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-white/5 text-white/80 border border-white/10">
-                      Sent: {r.sentiment || '—'}
                     </span>
                   </div>
 
@@ -2929,7 +2973,12 @@ User Clarification Inquiry:
   const [screenHorizon, setScreenHorizon] = useState('weeks');
   const [screenTickers, setScreenTickers] = useState('');
   const [screenIndex, setScreenIndex] = useState('sp500');
-  const [maxScreenerCount, setMaxScreenerCount] = useState<number>(25);
+  const [watchlistTickers, setWatchlistTickers] = useState<string>(() => {
+    return localStorage.getItem('watchlist_tickers') || 'AAPL, MSFT, GOOGL, NVDA, TSLA, AMD, META, NFLX, AMZN, AVGO';
+  });
+  const [watchlistSyncStatus, setWatchlistSyncStatus] = useState<'saved' | 'saving' | 'local' | 'error'>('saved');
+  const [maxScreenerCount, setMaxScreenerCount] = useState<number>(30);
+  const [rawScreenerCount, setRawScreenerCount] = useState<number>(30);
   const [screenerMode, setScreenerMode] = useState<'classic' | 'unified_v2'>('unified_v2');
   const [isScreening, setIsScreening] = useState(false);
   const [isScreened, setIsScreened] = useState(false);
@@ -2983,7 +3032,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
 ### SYNTHESIS RULES:
 1. **MARKET CONTEXT & THE MOAT:** Do not give generic volume explanations. Read the \`acc_ratio\`, \`dist_ratio\`, and \`fund_pass\` data inside the \`_context\` object. Draw on your knowledge of the company's business model, fundamental moat, recent earnings catalysts, and macro sector dynamics to explain *why* the data looks the way it does. 
-2. **ALIGN WITH SIGNAL_STATE:** - **HOT_BREAKOUT:** Focus the \`bull_case\` on structural tailwinds, supply chain dominance, and fundamental catalysts that justify the institutional accumulation.
+2. **ALIGN WITH SIGNAL_STATE:** 
+   - **HOT_BREAKOUT** or **STRONG BUY / BUY:** Focus the \`bull_case\` on structural tailwinds, supply chain dominance, and fundamental catalysts that justify the institutional accumulation.
    - **DROP_BREAKDOWN:** Focus the \`bear_case\` on deteriorating fundamentals, competitive threats, or macro headwinds driving the distribution.
    - **COLD_UP_TRAP:** Explicitly state that retail is buying into overhead supply without professional sponsorship. Focus the \`bear_case\` on imminent rejection at resistance.
    - **COLD_DOWN_TRAP:** This is a potential false breakdown. Focus the \`bull_case\` on the lack of institutional distribution and the high probability of a reversal bounce off support.
@@ -3365,6 +3415,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     ai: true,
     valuation: true,
     technical: true,
+    postMortem: true,
     trade: true
   });
 
@@ -3427,6 +3478,64 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
     return unsubscribe;
   }, [user]);
+
+  // Watchlist Firestore Sync Listener
+  useEffect(() => {
+    if (!user) {
+      setWatchlistSyncStatus('local');
+      return;
+    }
+
+    const userDocRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data && typeof data.watchlist === 'string') {
+          setWatchlistTickers(prev => {
+            if (prev !== data.watchlist) {
+              setWatchlistSyncStatus('saved');
+              return data.watchlist;
+            }
+            return prev;
+          });
+          localStorage.setItem('watchlist_tickers', data.watchlist);
+        }
+      }
+    }, (error) => {
+      setWatchlistSyncStatus('error');
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  // Debounce saving watchlist to Firestore
+  useEffect(() => {
+    if (!user) {
+      setWatchlistSyncStatus('local');
+      return;
+    }
+
+    setWatchlistSyncStatus('saving');
+
+    const timer = setTimeout(async () => {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, {
+          email: user.email || '',
+          displayName: user.displayName || '',
+          lastActive: new Date().toISOString(),
+          watchlist: watchlistTickers
+        }, { merge: true });
+        setWatchlistSyncStatus('saved');
+      } catch (err) {
+        console.error("Failed to sync watchlist to Firestore:", err);
+        setWatchlistSyncStatus('error');
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [watchlistTickers, user]);
 
   // Trackers Listener
   useEffect(() => {
@@ -3520,10 +3629,10 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
     const queryParams = new URLSearchParams({
       horizon: screenHorizon,
-      tickers: screenTickers,
+      tickers: screenIndex === 'watchlist' ? watchlistTickers : screenTickers,
       index: screenIndex,
       screenerType: screenerMode,
-      topN: maxScreenerCount.toString()
+      topN: rawScreenerCount.toString()
     });
 
     const ev = new EventSource(`/api/vcs-run?${queryParams.toString()}`);
@@ -3550,7 +3659,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             'both': 'S&P 500 + NDX',
             'russell1000': 'Russell 1000',
             'russell2000': 'Russell 2000',
-            'russell3000': 'Russell 3000'
+            'russell3000': 'Russell 3000',
+            'watchlist': 'Watchlist'
           };
           const modeLabels: Record<string, string> = {
             'classic': 'Classic Screener (VCS)',
@@ -3617,7 +3727,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             'both': 'S&P 500 + NDX',
             'russell1000': 'Russell 1000',
             'russell2000': 'Russell 2000',
-            'russell3000': 'Russell 3000'
+            'russell3000': 'Russell 3000',
+            'watchlist': 'Watchlist'
           };
           const modeLabels: Record<string, string> = {
             'classic': 'Classic Screener (VCS)',
@@ -3669,20 +3780,32 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         try {
           let prompt = "";
           if (screenerMode === 'unified_v2' && typeof coiledSpringMacroPrompt !== 'undefined') {
-            const gate_results = results.filter((r: any) => r.cs_signal === "HOT_BREAKOUT" || r.signal === "HOT_BREAKOUT");
-            const reversal_results = results.filter((r: any) => r.cs_signal === "DROP_BREAKDOWN" || r.signal === "DROP_BREAKDOWN" || (r.rev_state && r.rev_state.includes("STEAM")));
-            const overlap_results = results.filter((r: any) => r.cs_signal && r.cs_signal.includes("COLD"));
+            const aiTargetResults = results.slice(0, maxScreenerCount);
+            const gate_results = aiTargetResults.filter((r: any) => r.cs_signal === "HOT_BREAKOUT" || r.signal === "HOT_BREAKOUT");
+            const reversal_results = aiTargetResults.filter((r: any) => r.cs_signal === "DROP_BREAKDOWN" || r.signal === "DROP_BREAKDOWN" || (r.rev_state && r.rev_state.includes("STEAM")));
+            const overlap_results = aiTargetResults.filter((r: any) => r.cs_signal && r.cs_signal.includes("COLD"));
+            
+            // New explicit top bucket for classic high-conf STRONG BUY / BUY tickers
+            const top_quality_bulls = aiTargetResults
+              .filter((r: any) => r.signal === "STRONG BUY" || r.signal === "BUY" || r.gate_sig === "STRONG BUY" || r.gate_sig === "BUY")
+              .sort((a: any, b: any) => {
+                 const scoreA = a.neural_score || a.bull_score || a.score || a.steam_score || 0;
+                 const scoreB = b.neural_score || b.bull_score || b.score || b.steam_score || 0;
+                 return scoreB - scoreA;
+              })
+              .slice(0, 15);
             
             const commentary_skeleton: any = {};
-            for (const r of results) {
+            for (const r of aiTargetResults) {
                let rec = "WATCH";
-               if (r.cs_signal === "HOT_BREAKOUT" || r.signal === "STRONG BUY") rec = "ACCUMULATE";
+               if (r.cs_signal === "HOT_BREAKOUT" || r.signal === "STRONG BUY" || r.gate_sig === "STRONG BUY") rec = "STRONG BUY";
+               else if (r.signal === "BUY" || r.gate_sig === "BUY") rec = "ACCUMULATE";
                else if (r.cs_signal === "DROP_BREAKDOWN") rec = "SHORT";
                else if (r.cs_signal === "COLD_UP_TRAP") rec = "AVOID";
 
                commentary_skeleton[r.ticker] = {
-                   "signal_state": (screenerMode === 'unified_v2') ? (r.rev_state || r.cs_signal) : r.signal,
-                   "neural_score": r.neural_score || r.bull_score || 50,
+                   "signal_state": (screenerMode === 'unified_v2') ? (r.rev_state || r.cs_signal || r.signal || r.gate_sig) : r.signal,
+                   "neural_score": r.neural_score || r.bull_score || r.steam_score || 50,
                    "recommendation": rec,
                    "n_entry": r.n_entry || "N/A",
                    "n_exit": r.n_exit || "N/A",
@@ -3706,17 +3829,18 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
                        "dist_ratio": r.dist_ratio,
                        "fund_pass": r.fund_pass,
                        "rev_state": r.rev_state,
-                       "gate_signal": r.signal
+                       "gate_signal": r.signal || r.gate_sig
                    }
                };
             }
             const structuredPayload = {
+               top_quality_bulls: top_quality_bulls,
                gate_results: gate_results,
                reversal_results: reversal_results,
                overlap_results: overlap_results,
                neural_commentary: commentary_skeleton
             };
-            prompt = coiledSpringMacroPrompt + `\n\nHere are the algorithmic setups:\n${JSON.stringify(structuredPayload, null, 2)}`;
+            prompt = coiledSpringMacroPrompt + `\n\nHere are the algorithmic setups grouped in buckets. Pay specific attention to the highly scored top_quality_bulls:\n${JSON.stringify(structuredPayload, null, 2)}`;
           } else {
             prompt = `Analyze these top algorithmic setups. 
 CRITICAL: DO NOT use internal knowledge for headlines. You MUST perform a fresh Google Search for EVERY ticker to find news from the LAST 20 DAYS. If no news is found within the last 20 days, state "No recent material catalyst found" rather than providing outdated historical data.
@@ -3861,11 +3985,11 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
     
     try {
       const gAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_MYKEY || '' });
-      const indexContext = screenIndex === 'sp500' ? 'S&P 500' : screenIndex === 'nasdaq100' ? 'Nasdaq 100' : 'Russell 2000';
+      const indexContext = screenIndex === 'sp500' ? 'S&P 500' : screenIndex === 'nasdaq100' ? 'Nasdaq 100' : screenIndex === 'watchlist' ? 'Watchlist' : 'Russell 2000';
       const prompt = `Act as a ruthless, disciplined "Money Mindset" equity research analyst. 
       Perform a high-intensity market scan for the top 40 breakout stocks within the ${indexContext} index for the '${screenHorizon}' time horizon. 
       Your judgment must be cold, calculating, and devoid of emotion. Identify legitimate wealth-building opportunities without ever loading bags.
-      ${screenTickers ? `Focus specifically on these tickers: ${screenTickers}.` : `Search across the entire ${indexContext} for high-conviction momentum stocks.`}
+      ${(screenIndex === 'watchlist' ? watchlistTickers : screenTickers) ? `Focus specifically on these tickers: ${screenIndex === 'watchlist' ? watchlistTickers : screenTickers}.` : `Search across the entire ${indexContext} for high-conviction momentum stocks.`}
       
       For each stock, calculate:
       1. bull_score (0-100) based on current volume confluence and price structure.
@@ -4314,7 +4438,7 @@ Observe relative strength comparing the subject ticker vs SPY and sector/industr
 Compare **${t}** against its closest peers (${p}) and Sector Avg.
 
 ### A. Sector-Specific Valuation Lens & Operational Efficiency Matrix
-Please populate the following core comparison table (if data is completely unavailable for a ticker, write 'N/A', do not omit the column entirely):
+Please populate the following core comparison table (you MUST use the exact computed ROIC, WACC, and Value Spread from the ground-truth telemetry listed at the end of this prompt verbatim, representing certified, double-checked update data; if data is completely unavailable for a ticker, write 'N/A', do not omit the column entirely):
 
 | Metric | ${t} | ${pHeaders} | Sector Avg |
 |--------|----------|${pDividers}|------------|
@@ -4329,6 +4453,9 @@ Please populate the following core comparison table (if data is completely unava
 | Net Margin | | ${pPlaceholders} | |
 | Free Cash Flow Yield | | ${pPlaceholders} | |
 | Return on Equity (ROE) | | ${pPlaceholders} | |
+| Return on Invested Capital (ROIC) | | ${pPlaceholders} | |
+| Weighted Average Cost of Capital (WACC) | | ${pPlaceholders} | |
+| Economic Value Spread (ROIC - WACC) | | ${pPlaceholders} | |
 
 ### B. Sector-Adaptive Valuation & Economic Narrative
 - **Sector-Specific Valuation Lens Utilized:** [Detail why plain-vanilla P/E comparisons fail or succeed here, and explain which sector custom metric is prioritized—e.g. PEG normalization for high-growth Semis/Tech, EV/EBITDA rather than PE for Asset-heavy/debt-leveraged sectors, Price/Book for Financials, Capitalized R&D adjustments for Healthcare/Biotech, or Price/Sales for high-growth SaaS. Explain how this selected lens feeds directly into your fair value estimates below.]
@@ -4344,6 +4471,12 @@ Calculate the fair value estimates for BOTH the target ticker and each peer stoc
 ${peersList.map(peer => `| ${peer} | $__ | $__ | $__ | $__ | **$__** | **___%** | Undervalued / Overvalued / Fair Value |`).join('\n')}
 
 *(Detail your weightings, exact arithmetic formulas, and sector-adaptive assumptions made. Post a mathematical reconciliation showing numerical consistency between the target multiples, growth metrics, and final estimates.)*
+
+### D. Economic Value Creation (ROIC, WACC & Value Spread Analysis)
+Analyze the ROIC, WACC, and Value Spread from Part A. You MUST align your analysis exactly with the certified, yfinance-computed percentages presented in the ground-truth metadata to maintain 100% numerical consistency:
+- **ROIC (Return on Invested Capital):** [Explain what the company's ROIC indicates about its capital allocation efficiency. Compare this directly to its peers.]
+- **WACC (Weighted Average Cost of Capital):** [Evaluate the hurdle rate for this company. Detail how its cost of debt and capital structure affect this cost.]
+- **Value Spread Analysis (ROIC - WACC):** [Highlight whether the spread is positive (creating true shareholder value) or negative (destroying economic value). State what this spread represents about the underlying economic profitability and competitive moat of the enterprise.]
 
 **Operational Execution & Peer Verdict:** Is **${t}** a sector **leader**, **laggard**, or **in-line** with peers regarding operational execution? Detail where **${t}** has a clear advantage or disadvantage vs. each peer under this sector-adaptive lens.
 
@@ -4445,6 +4578,10 @@ Weigh the intent and dollar scale of these trades to form an objective, bulletpr
       sectionsStr += `## 8. 📐 TECHNICAL SETUP\n\n**Trend:**\n- Price vs. 50-day MA: Above / Below ($___) → Bullish / Bearish\n- Price vs. 200-day MA: Above / Below ($___) → Bullish / Bearish\n- 50-day MA vs. 200-day MA: Golden Cross / Death Cross / Neutral\n\n**Momentum & Strength:**\n- ADX: ___ (< 20 = no trend · 20–25 = developing · > 25 = strong trend)\n- RSI (14-day): ___ (< 30 = oversold · 30–70 = neutral · > 70 = overbought)\n  ⚠️ If RSI > 70 but ADX > 25: strong trend — RSI can stay "overbought" for weeks\n- MACD: Bullish crossover / Bearish crossover / Neutral\n\n**Accumulation/Distribution:**\n- A/D Line trend vs. price: Confirming / Diverging\n- Bearish divergence: Price new high + A/D lower high = 🔴 Distribution signal\n- Bullish divergence: Price new low + A/D higher low = 🟢 Accumulation signal\n\n**Key Levels:**\n\n| Level | Price | Significance |\n|-------|-------|-------------|\n| Strong Resistance | $___ | |\n| Resistance | $___ | |\n| Current Price | $___ | |\n| Support | $___ | |\n| Strong Support | $___ | |\n| 52-Week High | $___ | |\n| 52-Week Low | $___ | |\n\n**Chart Pattern (if any):**\n- [ ] Cup & Handle  [ ] Inverse H&S  [ ] Bull Flag  [ ] Wedge  [ ] Base breakout  [ ] None\n\n**Technical Verdict:** Bullish / Bearish / Neutral setup\n\n`;
     }
 
+    if (sSections.postMortem) {
+      sectionsStr += `## 9. 🧠 INVESTMENT POST MORTEM & PRE-MORTEM RISK MITIGATION\n\n**A. Premature Failure Narrative (The Retrospective in Retrospect):**\n- If you look back 2 to 3 years from now and this investment turned out to be a complete failure (such as losing over 50% of its capital value), what is the most logical, data-backed chronological chain of events that caused this disaster? Avoid generalities; write a realistic, highly specific corporate failure scenario.\n\n**B. Corporate Thesis Invalidation Triggers:**\n- List the absolute milestone failures that prove our thesis is officially dead. Define the precise numerical, regulatory, or competitive triggers that would force an immediate exit from the position:\n  * Invalidation Trigger 1: [Specific metric/event, e.g., \"Operating margin compresses below 12% for consecutive quarters\"]\n  * Invalidation Trigger 2: [Specific metric/event, e.g., \"Loss of prime contract with Tier-1 hyperscaler\"]\n  * Invalidation Trigger 3: [Specific metric/event]\n\n**C. Risk Mitigation & Position Management:**\n- Under the ${sRisk} framework, how will we actively mitigate downstream losses if these triggers occur? State concrete position management rules (such as immediate stop-loss cascading or staged liquidations) to preserve client capital.\n\n`;
+    }
+
     const prompt = `# 📈 COMPREHENSIVE STOCK DEEP DIVE: ${t}
 ${customInstructions ? `\n**ADDITIONAL SYSTEM CONTEXT:**\n${customInstructions}\n` : ''}
 **Analysis Date:** ${today}
@@ -4457,8 +4594,10 @@ ${customInstructions ? `\n**ADDITIONAL SYSTEM CONTEXT:**\n${customInstructions}\
 
 ${searchDirective}
 
-🚨⚠️ CRITICAL DIRECTIVE — NUMERICAL INTEGRITY CHECK (CONFIRM TWICE):
-Always verify that any numbers, current price, and technical levels (support/resistance/entry/stop/target/indicators) you output are the absolutely most reliable, accurate, and up-to-date values based on real-time search results. Under no circumstances should you invent, assume, extrapolate, or guess these metrics. Take your time, search the real-time web, and CONFIRM ALL NUMERICAL REALITIES TWICE before including them in your output. Ensure that these numbers are extremely precise and perfectly up-to-date!
+🚨⚠️ CRITICAL DIRECTIVE — NUMERICAL & ANALYTICAL INTEGRITY CHECK (CONFIRM TWICE):
+1. Always verify that any numbers, current price, and technical levels (support/resistance/entry/stop/target/indicators) you output are the absolutely most reliable, accurate, and up-to-date values based on real-time search results. Under no circumstances should you invent, assume, extrapolate, or guess these metrics. Confirm all numerical realities twice!
+2. ROIC, WACC, and Value Spread extraction must be 100% VERBATIM. You MUST read the exact values computed for the target and peers from the 🐍 NATIVE PYTHON HARVESTED FINANCIAL DATASETS (GROUND TRUTH) table at the bottom of this prompt. Do not hallucinate or compute separate values in contradiction with these verified numbers. They must be cited perfectly in both the Section 3 peer table and the Section D economic value discussion.
+3. PREVENT 100x SCALE EXPLANATION ERRORS: When translating the Value Spread, ensure perfect mathematical explanation scale. For example, a Value Spread of +4.47% means a value creation of **$0.0447 (or 4.47 cents) of economic profit per dollar (or $1.00) of capital invested**, NOT $4.47. A spread of +0.27% means $0.0027 of profit per dollar. Cite the exact cents (e.g. 4.47 cents) or decimal proportion correctly without any 100x scale error! Ensure perfect coherence end-to-end.
 
 🛑 PARSING DIRECTIVE — PRESERVE TAGS EXACTLY:
 You MUST output the exact plaintext markup tags \`[ELI5_START]\` and \`[ELI5_END]\` around the ELI5 Summary block. Do not rename them, capitalize them differently, omit them, or hide them inside markdown comments or code fences! They are critical system parsing delimiters used by our frontend UI.
@@ -4805,6 +4944,9 @@ Format output as:
         { label: "Debt / Equity", key: "debtToEquity" },
         { label: "Current Ratio", key: "currentRatio" },
         { label: "ROE", key: "returnOnEquity", percent: true },
+        { label: "ROIC (yfinance computed)", key: "roic", percent: true },
+        { label: "WACC (yfinance computed)", key: "wacc", percent: true },
+        { label: "Value Spread (ROIC - WACC)", key: "valSpread", percent: true },
         { label: "Analyst Target", key: "targetMeanPrice" },
       ];
       
@@ -4871,6 +5013,9 @@ Format output as:
         { label: "Debt / Equity", key: "debtToEquity" },
         { label: "Current Ratio", key: "currentRatio" },
         { label: "ROE", key: "returnOnEquity", percent: true },
+        { label: "ROIC (yfinance computed)", key: "roic", percent: true },
+        { label: "WACC (yfinance computed)", key: "wacc", percent: true },
+        { label: "Value Spread (ROIC - WACC)", key: "valSpread", percent: true },
         { label: "Analyst Target", key: "targetMeanPrice" },
       ];
       
@@ -6661,13 +6806,12 @@ ${stationInput}
                                               <th className="p-2 text-[9px]">TARGET</th>
                                               <th className="p-2 text-[9px]">MA STACK</th>
                                               <th className="p-2 text-[9px]">VOL↑</th>
-                                              <th className="p-2 text-[9px]">SENTIMENT</th>
                                             </tr>
                                           </thead>
                                           <tbody>
                                             {activeSnapshot.rawResults.map((r: any, i: number) => (
                                               <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
-                                                <td className="p-2 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: r.bucket?.includes("3-WAY") ? "#a78bfa" : r.bucket?.includes("CS+Gate") ? "#f97316" : r.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{r.bucket}</td>
+                                                <td className="p-2 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: r.bucket?.includes("3-WAY") ? "#a78bfa" : r.bucket?.includes("STRONG BUY") ? "#00ff66" : r.bucket?.includes("BUY ") ? "#10b981" : r.bucket?.includes("CS+Gate") ? "#f97316" : r.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{r.bucket}</td>
                                                 <td className="p-2 font-bold text-blue-400">
                                                   <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
                                                 </td>
@@ -6685,7 +6829,6 @@ ${stationInput}
                                                 <td className="p-2 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
                                                 <td className="p-2" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
                                                 <td className="p-2 text-yellow-400">{r.vol_surge}</td>
-                                                <td className="p-2 text-emerald-400">{r.sentiment}</td>
                                               </tr>
                                             ))}
                                           </tbody>
@@ -6964,6 +7107,7 @@ ${stationInput}
                         <option value="russell1000">Russell 1000</option>
                         <option value="russell2000">Russell 2000</option>
                         <option value="russell3000">Russell 3000</option>
+                        <option value="watchlist">Watchlist 📂</option>
                       </select>
                     </div>
                     <div className="space-y-1.5">
@@ -7011,25 +7155,39 @@ ${stationInput}
                         {disableNeural ? "🔴 Raw Only" : "✨ AI Enabled"}
                       </button>
                     </div>
+                    <div className="space-y-1.5 pt-2">
+                      <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold font-sans">Raw Output Limit</label>
+                      <select 
+                        value={rawScreenerCount}
+                        onChange={(e) => setRawScreenerCount(parseInt(e.target.value) || 30)}
+                        className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none hover:border-bento-accent transition-all h-[34px]"
+                      >
+                        <option value="20">Top 20</option>
+                        <option value="30">Top 30 (Default)</option>
+                        <option value="40">Top 40</option>
+                        <option value="50">Top 50</option>
+                      </select>
+                    </div>
+
                     <div className="space-y-1.5">
-                      <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold font-sans">AI Target Count</label>
+                      <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold font-sans">AI Target Group</label>
                       {disableNeural ? (
                         <div className="w-full bg-white/5 border border-white/5 rounded-xl px-4 py-2 text-xs font-mono text-gray-500 h-[34px] flex items-center justify-center italic select-none">
-                          All Tickers
+                          Disabled
                         </div>
                       ) : (
                         <select 
                           value={maxScreenerCount}
-                          onChange={(e) => setMaxScreenerCount(parseInt(e.target.value) || 25)}
+                          onChange={(e) => setMaxScreenerCount(parseInt(e.target.value) || 30)}
                           className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none hover:border-bento-accent transition-all h-[34px]"
                         >
-                          <option value="10">Top 10 Setups</option>
-                          <option value="15">Top 15 Setups</option>
-                          <option value="20">Top 20 Setups</option>
-                          <option value="25">Top 25 Setups (Default)</option>
-                          <option value="30">Top 30 Setups</option>
-                          <option value="40">Top 40 Setups</option>
-                          <option value="50">Top 50 Setups</option>
+                          <option value="10">Top 10</option>
+                          <option value="15">Top 15</option>
+                          <option value="20">Top 20</option>
+                          <option value="25">Top 25</option>
+                          <option value="30">Top 30</option>
+                          <option value="40">Top 40</option>
+                          <option value="50">Top 50</option>
                         </select>
                       )}
                     </div>
@@ -7052,17 +7210,82 @@ ${stationInput}
                         </select>
                       )}
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">Custom Tickers</label>
-                      <input 
-                        type="text" 
-                        value={screenTickers}
-                        onChange={(e) => setScreenTickers(e.target.value)}
-                        placeholder="e.g. AAPL, MSFT (Overrides Index)"
-                        className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 focus:border-bento-accent outline-none font-mono text-slate-400 text-xs transition-all"
+                     <div className="space-y-1.5">
+                       <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">Custom Tickers</label>
+                       <input 
+                         type="text" 
+                         value={screenTickers}
+                         onChange={(e) => setScreenTickers(e.target.value)}
+                         placeholder="e.g. AAPL, MSFT (Overrides Index)"
+                         className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 focus:border-bento-accent outline-none font-mono text-slate-400 text-xs transition-all"
+                       />
+                     </div>
+                   </div>
+
+                  {screenIndex === 'watchlist' && (
+                    <div className="p-4 border border-indigo-500/20 bg-indigo-500/5 rounded-xl space-y-2.5 text-left transition-all duration-300 animate-in fade-in slide-in-from-top-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] text-indigo-400 uppercase tracking-widest font-black flex items-center gap-1.5 font-sans">
+                          <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
+                          My Saved Screener Watchlist
+                        </label>
+                        <span className="text-[9px] text-bento-muted font-mono bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/10">
+                          {watchlistTickers ? watchlistTickers.split(',').map(t => t.trim()).filter(Boolean).length : 0} Tickers Saved
+                        </span>
+                      </div>
+                      <textarea
+                        value={watchlistTickers}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setWatchlistTickers(val);
+                          localStorage.setItem('watchlist_tickers', val);
+                        }}
+                        placeholder="Enter tickers separated by commas, e.g. AAPL, MSFT, TSLA, NVDA"
+                        rows={3}
+                        className="w-full bg-black/40 border border-bento-border focus:border-indigo-500/40 outline-none font-mono text-indigo-300 text-xs transition-all placeholder:text-gray-700 focus:ring-1 focus:ring-indigo-500/10 rounded-xl p-3"
                       />
+                      <div className="flex justify-between items-center text-[9px] text-bento-muted font-sans gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 py-1">
+                          {watchlistSyncStatus === 'local' && (
+                            <span className="text-amber-500/90 flex items-center gap-1 font-semibold uppercase tracking-wider text-[8px]">
+                              <CloudOff className="w-3.5 h-3.5" />
+                              Local Mode (Sign in to sync)
+                            </span>
+                          )}
+                          {watchlistSyncStatus === 'saving' && (
+                            <span className="text-indigo-400 flex items-center gap-1 font-semibold uppercase tracking-wider text-[8px] animate-pulse">
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              Syncing to cloud...
+                            </span>
+                          )}
+                          {watchlistSyncStatus === 'saved' && (
+                            <span className="text-emerald-400 flex items-center gap-1 font-semibold uppercase tracking-wider text-[8px]">
+                              <Cloud className="w-3.5 h-3.5 text-emerald-500" />
+                              Synced with Firestore DB
+                            </span>
+                          )}
+                          {watchlistSyncStatus === 'error' && (
+                            <span className="text-rose-400 flex items-center gap-1 font-semibold uppercase tracking-wider text-[8px]">
+                              <Database className="w-3.5 h-3.5 text-rose-500" />
+                              Database sync issue
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm("Reset watch list tickers to standard setups?")) {
+                              setWatchlistTickers('AAPL, MSFT, GOOGL, NVDA, TSLA, AMD, META, NFLX, AMZN, AVGO');
+                              localStorage.setItem('watchlist_tickers', 'AAPL, MSFT, GOOGL, NVDA, TSLA, AMD, META, NFLX, AMZN, AVGO');
+                            }
+                          }}
+                          className="hover:text-amber-400/80 transition-colors uppercase font-bold tracking-wider text-[8px] py-1"
+                        >
+                          Reset Default
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <button 
                     onClick={runDailyScreen}
@@ -7152,7 +7375,8 @@ ${stationInput}
                                 'both': 'S&P 500 + NDX',
                                 'russell1000': 'Russell 1000',
                                 'russell2000': 'Russell 2000',
-                                'russell3000': 'Russell 3000'
+                                'russell3000': 'Russell 3000',
+                                'watchlist': 'Watchlist'
                               };
                               const modeLabels: Record<string, string> = {
                                 'classic': 'Classic Screener (VCS)',
@@ -7216,13 +7440,12 @@ ${stationInput}
                                     <th className="p-2 text-[9px]">TARGET</th>
                                     <th className="p-2 text-[9px]">MA STACK</th>
                                     <th className="p-2 text-[9px]">VOL↑</th>
-                                    <th className="p-2 text-[9px]">SENTIMENT</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {screenerResults.map((r, i) => (
                                     <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
-                                      <td className="p-2 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: r.bucket?.includes("3-WAY") ? "#a78bfa" : r.bucket?.includes("CS+Gate") ? "#f97316" : r.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{r.bucket}</td>
+                                      <td className="p-2 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: r.bucket?.includes("3-WAY") ? "#a78bfa" : r.bucket?.includes("STRONG BUY") ? "#00ff66" : r.bucket?.includes("BUY ") ? "#10b981" : r.bucket?.includes("CS+Gate") ? "#f97316" : r.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{r.bucket}</td>
                                       <td className="p-2 font-bold text-blue-400">
                                         <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
                                       </td>
@@ -7240,7 +7463,6 @@ ${stationInput}
                                       <td className="p-2 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
                                       <td className="p-2" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
                                       <td className="p-2 text-yellow-400">{r.vol_surge}</td>
-                                      <td className="p-2 text-emerald-400">{r.sentiment}</td>
                                     </tr>
                                   ))}
                                 </tbody>
