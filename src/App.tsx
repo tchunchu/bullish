@@ -3186,6 +3186,22 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
   const autoPopulateLogData = (output: string, reportId?: string, tickerHint?: string, typeHint?: string) => {
     try {
       if (!output) return;
+
+      const matchNumeric = (fieldName: string) => {
+        const escaped = fieldName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const tableRegex = new RegExp(`\\|\\s*[^|]*(?:\\*\\*|\\*)?${escaped}(?:\\*\\*|\\*)?[^|]*\\|\\s*(?:\\*\\*|\\*|\\s|\\$)*([\\d,.]+)`, 'i');
+        const colonRegex = new RegExp(`(?:\\*\\*|\\*)?[^\\n:]*${escaped}[^\\n:]*(?:\\*\\*|\\*)?\\s*:\\s*(?:\\*\\*|\\*|\\s|\\$)*([\\d,.]+)`, 'i');
+        const sentenceRegex = new RegExp(`${escaped}[^\\n]*?\\$?([\\d,.]+)`, 'i');
+        
+        const tableMatch = output.match(tableRegex);
+        if (tableMatch) return tableMatch[1];
+        const colonMatch = output.match(colonRegex);
+        if (colonMatch) return colonMatch[1];
+        const sentenceMatch = output.match(sentenceRegex);
+        if (sentenceMatch) return sentenceMatch[1];
+        return null;
+      };
+
       let parsed = false;
       const startTag = '<!-- TRACKER_METADATA_START';
       const endTag = 'TRACKER_METADATA_END -->';
@@ -3215,17 +3231,54 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             console.warn("Could not retrieve ground-truth price from harvested telemetry", ex);
           }
 
+          const cleanVal = (val: any) => {
+            if (val === undefined || val === null || val === '') return '';
+            const numVal = parseFloat(val.toString().replace(/[^0-9.]/g, ''));
+            return isNaN(numVal) || numVal === 0 ? '' : numVal.toString();
+          };
+
+          const rawEntry = cleanVal(metadata.entryPrice);
+          const rawTp1 = cleanVal(metadata.tp1);
+          const rawTp2 = cleanVal(metadata.tp2);
+          const rawFairValue = cleanVal(metadata.fairValue);
+
+          const finalEntryPrice = rawEntry ||
+                                  matchNumeric("Best Entry Price") || 
+                                  matchNumeric("Aggressive Entry") || 
+                                  matchNumeric("Conservative Entry") || 
+                                  matchNumeric("Entry Price") || 
+                                  '';
+          const finalTp1 = rawTp1 || 
+                           matchNumeric("Target 1 (Conservative)") || 
+                           matchNumeric("Target 1") || 
+                           '';
+          const finalTp2 = rawTp2 || 
+                           matchNumeric("Target 2 (Aggressive)") || 
+                           matchNumeric("Target 2") || 
+                           '';
+          const finalFairValue = rawFairValue || 
+                                 matchNumeric("Blended Fair Value") || 
+                                 matchNumeric("12-Month Price Target") || 
+                                 matchNumeric("Price Target") || 
+                                 matchNumeric("Target Price") || 
+                                 '';
+
+          let finalPrice = gtPrice || (metadata.price || metadata.currentPrice || '')?.toString() || extractCurrentPriceShared(output, metadata.ticker || tickerHint) || '';
+          if (!finalPrice || finalPrice === '0' || finalPrice === '') {
+            finalPrice = matchNumeric("Current Price") || matchNumeric("Price") || '';
+          }
+
           setLogData(prev => ({
             ...prev,
             reportId: reportId || prev.reportId,
             ticker: metadata.ticker || tickerHint || (analysisType === 'stock' ? ticker.toUpperCase() : '') || prev.ticker,
             analysisDate: format(new Date(), 'yyyy-MM-dd'),
             suggestion: metadata.suggestion || metadata.sentiment || prev.suggestion,
-            entryPrice: metadata.entryPrice?.toString() || '',
-            tp1: metadata.tp1?.toString() || '',
-            tp2: metadata.tp2?.toString() || '',
-            fairValue: metadata.fairValue?.toString() || '',
-            price: gtPrice || (metadata.price || metadata.currentPrice || '')?.toString() || extractCurrentPriceShared(output, metadata.ticker || tickerHint) || '',
+            entryPrice: finalEntryPrice,
+            tp1: finalTp1,
+            tp2: finalTp2,
+            fairValue: finalFairValue,
+            price: finalPrice,
             sentiment: metadata.sentiment || prev.sentiment,
             indicators: metadata.indicators || '',
             bullCase: cleanNarrativeStr(extractBullCaseShared(output)) || metadata.bullCase || '',
@@ -3285,18 +3338,6 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         const extractBearCase = (text: string): string => extractBearCaseShared(text);
         const extractComments = (text: string): string => extractCommentsShared(text);
         const cleanNarrative = (text: string | undefined | null) => cleanNarrativeStr(text);
-
-        const matchNumeric = (fieldName: string) => {
-          const escaped = fieldName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-          const tableRegex = new RegExp(`\\|\\s*[^|]*(?:\\*\\*|\\*)?${escaped}(?:\\*\\*|\\*)?[^|]*\\|\\s*(?:\\*\\*|\\*)?\\$?([\\d,.]+)`, 'i');
-          const colonRegex = new RegExp(`(?:\\*\\*|\\*)?[^\\n:]*${escaped}[^\\n:]*(?:\\*\\*|\\*)?\\s*:\\s*\\$?([\\d,.]+)`, 'i');
-          
-          const tableMatch = output.match(tableRegex);
-          if (tableMatch) return tableMatch[1];
-          const colonMatch = output.match(colonRegex);
-          if (colonMatch) return colonMatch[1];
-          return null;
-        };
 
         if (isMacro) {
           const sentMatch = output.match(/(?:Overall Market Regime|Environment|sentiment)\s*(?::|-)?\s*(Strongly Bullish|Bullish|Neutral|Bearish|Strongly Bearish|Risk-On|Risk-Off)/i);
@@ -4183,13 +4224,16 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
 
     const matchNumericValue = (fieldName: string) => {
       const escaped = fieldName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-      const tableRegex = new RegExp(`\\|\\s*[^|]*(?:\\*\\*|\\*)?${escaped}(?:\\*\\*|\\*)?[^|]*\\|\\s*(?:\\*\\*|\\*)?\\$?([\\d,.]+)`, 'i');
-      const colonRegex = new RegExp(`(?:\\*\\*|\\*)?[^\\n:]*${escaped}[^\\n:]*(?:\\*\\*|\\*)?\\s*:\\s*\\$?([\\d,.]+)`, 'i');
+      const tableRegex = new RegExp(`\\|\\s*[^|]*(?:\\*\\*|\\*)?${escaped}(?:\\*\\*|\\*)?[^|]*\\|\\s*(?:\\*\\*|\\*|\\s|\\$)*([\\d,.]+)`, 'i');
+      const colonRegex = new RegExp(`(?:\\*\\*|\\*)?[^\\n:]*${escaped}[^\\n:]*(?:\\*\\*|\\*)?\\s*:\\s*(?:\\*\\*|\\*|\\s|\\$)*([\\d,.]+)`, 'i');
+      const sentenceRegex = new RegExp(`${escaped}[^\\n]*?\\$?([\\d,.]+)`, 'i');
       
       const tableMatch = outputText.match(tableRegex);
       if (tableMatch) return tableMatch[1];
       const colonMatch = outputText.match(colonRegex);
       if (colonMatch) return colonMatch[1];
+      const sentenceMatch = outputText.match(sentenceRegex);
+      if (sentenceMatch) return sentenceMatch[1];
       return null;
     };
 
@@ -4279,11 +4323,44 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
             return;
           } else {
             tickerName = metadata.ticker || tickerName;
-            entryPriceVal = metadata.entryPrice?.toString() || '';
-            tp1Val = metadata.tp1?.toString() || '';
-            tp2Val = metadata.tp2?.toString() || '';
-            fairValueVal = metadata.fairValue?.toString() || '';
+
+            const cleanVal = (val: any) => {
+              if (val === undefined || val === null || val === '') return '';
+              const numVal = parseFloat(val.toString().replace(/[^0-9.]/g, ''));
+              return isNaN(numVal) || numVal === 0 ? '' : numVal.toString();
+            };
+
+            const rawEntry = cleanVal(metadata.entryPrice);
+            const rawTp1 = cleanVal(metadata.tp1);
+            const rawTp2 = cleanVal(metadata.tp2);
+            const rawFairValue = cleanVal(metadata.fairValue);
+
+            entryPriceVal = rawEntry ||
+                            matchNumericValue("Best Entry Price") || 
+                            matchNumericValue("Aggressive Entry") || 
+                            matchNumericValue("Conservative Entry") || 
+                            matchNumericValue("Entry Price") || 
+                            '';
+            tp1Val = rawTp1 || 
+                     matchNumericValue("Target 1 (Conservative)") || 
+                     matchNumericValue("Target 1") || 
+                     '';
+            tp2Val = rawTp2 || 
+                     matchNumericValue("Target 2 (Aggressive)") || 
+                     matchNumericValue("Target 2") || 
+                     '';
+            fairValueVal = rawFairValue || 
+                           matchNumericValue("Blended Fair Value") || 
+                           matchNumericValue("12-Month Price Target") || 
+                           matchNumericValue("Price Target") || 
+                           matchNumericValue("Target Price") || 
+                           '';
+
             priceVal = metadata.price?.toString() || metadata.currentPrice?.toString() || extractCurrentPriceShared(outputText, metadata.ticker || tickerName) || '';
+            if (!priceVal || priceVal === '0' || priceVal === '') {
+              priceVal = matchNumericValue("Current Price") || matchNumericValue("Price") || '';
+            }
+
             suggestionVal = metadata.suggestion || metadata.sentiment || 'Buy';
             sentimentVal = metadata.sentiment || 'Bullish';
             indicatorsVal = metadata.indicators || '';
@@ -5728,17 +5805,44 @@ print(json.dumps(results, indent=2))
               return isNaN(parsed) ? 0 : parsed;
             };
 
+            const extractNumericFallback = (text: string, fieldName: string) => {
+              const escaped = fieldName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+              const tableRegex = new RegExp(`\\|\\s*[^|]*(?:\\*\\*|\\*)?${escaped}(?:\\*\\*|\\*)?[^|]*\\|\\s*(?:\\*\\*|\\*|\\s|\\$)*([\\d,.]+)`, 'i');
+              const colonRegex = new RegExp(`(?:\\*\\*|\\*)?[^\\n:]*${escaped}[^\\n:]*(?:\\*\\*|\\*)?\\s*:\\s*(?:\\*\\*|\\*|\\s|\\$)*([\\d,.]+)`, 'i');
+              const sentenceRegex = new RegExp(`${escaped}[^\\n]*?\\$?([\\d,.]+)`, 'i');
+              
+              const tableMatch = text.match(tableRegex);
+              if (tableMatch) return tableMatch[1];
+              const colonMatch = text.match(colonRegex);
+              if (colonMatch) return colonMatch[1];
+              const sentenceMatch = text.match(sentenceRegex);
+              if (sentenceMatch) return sentenceMatch[1];
+              return '';
+            };
+
             const finalTickerName = currentT;
             const finalSuggestion = parsedCard?.suggestion || parsedCard?.sentiment || parsedCard?.recommendation || 'Buy';
-            const finalEntryPrice = parseNum(parsedCard?.entryPrice || parsedCard?.nEntry || 0);
-            const finalTp1 = parseNum(parsedCard?.tp1 || 0);
-            const finalTp2 = parseNum(parsedCard?.tp2 || 0);
+            const finalEntryPrice = parseNum(parsedCard?.entryPrice || parsedCard?.nEntry || 0) ||
+                                    parseNum(extractNumericFallback(singleReportOutput, "Best Entry Price")) ||
+                                    parseNum(extractNumericFallback(singleReportOutput, "Aggressive Entry")) ||
+                                    parseNum(extractNumericFallback(singleReportOutput, "Conservative Entry")) ||
+                                    parseNum(extractNumericFallback(singleReportOutput, "Entry Price"));
+            const finalTp1 = parseNum(parsedCard?.tp1 || 0) ||
+                             parseNum(extractNumericFallback(singleReportOutput, "Target 1 (Conservative)")) ||
+                             parseNum(extractNumericFallback(singleReportOutput, "Target 1"));
+            const finalTp2 = parseNum(parsedCard?.tp2 || 0) ||
+                             parseNum(extractNumericFallback(singleReportOutput, "Target 2 (Aggressive)")) ||
+                             parseNum(extractNumericFallback(singleReportOutput, "Target 2"));
 
             // Prioritize high-fidelity ground truth price from Python subprocess telemetry
             const pyPrice = rawPythonParsed[currentT]?.price;
             const finalPriceVal = parseNum(pyPrice && pyPrice !== 'N/A' ? pyPrice : (parsedCard?.price || parsedCard?.currentPrice || parsedCard?.value || extractCurrentPriceShared(singleReportOutput, currentT) || 0));
 
-            const finalFairValue = parseNum(parsedCard?.fairValue || parsedCard?.nExit || parsedCard?.targetPrice || 0);
+            const finalFairValue = parseNum(parsedCard?.fairValue || parsedCard?.nExit || parsedCard?.targetPrice || 0) ||
+                                   parseNum(extractNumericFallback(singleReportOutput, "Blended Fair Value")) ||
+                                   parseNum(extractNumericFallback(singleReportOutput, "12-Month Price Target")) ||
+                                   parseNum(extractNumericFallback(singleReportOutput, "Price Target")) ||
+                                   parseNum(extractNumericFallback(singleReportOutput, "Target Price"));
             const finalBullCase = cleanNarrativeStr(extractBullCaseShared(singleReportOutput)) || parsedCard?.bullCase || '';
             const finalBearCase = cleanNarrativeStr(extractBearCaseShared(singleReportOutput)) || parsedCard?.bearCase || '';
             const finalComments = cleanNarrativeStr(extractCommentsShared(singleReportOutput)) || parsedCard?.finalTake || parsedCard?.comments || '';
