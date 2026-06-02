@@ -178,56 +178,14 @@ async function fetchWithRetry(ticker: string, days: number = 120) {
     return FETCH_CACHE[cacheKey].data;
   }
 
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/json,text/csv'
-  };
-  
-  // Try Stooq first (Custom CSV format requested)
-  try {
-    const stooqTicker = ticker.replace("-", ".").toLowerCase();
-    const url = `https://stooq.com/q/d/l/?s=${stooqTicker}.us&f=sdohclv&h&e=csv`;
-    const res = await fetch(url, { headers });
-    if (res.ok) {
-      const text = await res.text();
-      if (!text.includes("No data") && !text.includes("Exceeded") && text.length > 50) {
-        const lines = text.trim().split("\n").slice(1); 
-        const end = new Date();
-        const start = new Date();
-        start.setDate(end.getDate() - (days + 30));
-        
-        let quotes = lines.map(line => {
-          const parts = line.split(",");
-          if (parts.length < 6) return null;
-          return {
-            date: new Date(parts[0]),
-            open: parseFloat(parts[1]),
-            high: parseFloat(parts[2]),
-            low: parseFloat(parts[3]),
-            close: parseFloat(parts[4]),
-            volume: parseFloat(parts[5])
-          };
-        }).filter(q => q !== null && !isNaN((q as any).close));
-
-        quotes = quotes.filter((q: any) => q.date >= start);
-        quotes.sort((a: any, b: any) => a.date.getTime() - b.date.getTime());
-        if (quotes.length >= 30) {
-          const ret = { quotes };
-          FETCH_CACHE[cacheKey] = { data: ret, expiry: Date.now() + 5 * 60 * 1000 };
-          return ret;
-        }
-      }
-    }
-  } catch (e) {
-    // Fallback to Yahoo
-  }
-
-  // Fallback to Yahoo Finance
+  // 1. Try Yahoo Finance First (faster, closer to real-time daily values)
   try {
     const end = new Date();
+    end.setDate(end.getDate() + 1); // Add 1 day to ensure it includes today's intraday or close
     const start = new Date();
     start.setDate(end.getDate() - (days + 30));
     
+    // @ts-ignore
     const results = await (yahooFinance as any).historical(ticker, {
       period1: start.toISOString().split('T')[0],
       period2: end.toISOString().split('T')[0],
@@ -246,6 +204,49 @@ async function fetchWithRetry(ticker: string, days: number = 120) {
       const ret = { quotes };
       FETCH_CACHE[cacheKey] = { data: ret, expiry: Date.now() + 5 * 60 * 1000 };
       return ret;
+    }
+  } catch (e) {
+    // Fallback to Stooq
+  }
+
+  // 2. Fallback to Stooq (Custom CSV format requested)
+  try {
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/json,text/csv'
+    };
+    const stooqTicker = ticker.replace("-", ".").toLowerCase();
+    const url = `https://stooq.com/q/d/l/?s=${stooqTicker}.us&f=sdohclv&h&e=csv`;
+    const res = await fetch(url, { headers });
+    if (res.ok) {
+      const text = await res.text();
+      if (!text.includes("No data") && !text.includes("Exceeded") && text.length > 50) {
+        const lines = text.trim().split("\n").slice(1); 
+        const endDay = new Date();
+        const startDay = new Date();
+        startDay.setDate(endDay.getDate() - (days + 30));
+        
+        let quotes = lines.map(line => {
+          const parts = line.split(",");
+          if (parts.length < 6) return null;
+          return {
+            date: new Date(parts[0]),
+            open: parseFloat(parts[1]),
+            high: parseFloat(parts[2]),
+            low: parseFloat(parts[3]),
+            close: parseFloat(parts[4]),
+            volume: parseFloat(parts[5])
+          };
+        }).filter(q => q !== null && !isNaN((q as any).close));
+
+        quotes = quotes.filter((q: any) => q.date >= startDay);
+        quotes.sort((a: any, b: any) => a.date.getTime() - b.date.getTime());
+        if (quotes.length >= 30) {
+          const ret = { quotes };
+          FETCH_CACHE[cacheKey] = { data: ret, expiry: Date.now() + 5 * 60 * 1000 };
+          return ret;
+        }
+      }
     }
   } catch (e) {
     // Both failed
@@ -1139,10 +1140,16 @@ async function startServer() {
 
     // ── 6. Real upside and R:R ──────────────────────────
     const atr_pct = vcs.atr_pct || 2.0;
-    const upside_pct: number =
+    let upside_pct: number | null = 
       (gate.targetMeanPrice && gate.targetMeanPrice > 0 && coiled.price > 0
         ? Math.round((gate.targetMeanPrice / coiled.price - 1) * 100)
-        : null) ??
+        : null);
+
+    if (upside_pct !== null && upside_pct <= 0) {
+      upside_pct = null; // Ignore negative/stale analyst targets
+    }
+
+    upside_pct = upside_pct ??
       (() => {
         if (coiled.n_entry && coiled.n_entry !== "N/A" && coiled.n_tp1 && coiled.n_tp1 !== "N/A") {
           const entry = parseFloat(coiled.n_entry.replace('$', '').replace(',', ''));

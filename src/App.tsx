@@ -653,6 +653,33 @@ export default function App() {
     return `$${str}`;
   };
 
+  const calcUpsidePct = (targetPrice: any, currentPrice: any) => {
+    const p = parseFloat(String(currentPrice).replace(/[^0-9.-]/g, ''));
+    const t = parseFloat(String(targetPrice).replace(/[^0-9.-]/g, ''));
+    if (!isNaN(p) && !isNaN(t) && p > 0) {
+      const pt = Math.round(((t - p) / p) * 100);
+      return pt > 0 ? `+${pt}%` : `${pt}%`;
+    }
+    return '—';
+  };
+
+  const sortNeuralData = (neuralData: any[]) => {
+    return [...neuralData].sort((a: any, b: any) => {
+      const getRecRank = (rec: string) => {
+        const r = (rec || '').toUpperCase();
+        if (r.includes('STRONG BUY')) return 1;
+        if (r.includes('BUY') || r.includes('ACCUMULATE')) return 2;
+        if (r.includes('HOLD') || r.includes('WATCH')) return 3;
+        if (r.includes('SELL') || r.includes('DISTRIBUTE') || r.includes('REDUCE') || r.includes('BEAR')) return 4;
+        return 5;
+      };
+      const rankA = getRecRank(a.neuralRecommendation || a.recommendation || '');
+      const rankB = getRecRank(b.neuralRecommendation || b.recommendation || '');
+      if (rankA !== rankB) return rankA - rankB;
+      return Number(b.neuralScore || b.nScore || 0) - Number(a.neuralScore || a.nScore || 0);
+    });
+  };
+
   const extractEli5Content = (text: string) => {
     if (!text) return { before: "", eli5: null, after: "" };
     
@@ -2748,7 +2775,7 @@ User Clarification Inquiry:
           const isAccumulate = rec.includes('ACCUMULATE') || rec.includes('BUY');
           const isDistribute = rec.includes('DISTRIBUTE') || rec.includes('SELL') || rec.includes('BEAR');
 
-          const rawMatch = isUnified ? (rawResults.find(sr => sr.ticker === r.ticker) || {}) : {};
+          const rawMatch = rawResults.find(sr => sr.ticker === r.ticker) || {};
 
           return (
             <div key={i} className="bg-gradient-to-b from-[#11111b] to-black border border-white/10 rounded-xl p-4 space-y-3.5 shadow-lg select-text text-left">
@@ -2795,10 +2822,18 @@ User Clarification Inquiry:
                       </span>
                     </div>
                     <div>
-                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-amber-400">Target Upside</span>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-amber-400">Est Upside</span>
                       <span className="text-amber-400 font-mono font-black block">
                         {rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}` : rawMatch.upside_pct || 0}%
                       </span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-emerald-400">TP1 Upside</span>
+                      <span className="font-mono text-emerald-400 font-black block">{calcUpsidePct(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice)}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-teal-400">TP2 Upside</span>
+                      <span className="font-mono text-teal-400 font-black block">{calcUpsidePct(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice)}</span>
                     </div>
                     <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold">Gate Signal</span>
@@ -2807,6 +2842,14 @@ User Clarification Inquiry:
                     <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Rev State</span>
                       <span className="font-sans text-purple-400 font-semibold truncate block">{rawMatch.rev_state || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-emerald-400">Comp Score</span>
+                      <span className="font-mono text-emerald-400 font-black block">{rawMatch.composite || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Steam</span>
+                      <span className="font-mono block">{rawMatch.steam ? `${rawMatch.steam}/14` : '—'}</span>
                     </div>
                     <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold">R:R Ratio</span>
@@ -2849,22 +2892,52 @@ User Clarification Inquiry:
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-2 text-xs bg-black/30 p-2.5 rounded-lg border border-white/5">
-                  <div>
-                    <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">N-Entry</span>
-                    <span className="font-mono text-purple-400 font-bold">${r.neuralEntry || r.nEntry || '—'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">N-Exit (Target)</span>
-                    <span className="font-mono text-emerald-400 font-semibold">${r.neuralExit || r.nExit || '—'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">N-TP1</span>
-                    <span className="font-mono text-teal-400">${r.neuralTP1 || r.tp1 || '—'}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] text-bento-muted uppercase font-sans">N-TP2</span>
-                    <span className="font-mono text-indigo-400">${r.neuralTP2 || r.tp2 || '—'}</span>
+                <div className="space-y-3.5">
+                  <div className="grid grid-cols-2 gap-2 text-xs bg-black/30 p-2.5 rounded-lg border border-white/5">
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-amber-400">Est Upside</span>
+                      <span className="font-mono text-amber-400 font-bold block">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}` : rawMatch.upside_pct || 0}%</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-emerald-400">TP1 Upside</span>
+                      <span className="font-mono text-emerald-400 font-bold block">{calcUpsidePct(r.neuralTP1 || r.tp1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close)}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-teal-400">TP2 Upside</span>
+                      <span className="font-mono text-teal-400 font-bold block">{calcUpsidePct(r.neuralTP2 || r.tp2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close)}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Gate Signal</span>
+                      <span className="font-sans text-amber-300 font-bold block">{rawMatch.gate_sig || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Rev State</span>
+                      <span className="font-sans text-purple-400 font-semibold truncate block">{rawMatch.rev_state || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-emerald-400">Comp Score</span>
+                      <span className="font-mono text-emerald-400 font-black block">{rawMatch.composite || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Steam</span>
+                      <span className="font-mono block">{rawMatch.steam ? `${rawMatch.steam}/14` : '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">N-Entry</span>
+                      <span className="font-mono text-purple-400 font-bold">${r.neuralEntry || r.nEntry || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">N-Exit (Target)</span>
+                      <span className="font-mono text-emerald-400 font-semibold">${r.neuralExit || r.nExit || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">N-TP1</span>
+                      <span className="font-mono text-teal-400">${r.neuralTP1 || r.tp1 || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-sans">N-TP2</span>
+                      <span className="font-mono text-indigo-400">${r.neuralTP2 || r.tp2 || '—'}</span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -3151,7 +3224,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     if (activeSnapshot) {
       const hasAi = Array.isArray(activeSnapshot.aiResults) && activeSnapshot.aiResults.length > 0 && activeSnapshot.aiResults[0].neuralScore;
       if (!hasAi) {
-        setSnapshotSortBy(activeSnapshot.screenerMode?.includes('Unified') ? 'raw' : 'vcs');
+        setSnapshotSortBy('raw');
       } else {
         setSnapshotSortBy('neural');
       }
@@ -3758,11 +3831,94 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
         setScreenerResults(results);
         setIsScreened(true);
+
+        // Auto-save Snapshot
+        const autoSaveRawSnapshot = async (finalResults: any[]) => {
+          const idxLabels: Record<string, string> = {
+            'sp500': 'S&P 500',
+            'nasdaq100': 'Nasdaq-100',
+            'both': 'S&P 500 + NDX',
+            'russell1000': 'Russell 1000',
+            'russell2000': 'Russell 2000',
+            'russell3000': 'Russell 3000',
+            'watchlist': 'Watchlist',
+            'custom': 'Custom Tickers'
+          };
+          const mdLabels: Record<string, string> = {
+            'classic': 'Classic Screener (VCS)',
+            'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
+          };
+          const hzLabels: Record<string, string> = {
+            'weeks': 'Swing (Weeks)',
+            'months': 'Position (Months)',
+            'days': 'Day/Momentum (Days)'
+          };
+          
+          let presetLabel = "Full";
+          if (screenerPreset === "phase1") presetLabel = "Phase 1";
+          if (screenerPreset === "phase2") presetLabel = "Phase 2";
+          
+          const snapTitle = (idxLabels[screenIndex] || "Custom/Colab") + ` (Auto-Save - ${presetLabel})`;
+          
+          let filtered = [...finalResults];
+          if (screenerPreset !== 'full') {
+            filtered = filtered.filter((r: any) => {
+              const rev = (r.rev_state || "").toUpperCase();
+              if (screenerPreset === 'phase1') {
+                return rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
+              }
+              if (screenerPreset === 'phase2') {
+                return rev.includes("SQUEEZE") || rev.includes("NEUTRAL") || rev.includes("ACCUM") || rev.includes("BOTTOM");
+              }
+              return true;
+            });
+            filtered = filtered.slice(0, Math.min(rawScreenerCount, 200));
+          } else {
+            // Apply a strict 250 limit for Firestore document size to avoid the 1 MB cap
+            filtered = filtered.slice(0, 250);
+          }
+          
+          try {
+            if (user) {
+              await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
+                timestamp: new Date().toISOString(),
+                source: "screener",
+                index: snapTitle,
+                screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                horizon: hzLabels[screenHorizon] || screenHorizon,
+                rawResults: filtered,
+                aiResults: [],
+                tickerCount: filtered.length,
+                userId: user.uid
+              }));
+            } else {
+              setSavedSnapshots(prev => {
+                const newSnapshot = {
+                  id: Date.now().toString(),
+                  timestamp: new Date().toISOString(),
+                  source: "screener",
+                  index: snapTitle,
+                  screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                  horizon: hzLabels[screenHorizon] || screenHorizon,
+                  rawResults: filtered,
+                  aiResults: [],
+                  tickerCount: filtered.length
+                };
+                return [newSnapshot, ...prev];
+              });
+            }
+          } catch (err) {
+            console.error("Auto-save snapshot failed", err);
+          }
+        };
+        
+        autoSaveRawSnapshot(results);
+
         ev.close();
         setIsScreening(false);
         setIsNeuralLoading(false);
         setNeuralScreenerText(""); 
-        setSnapshotSortBy(screenerMode === 'unified_v2' ? 'raw' : 'vcs');
+        setSnapshotSortBy('raw');
         setTerminal(prev => [...prev, "[SYSTEM] Done! Screener populated."]);
       } else {
         setTerminal(prev => [...prev, data.msg].slice(-20)); // Keep last 20 lines
@@ -3814,6 +3970,9 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       
       const snapTitle = (indexLabels[screenIndex] || "Custom/Colab") + (isNeural ? ` (Neural - ${presetLabel})` : ` (${presetLabel})`);
 
+      // Ensure we don't exceed Firestore 1 MB document limit
+      const resultsToSave = displayedScreenerResults.slice(0, 250);
+
       try {
         if (user) {
           await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
@@ -3822,11 +3981,11 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             index: snapTitle,
             screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
             horizon: horizonLabels[screenHorizon] || screenHorizon,
-            rawResults: displayedScreenerResults,
+            rawResults: resultsToSave,
             aiResults: aiArr,
             rawOutput: "",
             neuralOutput: "",
-            tickerCount: displayedScreenerResults.length,
+            tickerCount: resultsToSave.length,
             userId: user.uid
           }));
         } else {
@@ -3838,11 +3997,11 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
               index: snapTitle,
               screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
               horizon: horizonLabels[screenHorizon] || screenHorizon,
-              rawResults: displayedScreenerResults,
+              rawResults: resultsToSave,
               aiResults: aiArr,
               rawOutput: "",
               neuralOutput: "",
-              tickerCount: displayedScreenerResults.length
+              tickerCount: resultsToSave.length
             };
             return [newSnapshot, ...prev];
           });
@@ -6968,7 +7127,9 @@ ${stationInput}
                                               <th className="p-3">N-Score</th>
                                               <th className="p-3">Rec.</th>
                                               <th className="p-3">Price</th>
-                                              <th className="p-3 text-amber-400 font-bold">Upside</th>
+                                              <th className="p-3 text-amber-400 font-bold">Est Upside</th>
+                                              <th className="p-3 text-emerald-400 font-bold">TP1 Upside</th>
+                                              <th className="p-3 text-teal-400 font-bold">TP2 Upside</th>
                                               <th className="p-3">N-Entry</th>
                                               <th className="p-3">N-Exit</th>
                                               <th className="p-3 text-emerald-400">N-TP1</th>
@@ -6995,6 +7156,13 @@ ${stationInput}
                                               <th className="p-3 min-w-[60px]">Ticker</th>
                                               <th className="p-3 min-w-[70px]">N-Score</th>
                                               <th className="p-3 min-w-[80px]">Rec.</th>
+                                              <th className="p-3 min-w-[80px]">Gate Sig</th>
+                                              <th className="p-3 min-w-[80px]">Rev State</th>
+                                              <th className="p-3 min-w-[80px]">Comp</th>
+                                              <th className="p-3 min-w-[80px]">Steam</th>
+                                              <th className="p-3 text-amber-400 font-bold">Est Upside</th>
+                                              <th className="p-3 text-emerald-400 font-bold">TP1 Upside</th>
+                                              <th className="p-3 text-teal-400 font-bold">TP2 Upside</th>
                                               <th className="p-3 min-w-[80px]">N-Entry</th>
                                               <th className="p-3 min-w-[80px]">N-Exit</th>
                                               <th className="p-3 min-w-[80px]">N-TP1</th>
@@ -7006,9 +7174,11 @@ ${stationInput}
                                           </thead>
                                         )}
                                         <tbody>
-                                          {activeSnapshot.aiResults.map((r: any, i: number) => {
+                                          {sortNeuralData(activeSnapshot.aiResults).map((r: any, i: number) => {
                                             if (activeSnapshot.screenerMode?.includes('Unified')) {
-                                               const rawMatch = activeSnapshot.rawResults.find((sr: any) => sr.ticker === r.ticker) || {} as any;
+                                               const rawMatch = activeSnapshot.rawResults?.find((sr: any) => sr.ticker === r.ticker) || {} as any;
+                                               const tp1Up = calcUpsidePct(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice);
+                                               const tp2Up = calcUpsidePct(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice);
                                                return (
                                                 <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors align-top whitespace-nowrap">
                                                   <td className="p-3 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: rawMatch.bucket?.includes("3-WAY") ? "#a78bfa" : rawMatch.bucket?.includes("CS+Gate") ? "#f97316" : rawMatch.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{rawMatch.bucket || "N/A"}</td>
@@ -7020,16 +7190,18 @@ ${stationInput}
                                                   <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                                   <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
                                                   <td className="p-3 font-mono">${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}</td>
-                                                  <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}` : rawMatch.upside_pct}%</td>
+                                                  <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}%` : rawMatch.upside_pct ? `${rawMatch.upside_pct}%` : '—'}</td>
+                                                  <td className="p-3 font-mono text-emerald-400 font-bold">{tp1Up}</td>
+                                                  <td className="p-3 font-mono text-teal-400 font-bold">{tp2Up}</td>
                                                   <td className="p-3 font-mono">{cleanPrice(rawMatch.algoEntry || rawMatch.n_entry)}</td>
                                                   <td className="p-3 font-mono text-red-400">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit)}</td>
                                                   <td className="p-3 font-mono text-emerald-400">{cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1)}</td>
                                                   <td className="p-3 font-mono text-teal-400">{cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2)}</td>
-                                                  <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig}</td>
-                                                  <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state}</td>
-                                                  <td className="p-3 font-mono text-emerald-400">{rawMatch.composite}</td>
-                                                  <td className="p-3 font-mono">{rawMatch.steam}/14</td>
-                                                  <td className="p-3 font-mono" style={{color: rawMatch.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{rawMatch.ma_stack}</td>
+                                                  <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
+                                                  <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
+                                                  <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
+                                                  <td className="p-3 font-mono">{rawMatch.steam ? `${rawMatch.steam}/14` : '—'}</td>
+                                                  <td className="p-3 font-mono" style={{color: rawMatch.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{rawMatch.ma_stack || '—'}</td>
                                                   <td className="p-3 text-[11px] leading-relaxed text-indigo-400 whitespace-normal min-w-[200px]">{r.technical}</td>
                                                   <td className="p-3 text-[11px] leading-relaxed text-blue-300 whitespace-normal min-w-[200px]">{r.fundamentals}</td>
                                                   <td className="p-3 text-[11px] leading-relaxed text-gray-300 whitespace-normal min-w-[200px]">{r.news}</td>
@@ -7042,6 +7214,9 @@ ${stationInput}
                                                 </tr>
                                                );
                                             }
+                                            const rawMatch = activeSnapshot.rawResults?.find((sr: any) => sr.ticker === r.ticker) || {} as any;
+                                            const tp1Up = calcUpsidePct(r.neuralTP1 || r.tp1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close);
+                                            const tp2Up = calcUpsidePct(r.neuralTP2 || r.tp2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close);
                                             return (
                                               <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors align-top">
                                                 <td className="p-3 font-mono">
@@ -7051,20 +7226,27 @@ ${stationInput}
                                                 </td>
                                                 <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                                 <td className="p-3 uppercase font-bold tracking-widest text-[10px]">{r.neuralRecommendation}</td>
+                                                <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
+                                                <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
+                                                <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
+                                                <td className="p-3 font-mono">{rawMatch.steam ? `${rawMatch.steam}/14` : '—'}</td>
+                                                <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct ? `${rawMatch.upside_pct > 0 ? '+' : ''}${rawMatch.upside_pct}%` : '—'}</td>
+                                                <td className="p-3 font-mono text-emerald-400 font-bold">{tp1Up}</td>
+                                                <td className="p-3 font-mono text-teal-400 font-bold">{tp2Up}</td>
                                                 <td className="p-3 font-mono">{cleanPrice(r.neuralEntry)}</td>
                                                 <td className="p-3 font-mono">{cleanPrice(r.neuralExit)}</td>
                                                 <td className="p-3 font-mono">{cleanPrice(r.neuralTP1)}</td>
                                                 <td className="p-3 font-mono">{cleanPrice(r.neuralTP2)}</td>
                                                 <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[200px]">{r.bullCase}</td>
                                                 <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[200px]">{r.bearCase}</td>
-                                                <td className="p-3 text-[11px] leading-relaxed text-blue-400/80 whitespace-normal min-w-[250px]">{r.finalTake}</td>
+                                                <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
                                               </tr>
-                                            );
+                                             );
                                           })}
                                         </tbody>
                                       </table>
                                     </div>
-                                    {renderNeuralScreenerMobile(activeSnapshot.aiResults, !!activeSnapshot.screenerMode?.includes('Unified'), activeSnapshot.rawResults)}
+                                    {renderNeuralScreenerMobile(sortNeuralData(activeSnapshot.aiResults), !!activeSnapshot.screenerMode?.includes('Unified'), activeSnapshot.rawResults)}
                                   </>
                                 ) : (
                                   <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{activeSnapshot.neuralOutput || "*No neural analysis saved for this snapshot.*"}</Markdown></div>
@@ -7499,13 +7681,13 @@ ${stationInput}
                     <div className="flex-1 flex flex-col gap-4 mt-4 overflow-hidden">
                       <div className="flex justify-between items-center bg-black p-3 rounded-xl border border-bento-border">
                         <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-widest overflow-x-auto custom-scrollbar whitespace-nowrap">
-                          {['Signal Summary', 'Raw Table', 'Neural Analysis'].filter(tab => {
+                          {['Raw Table', 'Neural Analysis'].filter(tab => {
                             if (tab === 'Neural Analysis') {
                               return selectedScreenerModel !== 'no_neural' && !disableNeural;
                             }
                             return true;
                           }).map((tab) => {
-                            const tabKey = tab === 'Signal Summary' ? 'vcs' : tab === 'Raw Table' ? 'raw' : 'neural';
+                            const tabKey = tab === 'Raw Table' ? 'raw' : 'neural';
                             return (
                               <button
                                 key={tab}
@@ -7571,17 +7753,18 @@ ${stationInput}
                                 'months': 'Position (Months)',
                                 'days': 'Day/Momentum (Days)'
                               };
+                              const resultsToSave = displayedScreenerResults.slice(0, 250);
                               const newSnapData = {
                                 timestamp: new Date().toISOString(),
                                 source: "screener",
                                 index: (indexLabels[screenIndex] || "Custom/Colab") + (screenerPreset === 'full' ? ' (Full)' : screenerPreset === 'phase1' ? ' (Phase 1)' : ' (Phase 2)'),
                                 screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
                                 horizon: horizonLabels[screenHorizon] || screenHorizon,
-                                rawResults: displayedScreenerResults,
+                                rawResults: resultsToSave,
                                 aiResults: (() => { try { return JSON.parse(neuralScreenerText || "[]"); } catch { return []; } })(),
                                 rawOutput: "",
                                 neuralOutput: "",
-                                tickerCount: displayedScreenerResults.length
+                                tickerCount: resultsToSave.length
                               };
                               
                               if (user) {
@@ -7741,6 +7924,13 @@ ${stationInput}
                                       <th className="p-3 min-w-[60px]">Ticker</th>
                                       <th className="p-3 min-w-[70px]">N-Score</th>
                                       <th className="p-3 min-w-[80px]">Rec.</th>
+                                      <th className="p-3 min-w-[80px]">Gate Sig</th>
+                                      <th className="p-3 min-w-[80px]">Rev State</th>
+                                      <th className="p-3 min-w-[80px]">Comp</th>
+                                      <th className="p-3 min-w-[80px]">Steam</th>
+                                      <th className="p-3 text-amber-400 font-bold">Est Upside</th>
+                                      <th className="p-3 text-emerald-400 font-bold">TP1 Upside</th>
+                                      <th className="p-3 text-teal-400 font-bold">TP2 Upside</th>
                                       <th className="p-3 min-w-[80px]">N-Entry</th>
                                       <th className="p-3 min-w-[80px]">N-Exit</th>
                                       <th className="p-3 min-w-[80px]">N-TP1</th>
@@ -7754,11 +7944,14 @@ ${stationInput}
                                 <tbody>
                                   {(function() {
                                     try {
-                                      const neuralData = JSON.parse(neuralScreenerText || "[]");
-                                      if (!Array.isArray(neuralData)) return <tr><td colSpan={10} className="p-4 text-center text-red-400 font-mono text-xs whitespace-pre-wrap">{neuralScreenerText}</td></tr>;
+                                      const parsed = JSON.parse(neuralScreenerText || "[]");
+                                      if (!Array.isArray(parsed)) return <tr><td colSpan={10} className="p-4 text-center text-red-400 font-mono text-xs whitespace-pre-wrap">{neuralScreenerText}</td></tr>;
+                                      const neuralData = sortNeuralData(parsed);
                                       return neuralData.map((r: any, i: number) => {
                                         if (screenerMode === 'unified_v2') {
                                            const rawMatch = displayedScreenerResults.find(sr => sr.ticker === r.ticker) || {} as any;
+                                           const tp1Up = calcUpsidePct(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice);
+                                           const tp2Up = calcUpsidePct(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice);
                                            return (
                                             <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors align-top whitespace-nowrap">
                                               <td className="p-3 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: rawMatch.bucket?.includes("3-WAY") ? "#a78bfa" : rawMatch.bucket?.includes("CS+Gate") ? "#f97316" : rawMatch.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{rawMatch.bucket || "N/A"}</td>
@@ -7770,16 +7963,18 @@ ${stationInput}
                                               <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                               <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
                                               <td className="p-3 font-mono">${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}</td>
-                                              <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}` : rawMatch.upside_pct}%</td>
+                                              <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}%` : rawMatch.upside_pct ? `${rawMatch.upside_pct}%` : '—'}</td>
+                                              <td className="p-3 font-mono text-emerald-400 font-bold">{tp1Up}</td>
+                                              <td className="p-3 font-mono text-teal-400 font-bold">{tp2Up}</td>
                                               <td className="p-3 font-mono">{cleanPrice(rawMatch.algoEntry || rawMatch.n_entry)}</td>
                                               <td className="p-3 font-mono text-red-400">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit)}</td>
                                               <td className="p-3 font-mono text-emerald-400">{cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1)}</td>
                                               <td className="p-3 font-mono text-teal-400">{cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2)}</td>
-                                              <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig}</td>
-                                              <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state}</td>
-                                              <td className="p-3 font-mono text-emerald-400">{rawMatch.composite}</td>
-                                              <td className="p-3 font-mono">{rawMatch.steam}/14</td>
-                                              <td className="p-3 font-mono" style={{color: rawMatch.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{rawMatch.ma_stack}</td>
+                                              <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
+                                              <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
+                                              <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
+                                              <td className="p-3 font-mono">{rawMatch.steam ? `${rawMatch.steam}/14` : '—'}</td>
+                                              <td className="p-3 font-mono" style={{color: rawMatch.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{rawMatch.ma_stack || '—'}</td>
                                               <td className="p-3 text-[11px] leading-relaxed text-indigo-400 whitespace-normal min-w-[200px]">{r.technical}</td>
                                               <td className="p-3 text-[11px] leading-relaxed text-blue-300 whitespace-normal min-w-[200px]">{r.fundamentals}</td>
                                               <td className="p-3 text-[11px] leading-relaxed text-gray-300 whitespace-normal min-w-[200px]">{r.news}</td>
@@ -7792,6 +7987,9 @@ ${stationInput}
                                             </tr>
                                            );
                                         }
+                                        const rawMatch = displayedScreenerResults.find((sr: any) => sr.ticker === r.ticker) || {} as any;
+                                        const tp1Up = calcUpsidePct(r.neuralTP1 || r.tp1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close);
+                                        const tp2Up = calcUpsidePct(r.neuralTP2 || r.tp2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close);
                                         return (
                                           <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors align-top">
                                             <td className="p-3 font-mono">
@@ -7801,15 +7999,22 @@ ${stationInput}
                                             </td>
                                             <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                             <td className="p-3 uppercase font-bold tracking-widest text-[10px]">{r.neuralRecommendation}</td>
+                                            <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
+                                            <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
+                                            <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
+                                            <td className="p-3 font-mono">{rawMatch.steam ? `${rawMatch.steam}/14` : '—'}</td>
+                                            <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct ? `${rawMatch.upside_pct > 0 ? '+' : ''}${rawMatch.upside_pct}%` : '—'}</td>
+                                            <td className="p-3 font-mono text-emerald-400 font-bold">{tp1Up}</td>
+                                            <td className="p-3 font-mono text-teal-400 font-bold">{tp2Up}</td>
                                             <td className="p-3 font-mono">{cleanPrice(r.neuralEntry)}</td>
                                             <td className="p-3 font-mono">{cleanPrice(r.neuralExit)}</td>
                                             <td className="p-3 font-mono">{cleanPrice(r.neuralTP1)}</td>
                                             <td className="p-3 font-mono">{cleanPrice(r.neuralTP2)}</td>
                                             <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[200px]">{r.bullCase}</td>
                                             <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[200px]">{r.bearCase}</td>
-                                            <td className="p-3 text-[11px] leading-relaxed text-blue-400/80 whitespace-normal min-w-[250px]">{r.finalTake}</td>
+                                            <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
                                           </tr>
-                                        );
+                                         );
                                       });
                                     } catch(e) {
                                       return <tr><td colSpan={10} className="p-4 text-center text-red-400 font-mono text-xs whitespace-pre-wrap">Error parsing neural output:\n{neuralScreenerText}</td></tr>;
@@ -7821,7 +8026,8 @@ ${stationInput}
                             {renderNeuralScreenerMobile(
                               (function() {
                                 try {
-                                  return JSON.parse(neuralScreenerText || "[]");
+                                  const parsed = JSON.parse(neuralScreenerText || "[]");
+                                  return Array.isArray(parsed) ? sortNeuralData(parsed) : [];
                                 } catch(e) {
                                   return [];
                                 }
@@ -7834,42 +8040,10 @@ ${stationInput}
                       </>
                     )}
                         {snapshotSortBy === 'vcs' && (
-                          <div className="space-y-4">
+                          <div className="hidden space-y-4">
                             {displayedScreenerResults.map((r, i) => (
-                              <div key={i} className="bg-[#12121e] border border-white/5 rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between hover:border-white/10 transition-colors">
-                                <div className="flex items-center gap-4 w-full md:w-auto text-left">
-                                  <div className="flex flex-col">
-                                    <h4 className="text-xl font-black text-white">
-                                      <a 
-                                        href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} 
-                                        target="_blank" 
-                                        rel="noreferrer" 
-                                        className="text-blue-400 hover:underline"
-                                      >
-                                        {r.ticker}
-                                      </a>
-                                    </h4>
-                                    <span className="text-[10px] font-mono text-bento-muted">${r.close}</span>
-                                  </div>
-                                  <div className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest", r.signal?.includes("BUY") ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-white/10 text-white/60 border border-white/5")}>
-                                    {r.signal}
-                                  </div>
-                                </div>
-                                <div className="flex-1 flex gap-4 md:justify-center w-full md:w-auto text-left">
-                                  <div className="flex flex-col">
-                                    <span className="text-[8px] uppercase font-bold text-bento-muted tracking-widest">Score</span>
-                                    <span className={cn("text-sm font-black", r.bull_score > 70 ? "text-emerald-400" : "text-amber-400")}>{typeof r.bull_score === 'number' ? r.bull_score.toFixed(1) : r.bull_score}</span>
-                                  </div>
-                                  <div className="flex flex-col min-w-[120px]">
-                                    <span className="text-[8px] uppercase font-bold text-bento-muted tracking-widest">State</span>
-                                    <span className="text-[10px] font-mono text-white/80">{r.state}</span>
-                                  </div>
-                                </div>
-                              </div>
+                              <div key={i} className="hidden" />
                             ))}
-                            {displayedScreenerResults.length === 0 && (
-                              <div className="text-center p-8 text-bento-muted italic test-xs">No results found matching criteria.</div>
-                            )}
                           </div>
                         )}
                       </div>
