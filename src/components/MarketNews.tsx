@@ -223,6 +223,7 @@ function parseReportData(html: string) {
     // Scoreboard ticker rankings inside tables
     const scoreTables: any[] = [];
     doc.querySelectorAll("table").forEach((table) => {
+      if (table.closest(".insiders")) return; // Skip nested insider tables in generic processor
       const headers: string[] = [];
       table.querySelectorAll("th").forEach(th => headers.push(th.textContent?.trim() || ""));
       
@@ -263,6 +264,140 @@ function parseReportData(html: string) {
       });
     });
 
+    // Parse bottomLineData (🏆 Bottom Line — Who Wins Today)
+    const leaderElement = doc.querySelector(".leader");
+    let bottomLineData: any = null;
+    if (leaderElement) {
+      const winBox = leaderElement.querySelector(".lbox.win, .lbox:first-of-type");
+      const loseBox = leaderElement.querySelector(".lbox.lose, .lbox:last-of-type");
+      
+      const parsedWinners: any[] = [];
+      if (winBox) {
+        winBox.querySelectorAll("li").forEach(li => {
+          parsedWinners.push({
+            text: li.textContent?.trim() || "",
+            html: li.innerHTML,
+            medal: li.querySelector(".medal")?.textContent?.trim() || ""
+          });
+        });
+      }
+
+      const parsedLosers: any[] = [];
+      if (loseBox) {
+        loseBox.querySelectorAll("li").forEach(li => {
+          parsedLosers.push({
+            text: li.textContent?.trim() || "",
+            html: li.innerHTML,
+            medal: li.querySelector(".medal")?.textContent?.trim() || ""
+          });
+        });
+      }
+
+      bottomLineData = {
+        title: "🏆 Bottom Line — Who Wins Today",
+        winners: parsedWinners,
+        losers: parsedLosers
+      };
+    }
+
+    // Parse actionSummaryData (🎯 Action Summary)
+    const actionElement = doc.querySelector(".action");
+    let actionSummaryData: any = null;
+    if (actionElement) {
+      const cols: any[] = [];
+      actionElement.querySelectorAll(".col").forEach(col => {
+        const title = col.querySelector("h4")?.textContent?.trim() || "Signal";
+        const isWin = col.classList.contains("win") || title.toLowerCase().includes("buy") || title.toLowerCase().includes("winner");
+        const isLose = col.classList.contains("lose") || title.toLowerCase().includes("sell") || title.toLowerCase().includes("loser") || title.toLowerCase().includes("hedge");
+        
+        const items: string[] = [];
+        col.querySelectorAll("li").forEach(li => {
+          items.push(li.textContent?.trim() || "");
+        });
+
+        cols.push({
+          title,
+          isWin,
+          isLose,
+          items
+        });
+      });
+
+      actionSummaryData = {
+        title: "🎯 Action Summary",
+        cols
+      };
+    }
+
+    // Parse insidersData (🟢 Insider Cluster Buys)
+    const insidersElement = doc.querySelector(".insiders");
+    let insidersData: any = null;
+    if (insidersElement) {
+      const title = insidersElement.querySelector(".ib-title")?.textContent?.trim() || "🟢 Insider Cluster Buys";
+      const sub = insidersElement.querySelector(".ib-sub")?.textContent?.trim() || "";
+      const note = insidersElement.querySelector(".ib-note")?.textContent?.trim() || "";
+      const foot = insidersElement.querySelector(".ib-foot")?.textContent?.trim() || "";
+      
+      const stats: string[] = [];
+      insidersElement.querySelectorAll(".ib-stat").forEach(el => {
+        stats.push(el.textContent?.trim() || "");
+      });
+
+      const tables: any[] = [];
+      insidersElement.querySelectorAll("table").forEach(table => {
+        const headers: string[] = [];
+        table.querySelectorAll("th").forEach(th => headers.push(th.textContent?.trim() || ""));
+        
+        const rows: any[] = [];
+        table.querySelectorAll("tbody tr, tr").forEach(tr => {
+          if (tr.querySelector("th")) return; // skip header tr
+          const cells: any[] = [];
+          tr.querySelectorAll("td").forEach(td => {
+            const isBold = td.querySelector("b") !== null;
+            const textContent = td.textContent?.trim() || "";
+            const isCenter = td.getAttribute("style")?.includes("center") || false;
+            const isRight = td.getAttribute("style")?.includes("right") || false;
+            
+            const links: any[] = [];
+            td.querySelectorAll("a").forEach(a => {
+              links.push({
+                href: a.getAttribute("href") || "#",
+                text: a.textContent?.trim() || "Link",
+                isVerify: true
+              });
+            });
+
+            const buyerSpan = td.querySelector(".ib-buyers");
+            const buyerCount = buyerSpan ? buyerSpan.textContent?.trim() : null;
+
+            cells.push({
+              text: textContent,
+              isBold,
+              isCenter,
+              isRight,
+              buyerCount,
+              links
+            });
+          });
+          if (cells.length > 0) rows.push(cells);
+        });
+
+        tables.push({
+          headers,
+          rows
+        });
+      });
+
+      insidersData = {
+        title,
+        sub,
+        note,
+        foot,
+        stats,
+        tables
+      };
+    }
+
     return {
       isScoreboard,
       title,
@@ -274,7 +409,10 @@ function parseReportData(html: string) {
       macroRegime,
       macroLede,
       macroEvents,
-      scoreTables
+      scoreTables,
+      bottomLineData,
+      actionSummaryData,
+      insidersData
     };
   } catch (err) {
     console.error("DOMParser error:", err);
@@ -1376,53 +1514,210 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
                       </div>
                     )}
 
-                    {/* Winners & Losers Dual Card */}
-                    {(parsed.winners.length > 0 || parsed.losers.length > 0) && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {/* Winner's Column */}
-                        {parsed.winners.length > 0 && (
-                          <div className="bg-[#153434]/20 border border-emerald-500/20 p-4 rounded-xl space-y-2">
-                            <h5 className="text-xs font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
-                              <span>🥇</span> ROTATION LEADERS & WINNERS (Click to Ask AI)
-                            </h5>
-                            <ul className="space-y-1.5 text-xs text-[#cfd8ff] font-medium font-mono">
-                              {parsed.winners.map((win, wIdx) => (
-                                <li 
-                                  key={wIdx} 
-                                  onClick={() => triggerInstantAiInquiry(`In the report on ${activePreviewReport.reportDate}, discuss why the ticker "${win}" is listed under ROTATION LEADERS & WINNERS. What are the key momentum drivers?`)}
-                                  className="flex items-center gap-2 border-b border-emerald-500/5 pb-1 cursor-pointer hover:bg-emerald-500/10 p-1 rounded transition-all group"
-                                  title="Analyze this winner with AI"
-                                >
-                                  <span className="text-emerald-400">▲</span> 
-                                  <span className="flex-1 text-[#e2e8f0] font-bold">{win}</span>
-                                  <Sparkles className="w-2.5 h-2.5 text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity mr-1" />
-                                </li>
-                              ))}
-                            </ul>
+                    {/* Bottom Line — Who Wins Today Section in Top */}
+                    {parsed.bottomLineData && (
+                      <div className="space-y-4 bg-indigo-950/20 border border-indigo-500/20 p-4 rounded-2xl">
+                        <div className="flex items-center gap-2 border-b border-[#243056] pb-2">
+                          <span className="text-xs font-black text-white uppercase tracking-widest">🏆 BOTTOM LINE — WHO WINS TODAY (Click to Ask AI)</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Top Winners */}
+                          {parsed.bottomLineData.winners.length > 0 && (
+                            <div className="space-y-2">
+                              <h5 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5 pb-1 border-b border-emerald-500/10">
+                                <span>🚀</span> Top Winners
+                              </h5>
+                              <ol className="space-y-2 text-xs text-[#cfd8ff]">
+                                {parsed.bottomLineData.winners.map((win: any, idx: number) => {
+                                  return (
+                                    <li 
+                                      key={idx}
+                                      onClick={() => triggerInstantAiInquiry(`In the Bottom Line section under Winners: Please elaborate on this point: "${win.text}". Why are they winners today?`)}
+                                      className="flex items-start gap-2 bg-black/20 border border-[#243056]/30 p-2.5 rounded-xl hover:border-emerald-500/50 hover:bg-[#153434]/10 transition-all cursor-pointer group"
+                                    >
+                                      <span className="text-xs shrink-0">{win.medal || "🥇"}</span>
+                                      <div className="space-y-0.5">
+                                        <span className="text-[#e2e8f0] font-medium leading-relaxed group-hover:text-emerald-300 transition-colors" dangerouslySetInnerHTML={{ __html: win.html }} />
+                                      </div>
+                                    </li>
+                                  );
+                                })}
+                              </ol>
+                            </div>
+                          )}
+
+                          {/* Biggest Losers */}
+                          {parsed.bottomLineData.losers.length > 0 && (
+                            <div className="space-y-2">
+                              <h5 className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-1.5 pb-1 border-b border-red-500/10">
+                                <span>⚠️</span> Biggest Losers
+                              </h5>
+                              <ol className="space-y-2 text-xs text-[#cfd8ff]">
+                                {parsed.bottomLineData.losers.map((lose: any, idx: number) => {
+                                  return (
+                                    <li 
+                                      key={idx}
+                                      onClick={() => triggerInstantAiInquiry(`In the Bottom Line section under Losers: Please elaborate on this point: "${lose.text}". Why are they catalogued as declining/at-risk players?`)}
+                                      className="flex items-start gap-2 bg-black/20 border border-[#243056]/30 p-2.5 rounded-xl hover:border-red-500/50 hover:bg-[#2a1b1b]/10 transition-all cursor-pointer group"
+                                    >
+                                      <span className="text-xs shrink-0">{lose.medal || "📉"}</span>
+                                      <div className="space-y-0.5">
+                                        <span className="text-[#e2e8f0] font-medium leading-relaxed group-hover:text-red-300 transition-colors" dangerouslySetInnerHTML={{ __html: lose.html }} />
+                                      </div>
+                                    </li>
+                                  );
+                                })}
+                              </ol>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Summary Section */}
+                    {parsed.actionSummaryData && (
+                      <div className="space-y-3 bg-[#11162d]/40 border border-[#243056] p-4 rounded-2xl">
+                        <div className="flex items-center justify-between border-b border-[#243056] pb-2">
+                          <span className="text-xs font-black text-white uppercase tracking-widest">🎯 ACTION SUMMARY MATRIX (Click to Ask AI)</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {parsed.actionSummaryData.cols.map((col: any, idx: number) => (
+                            <div 
+                              key={idx}
+                              className={cn(
+                                "p-3 rounded-xl space-y-2 border",
+                                col.isWin 
+                                  ? "bg-[#153434]/15 border-emerald-500/20" 
+                                  : col.isLose 
+                                    ? "bg-[#2a1b1b]/20 border-red-500/20" 
+                                    : "bg-black/20 border-[#243056]"
+                              )}
+                            >
+                              <h5 className={cn(
+                                "text-[10px] font-black uppercase tracking-wider",
+                                col.isWin ? "text-emerald-400" : col.isLose ? "text-red-400" : "text-[#cfd8ff]"
+                              )}>
+                                {col.title}
+                              </h5>
+                              <ul className="space-y-1.5 text-[11px] text-[#cfd8ff] font-medium leading-normal list-disc pl-4 font-mono">
+                                {col.items.map((item: string, itemIdx: number) => (
+                                  <li 
+                                    key={itemIdx} 
+                                    onClick={() => triggerInstantAiInquiry(`Discuss the specific action summary points in the "${col.title}" column: "${item}". What is the core reasoning?`)}
+                                    className="cursor-pointer hover:text-white transition-colors"
+                                    title="Click to discuss with AI"
+                                  >
+                                    {item}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Insider Cluster Buys Section */}
+                    {parsed.insidersData && (
+                      <div className="space-y-4 bg-gradient-to-br from-[#123120]/20 to-black/30 border border-emerald-500/20 p-4 rounded-2xl">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-500/15 pb-2">
+                          <div>
+                            <h4 className="text-xs font-black text-emerald-400 flex items-center gap-1.5 tracking-wider">
+                              <span>🟢</span> {parsed.insidersData.title}
+                            </h4>
+                            {parsed.insidersData.sub && (
+                              <p className="text-[10px] text-gray-400 font-medium font-mono mt-0.5">{parsed.insidersData.sub}</p>
+                            )}
                           </div>
+                          {parsed.insidersData.stats.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-1 sm:mt-0">
+                              {parsed.insidersData.stats.map((stat: string, sIdx: number) => (
+                                <span key={sIdx} className="bg-black/40 border border-emerald-500/25 px-2 py-0.5 rounded-lg text-[9px] font-mono text-emerald-300 font-bold whitespace-nowrap">
+                                  {stat}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {parsed.insidersData.note && (
+                          <p className="text-xs text-[#9aa3c7] font-medium leading-relaxed italic border-l-2 border-emerald-500/30 pl-2.5">
+                            "{parsed.insidersData.note}"
+                          </p>
                         )}
 
-                        {/* Loser's Column */}
-                        {parsed.losers.length > 0 && (
-                          <div className="bg-[#2a1b1b]/30 border border-red-500/20 p-4 rounded-xl space-y-2">
-                            <h5 className="text-xs font-black text-red-400 uppercase tracking-widest flex items-center gap-1.5">
-                              <span>📉</span> INTENSE RISK / DECLINING TICKERS (Click to Ask AI)
-                            </h5>
-                            <ul className="space-y-1.5 text-xs text-[#cfd8ff] font-medium font-mono">
-                              {parsed.losers.map((lose, lIdx) => (
-                                <li 
-                                  key={lIdx} 
-                                  onClick={() => triggerInstantAiInquiry(`In the report on ${activePreviewReport.reportDate}, analyze why the ticker "${lose}" is classified under INTENSE RISK / DECLINING TICKERS. What are the critical risks and exposures?`)}
-                                  className="flex items-center gap-2 border-b border-red-500/5 pb-1 cursor-pointer hover:bg-red-500/10 p-1 rounded transition-all group"
-                                  title="Analyze this risk ticker with AI"
-                                >
-                                  <span className="text-red-400">▼</span> 
-                                  <span className="flex-1 text-[#e2e8f0] font-bold">{lose}</span>
-                                  <Sparkles className="w-2.5 h-2.5 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity mr-1" />
-                                </li>
-                              ))}
-                            </ul>
+                        {parsed.insidersData.tables.map((table: any, tblIdx: number) => (
+                          <div key={tblIdx} className="space-y-2">
+                            {table.title && (
+                              <h5 className="text-[9px] font-bold text-emerald-300 uppercase font-mono tracking-widest">{table.title}</h5>
+                            )}
+                            <div className="overflow-x-auto bg-black/20 border border-[#243056]/30 rounded-xl">
+                              <table className="w-full text-left border-collapse text-xs">
+                                <thead>
+                                  <tr className="bg-indigo-950/40 border-b border-[#243056]/40">
+                                    {table.headers.map((hdr: string, hIdx: number) => (
+                                      <th key={hIdx} className="p-2.5 text-[9px] font-bold text-[#cfd8ff]/70 uppercase tracking-wider font-mono">
+                                        {hdr}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {table.rows.map((row: any[], rIdx: number) => (
+                                    <tr 
+                                      key={rIdx}
+                                      onClick={() => {
+                                        const rowText = row.map(c => c.text).filter(Boolean).join(" | ");
+                                        triggerInstantAiInquiry(`In the Insider Cluster Buys section: please analyze this specific transaction row details: [${table.headers.join(" | ")}] -> [${rowText}]. What does this signal for investors?`);
+                                      }}
+                                      className="border-b border-[#243056]/10 last:border-0 hover:bg-emerald-500/10 cursor-pointer transition-colors"
+                                    >
+                                      {row.map((cell: any, cIdx: number) => (
+                                        <td 
+                                          key={cIdx} 
+                                          className={cn(
+                                            "p-2.5 font-mono text-[#cfd8ff] font-medium leading-relaxed",
+                                            cell.isCenter && "text-center",
+                                            cell.isRight && "text-right",
+                                            cell.isBold && "font-black text-white"
+                                          )}
+                                        >
+                                          {cell.buyerCount ? (
+                                            <span className="bg-emerald-500 text-black px-2 py-0.5 rounded-full text-[10px] font-bold">
+                                              {cell.buyerCount}
+                                            </span>
+                                          ) : cell.links && cell.links.length > 0 ? (
+                                            <div className="flex flex-wrap gap-1">
+                                              {cell.links.map((ln: any, lnIdx: number) => (
+                                                <a 
+                                                  key={lnIdx} 
+                                                  href={ln.href} 
+                                                  onClick={(e) => e.stopPropagation()} 
+                                                  target="_blank" 
+                                                  rel="noopener noreferrer"
+                                                  className="text-indigo-400 hover:underline font-bold text-[10px]"
+                                                >
+                                                  {ln.text}
+                                                </a>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            cell.text
+                                          )}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
+                        ))}
+
+                        {parsed.insidersData.foot && (
+                          <p className="text-[9px] text-[#9aa3c7] font-medium tracking-wide">{parsed.insidersData.foot}</p>
                         )}
                       </div>
                     )}
