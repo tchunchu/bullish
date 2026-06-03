@@ -45,6 +45,17 @@ service cloud.firestore {
         && data.timestamp == request.time;
     }
 
+    function isValidUploadedHtmlReport(data) {
+      return data.keys().hasAll(['userId', 'reportType', 'reportDate', 'title', 'htmlContent', 'plainText', 'timestamp'])
+        && data.userId == request.auth.uid
+        && data.reportType in ['current', 'status']
+        && data.reportDate is string && data.reportDate.size() <= 64
+        && data.title is string && data.title.size() <= 256
+        && data.htmlContent is string && data.htmlContent.size() <= 1000000
+        && data.plainText is string && data.plainText.size() <= 1000000
+        && data.timestamp == request.time;
+    }
+
     function isValidStockTrack(data) {
       return data.keys().hasAll(['userId', 'ticker', 'analysisDate', 'suggestion', 'entryPrice', 'timestamp'])
         && data.userId == request.auth.uid
@@ -89,6 +100,13 @@ service cloud.firestore {
       allow get: if isOwner(existing().userId) && isValidId(reportId);
       allow list: if isOwner(resource.data.userId); 
       allow create: if isVerified() && isValidId(reportId) && isValidReport(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /uploaded_html_reports/{reportId} {
+      allow get: if isOwner(existing().userId) && isValidId(reportId);
+      allow list: if isOwner(resource.data.userId); 
+      allow create, update: if isVerified() && isValidId(reportId) && isValidUploadedHtmlReport(incoming());
       allow delete: if isOwner(existing().userId);
     }
 

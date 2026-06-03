@@ -50,13 +50,16 @@ import {
   Cloud,
   CloudOff,
   Database,
-  X
+  X,
+  Sun,
+  Newspaper
 } from 'lucide-react';
 import { format } from 'date-fns';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { auth, db, signIn, signOut } from './lib/firebase';
+import { MarketNews } from './components/MarketNews';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
   collection, 
@@ -70,7 +73,8 @@ import {
   serverTimestamp,
   Timestamp,
   updateDoc,
-  setDoc
+  setDoc,
+  getDoc
 } from 'firebase/firestore';
 import { ai, MODELS } from './lib/gemini';
 import { clsx, type ClassValue } from 'clsx';
@@ -3011,7 +3015,7 @@ User Clarification Inquiry:
   const [stockTracks, setStockTracks] = useState<StockTrack[]>([]);
   const [macroTracks, setMacroTracks] = useState<MacroTrack[]>([]);
   const [viewingReportFromTrack, setViewingReportFromTrack] = useState<Report | null>(null);
-  const [activeTab, setActiveTab] = useState<'generate' | 'tracks' | 'history' | 'screener'>('generate');
+  const [activeTab, setActiveTab] = useState<'generate' | 'tracks' | 'history' | 'screener' | 'news'>('generate');
   
   // Storage for History Snapshots
   const [savedSnapshots, setSavedSnapshots] = useState<any[]>([]);
@@ -3052,6 +3056,7 @@ User Clarification Inquiry:
   });
   const [watchlistInputValue, setWatchlistInputValue] = useState('');
   const [watchlistSyncStatus, setWatchlistSyncStatus] = useState<'saved' | 'saving' | 'local' | 'error'>('saved');
+  const [hasLoadedInitialWatchlist, setHasLoadedInitialWatchlist] = useState(false);
   const [maxScreenerCount, setMaxScreenerCount] = useState<number>(30);
   const [screenerPreset, setScreenerPreset] = useState<'full' | 'phase1' | 'phase2'>('full');
   const [rawScreenerCount, setRawScreenerCount] = useState<number>(30);
@@ -3621,36 +3626,42 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
   useEffect(() => {
     if (!user) {
       setWatchlistSyncStatus('local');
+      setHasLoadedInitialWatchlist(false);
       return;
     }
 
-    const userDocRef = doc(db, 'users', user.uid);
-    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data && typeof data.watchlist === 'string') {
-          setWatchlistTickers(prev => {
-            if (prev !== data.watchlist) {
-              setWatchlistSyncStatus('saved');
-              return data.watchlist;
-            }
-            return prev;
-          });
-          localStorage.setItem('watchlist_tickers', data.watchlist);
+    const loadWatchlist = async () => {
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const docSnap = await getDoc(userDocRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data && typeof data.watchlist === 'string') {
+            setWatchlistTickers(data.watchlist);
+            localStorage.setItem('watchlist_tickers', data.watchlist);
+          }
         }
+        setHasLoadedInitialWatchlist(true);
+        setWatchlistSyncStatus('saved');
+      } catch (error) {
+        setWatchlistSyncStatus('error');
+        setHasLoadedInitialWatchlist(true);
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
       }
-    }, (error) => {
-      setWatchlistSyncStatus('error');
-      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
-    });
+    };
 
-    return unsubscribe;
+    loadWatchlist();
   }, [user]);
 
   // Debounce saving watchlist to Firestore
   useEffect(() => {
     if (!user) {
       setWatchlistSyncStatus('local');
+      return;
+    }
+
+    // PREVENT RACE CONDITION: Wait for initial DB read before allowing cloud saves
+    if (!hasLoadedInitialWatchlist) {
       return;
     }
 
@@ -3673,7 +3684,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [watchlistTickers, user]);
+  }, [watchlistTickers, user, hasLoadedInitialWatchlist]);
 
   // Trackers Listener
   useEffect(() => {
@@ -6412,6 +6423,16 @@ ${stationInput}
                     <span className="hidden sm:inline">Screener</span>
                   </button>
                   <button 
+                    onClick={() => setActiveTab('news')}
+                    className={cn(
+                      "text-[10px] font-bold px-4 py-2 rounded-lg transition-all uppercase tracking-widest flex items-center gap-2",
+                      activeTab === 'news' ? "bg-amber-400 text-black shadow-lg" : "text-bento-muted hover:text-bento-foreground"
+                    )}
+                  >
+                    <Newspaper className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">News</span>
+                  </button>
+                  <button 
                     onClick={() => setActiveTab('history')}
                     className={cn(
                       "text-[10px] font-bold px-4 py-2 rounded-lg transition-all uppercase tracking-widest flex items-center gap-2",
@@ -7346,6 +7367,12 @@ ${stationInput}
               )}
 
 
+
+              {activeTab === 'news' && (
+                <div className="flex-1 flex flex-col h-full space-y-6">
+                  <MarketNews />
+                </div>
+              )}
 
               {activeTab === 'screener' && (
                 <div className="space-y-6 flex-1 flex flex-col h-full">

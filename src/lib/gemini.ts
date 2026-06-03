@@ -10,6 +10,6 @@ export const ai = new GoogleGenAI({ apiKey: apiKey || "" });
 
 export const MODELS = {
   FLASH_35: "gemini-3.5-flash",
-  FLASH: "gemini-3-flash-preview",
-  PRO: "gemini-3.1-pro-preview",
+  FLASH: "gemini-3.5-flash",
+  PRO: "gemini-3.5-flash",
 };

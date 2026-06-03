@@ -63,12 +63,31 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "analysisDate", "sentiment"]
+    },
+    "UploadedHtmlReport": {
+      "title": "UploadedHtmlReport",
+      "description": "An uploaded user report parsed from pre-generated HTML containing stock/market scoreboard data.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The registered identifier for the user." },
+        "reportType": { "type": "string", "enum": ["current", "status"], "description": "Type of HTML report upload ('current' for daily analysis / 'status' for scoreboard metrics)." },
+        "reportDate": { "type": "string", "description": "Extracted calendar date of report (YYYY-MM-DD)." },
+        "title": { "type": "string", "description": "The HTML title metadata or primary heading." },
+        "htmlContent": { "type": "string", "description": "Primary high-fidelity raw HTML content of the report." },
+        "plainText": { "type": "string", "description": "Stripped semantic text of the page, optimized for AI token limits and semantic accuracy." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "The exact time when the document was published inside the archive database." }
+      },
+      "required": ["userId", "reportType", "reportDate", "title", "htmlContent", "plainText", "timestamp"]
     }
   },
   "firestore": {
     "/reports/{reportId}": {
       "schema": "Report",
       "description": "Collection of research reports."
+    },
+    "/uploaded_html_reports/{reportId}": {
+      "schema": "UploadedHtmlReport",
+      "description": "Rolling multi-day reports uploaded as pure high-fidelity HTML templates."
     },
     "/users/{userId}": {
       "schema": "UserProfile",

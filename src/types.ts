@@ -46,3 +46,15 @@ export interface MacroTrack {
   comments: string;
   timestamp: any;
 }
+
+export interface UploadedHtmlReport {
+  id?: string;
+  userId: string;
+  reportType: "current" | "status";
+  reportDate: string;
+  title: string;
+  htmlContent: string;
+  plainText: string;
+  timestamp: any; // Firestore Timestamp
+}
+

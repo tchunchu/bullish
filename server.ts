@@ -12,7 +12,10 @@ import { existsSync } from "fs";
 dotenv.config();
 
 const YahooFinance = "default" in yahooFinanceImport ? (yahooFinanceImport as any).default : yahooFinanceImport;
-const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
+const yahooFinance = new YahooFinance({ 
+  suppressNotices: ['yahooSurvey', 'ripHistorical'],
+  validation: { logErrors: false, logOptionsErrors: false }
+});
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.VITE_MYKEY || '' });
 const parser = new Parser({
@@ -23,10 +26,40 @@ const parser = new Parser({
 });
 
 const MODELS = {
-  FLASH: "gemini-3.1-pro-preview",
-  PRO: "gemini-3.1-pro-preview",
+  FLASH: "gemini-3.5-flash",
+  PRO: "gemini-3.5-flash",
 };
 
+async function generateContentWithRetry(params: any, maxRetries = 3, initialDelayMs = 2500) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      const response = await ai.models.generateContent(params);
+      return response;
+    } catch (err: any) {
+      attempt++;
+      const errMsg = err.message || "";
+      const isRateLimit = errMsg.includes("429") || 
+                          errMsg.toLowerCase().includes("exhausted") || 
+                          errMsg.toLowerCase().includes("rate limit") || 
+                          errMsg.toLowerCase().includes("quota") ||
+                          errMsg.toLowerCase().includes("resource");
+                          
+      if (isRateLimit && attempt < maxRetries) {
+        const delay = initialDelayMs * Math.pow(2.2, attempt - 1) + Math.random() * 1500;
+        console.warn(`[Gemini Engine] Rate limit triggered. Attempt ${attempt}/${maxRetries}. Backing off for ${Math.round(delay)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else if (attempt < maxRetries) {
+        const delay = 1000 * attempt;
+        console.warn(`[Gemini Engine] Transient error (${errMsg}). Attempt ${attempt}/${maxRetries}. Backing off for ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw new Error("Failed after max retries");
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -190,7 +223,7 @@ async function fetchWithRetry(ticker: string, days: number = 120) {
       period1: start.toISOString().split('T')[0],
       period2: end.toISOString().split('T')[0],
       interval: '1d'
-    });
+    }, { validateResult: false });
     
     if (results && results.length >= 30) {
       const quotes = results.map((r: any) => ({
@@ -201,6 +234,28 @@ async function fetchWithRetry(ticker: string, days: number = 120) {
         close: r.close,
         volume: r.volume
       }));
+      
+      // Patch the last quote with real-time live data to ensure screener uses actual live prices
+      try {
+        const liveQuote = await yahooFinance.quote(ticker, { validateResult: false });
+        if (liveQuote && liveQuote.regularMarketPrice) {
+          const lastQ = quotes[quotes.length - 1];
+          lastQ.close = liveQuote.regularMarketPrice;
+          
+          if (liveQuote.regularMarketDayHigh && liveQuote.regularMarketDayHigh > lastQ.high) {
+             lastQ.high = liveQuote.regularMarketDayHigh;
+          }
+          if (liveQuote.regularMarketDayLow && liveQuote.regularMarketDayLow > 0 && liveQuote.regularMarketDayLow < lastQ.low) {
+             lastQ.low = liveQuote.regularMarketDayLow;
+          }
+          if (liveQuote.regularMarketVolume) {
+             lastQ.volume = liveQuote.regularMarketVolume;
+          }
+        }
+      } catch (liveErr) {
+        // ignore live quote failure and gracefully fall back to historical daily
+      }
+
       const ret = { quotes };
       FETCH_CACHE[cacheKey] = { data: ret, expiry: Date.now() + 5 * 60 * 1000 };
       return ret;
@@ -242,6 +297,17 @@ async function fetchWithRetry(ticker: string, days: number = 120) {
         quotes = quotes.filter((q: any) => q.date >= startDay);
         quotes.sort((a: any, b: any) => a.date.getTime() - b.date.getTime());
         if (quotes.length >= 30) {
+          try {
+            const liveQuote = await yahooFinance.quote(ticker, { validateResult: false });
+            if (liveQuote && liveQuote.regularMarketPrice) {
+              const lastQ = quotes[quotes.length - 1];
+              lastQ.close = liveQuote.regularMarketPrice;
+              if (liveQuote.regularMarketDayHigh && liveQuote.regularMarketDayHigh > lastQ.high) lastQ.high = liveQuote.regularMarketDayHigh;
+              if (liveQuote.regularMarketDayLow && liveQuote.regularMarketDayLow > 0 && liveQuote.regularMarketDayLow < lastQ.low) lastQ.low = liveQuote.regularMarketDayLow;
+              if (liveQuote.regularMarketVolume) lastQ.volume = liveQuote.regularMarketVolume;
+            }
+          } catch(e) {}
+
           const ret = { quotes };
           FETCH_CACHE[cacheKey] = { data: ret, expiry: Date.now() + 5 * 60 * 1000 };
           return ret;
@@ -265,7 +331,7 @@ async function fetchFromYahoo(ticker: string, days: number = 120, retryCount = 0
       period1: start.toISOString().split('T')[0],
       period2: end.toISOString().split('T')[0],
       interval: '1d'
-    });
+    }, { validateResult: false });
     
     if (!results || results.length === 0) return null;
     
@@ -722,7 +788,8 @@ async function startServer() {
       // Gate 4: Risk:Reward >= 2.0
       const minLows = Math.min(...c.slice(-20));
       const stopLoss = minLows * 0.97;
-      const targetPrice = targetMeanPrice; // target = analyst price
+      const approxAtr = latestPrice * 0.02;
+      const targetPrice = (targetMeanPrice && targetMeanPrice > latestPrice) ? targetMeanPrice : (latestPrice + Math.max(latestPrice * 0.15, approxAtr * 3.0));
       const risk = latestPrice - stopLoss;
       const reward = targetPrice - latestPrice;
       const rrRatio = risk > 0 ? reward / risk : 0;
@@ -811,10 +878,12 @@ async function startServer() {
       }
 
       const qs = history.quotes;
-      const mktOpen = isMarketHours();
-      const offset = mktOpen ? 1 : 0;
       
-      const today = qs[qs.length - (1 + offset)];
+      const today = qs[qs.length - 1]; // Always use latest quote for current_price
+      
+      // Preserve original logic for box sizing by keeping signal/box lookback relative to recent full days, but we can safely just use the same lengths without skipping the current day entirely for triggers.
+      // Actually, if we just set offset = 0, it achieves the same thing and uses today for everything.
+      const offset = 0;
       
       const box_end = qs.length - (signal_lookback + offset);
       const box_start = qs.length - (box_lookback + signal_lookback + offset);
@@ -903,10 +972,11 @@ async function startServer() {
 
       let fund_pass = true;
       try {
-         const yfData = await (yahooFinance as any).quoteSummary(ticker, { modules: ['incomeStatementHistoryQuarterly'] }, { validateResult: false });
-         const isq = yfData?.incomeStatementHistoryQuarterly?.incomeStatementHistory;
-         if (isq && isq.length >= 2) {
-             let revs = isq.map((q: any) => q.totalRevenue || 0).filter((r: number) => r > 0);
+         const start = new Date();
+         start.setFullYear(start.getFullYear() - 2);
+         const yfData = await yahooFinance.fundamentalsTimeSeries(ticker, { period1: start, module: 'financials', type: 'quarterly' }, { validateResult: false });
+         if (yfData && yfData.length >= 2) {
+             let revs = yfData.reverse().map((q: any) => q.totalRevenue || 0).filter((r: number) => r > 0);
              if (revs.length >= 5) {
                  fund_pass = revs[0] >= revs[4]; // 0 is latest, 4 is a year ago
              } else if (revs.length >= 2) {
@@ -986,7 +1056,206 @@ async function startServer() {
     }
   }
 
+  function calculateAlignedTacticalLevels(
+    bucket: string,
+    coiled: any,
+    gate: any,
+    latestPrice: number,
+    atr_pct: number
+  ) {
+    const isLong = !bucket.includes("SHORT") && !bucket.includes("BEAR") && bucket !== "NONE";
+
+    let entry = latestPrice;
+    let exit = 0;
+    let tp1 = 0;
+    let tp2 = 0;
+
+    const atrAmount = (atr_pct / 100) * latestPrice;
+
+    if (isLong) {
+      // ── BULLISH / LONG LEVELS ──────────────────────────────────────────────
+      const coiled_entry = (coiled?.n_entry && coiled.n_entry !== "N/A") ? parseFloat(coiled.n_entry.replace('$', '').replace(',', '')) : null;
+      const coiled_exit = (coiled?.n_exit && coiled.n_exit !== "N/A") ? parseFloat(coiled.n_exit.replace('$', '').replace(',', '')) : null;
+      const coiled_tp1 = (coiled?.n_tp1 && coiled.n_tp1 !== "N/A") ? parseFloat(coiled.n_tp1.replace('$', '').replace(',', '')) : null;
+      const coiled_tp2 = (coiled?.n_tp2 && coiled.n_tp2 !== "N/A") ? parseFloat(coiled.n_tp2.replace('$', '').replace(',', '')) : null;
+
+      if (coiled?.signal === "HOT_BREAKOUT" && coiled_entry && coiled_exit && coiled_tp1 && coiled_tp2 && coiled_exit < coiled_entry && coiled_tp1 > coiled_entry) {
+        entry = coiled_entry;
+        exit = coiled_exit;
+        tp1 = coiled_tp1;
+        tp2 = coiled_tp2;
+      } else {
+        let defaultStop = latestPrice - Math.max(latestPrice * 0.03, atrAmount * 1.5);
+        if (coiled?.box_low && coiled.box_low > 0 && coiled.box_low < latestPrice) {
+          defaultStop = Math.max(defaultStop, coiled.box_low * 0.99);
+        }
+        exit = defaultStop;
+
+        tp1 = latestPrice + Math.max(latestPrice * 0.05, atrAmount * 2.0);
+        tp2 = tp1 + Math.max(latestPrice * 0.05, atrAmount * 1.5);
+      }
+
+      if (exit >= entry) {
+        exit = entry * 0.95;
+      }
+      if (tp1 <= entry) {
+        tp1 = entry * 1.05;
+      }
+      if (tp2 <= tp1) {
+        tp2 = tp1 * 1.05;
+      }
+    } else {
+      // ── BEARISH / SHORT LEVELS ─────────────────────────────────────────────
+      const coiled_entry = (coiled?.n_entry && coiled.n_entry !== "N/A") ? parseFloat(coiled.n_entry.replace('$', '').replace(',', '')) : null;
+      const coiled_exit = (coiled?.n_exit && coiled.n_exit !== "N/A") ? parseFloat(coiled.n_exit.replace('$', '').replace(',', '')) : null;
+      const coiled_tp1 = (coiled?.n_tp1 && coiled.n_tp1 !== "N/A") ? parseFloat(coiled.n_tp1.replace('$', '').replace(',', '')) : null;
+      const coiled_tp2 = (coiled?.n_tp2 && coiled.n_tp2 !== "N/A") ? parseFloat(coiled.n_tp2.replace('$', '').replace(',', '')) : null;
+
+      if (coiled?.signal === "DROP_BREAKDOWN" && coiled_entry && coiled_exit && coiled_tp1 && coiled_tp2 && coiled_exit > coiled_entry && coiled_tp1 < coiled_entry) {
+        entry = coiled_entry;
+        exit = coiled_exit;
+        tp1 = coiled_tp1;
+        tp2 = coiled_tp2;
+      } else {
+        let defaultStop = latestPrice + Math.max(latestPrice * 0.03, atrAmount * 1.5);
+        if (coiled?.box_high && coiled.box_high > 0 && coiled.box_high > latestPrice) {
+          defaultStop = Math.min(defaultStop, coiled.box_high * 1.01);
+        }
+        exit = defaultStop;
+
+        tp1 = latestPrice - Math.max(latestPrice * 0.05, atrAmount * 2.0);
+        tp2 = tp1 - Math.max(latestPrice * 0.05, atrAmount * 1.5);
+      }
+
+      if (exit <= entry) {
+        exit = entry * 1.05;
+      }
+      if (tp1 >= entry) {
+        tp1 = entry * 0.95;
+      }
+      if (tp2 >= tp1) {
+        tp2 = tp1 * 0.95;
+      }
+    }
+
+    const calculatedRisk = Math.max(0.01, Math.abs(entry - exit));
+    const calculatedReward = Math.abs(tp1 - entry);
+
+    return {
+      n_entry: entry,
+      n_exit: exit,
+      n_tp1: tp1,
+      n_tp2: tp2,
+      rr: calculatedReward / calculatedRisk
+    };
+  }
+
   function round(n: number, d: number) { return Number(Math.round(Number(n + 'e' + d)) + 'e-' + d); }
+
+  function parseNumeric(val: any): number {
+    if (val === null || val === undefined) return 0;
+    if (typeof val === 'number') return val;
+    const s = String(val).replace(/[\$%xX:,]/g, '').trim();
+    const num = parseFloat(s);
+    return isNaN(num) ? 0 : num;
+  }
+
+  function parseNumericNullable(val: any): number | null {
+    if (val === null || val === undefined) return null;
+    const s = String(val).replace(/[\$%xX,]/g, '').trim();
+    if (s === "N/A" || s === "" || s.toLowerCase() === "null") return null;
+    const num = parseFloat(s);
+    return isNaN(num) ? null : num;
+  }
+
+  function parseScreenerTickerRecord(r: any): any {
+    if (!r) return null;
+    
+    let rrVal: number | null = null;
+    if (r.rr !== null && r.rr !== undefined) {
+      if (typeof r.rr === 'number') {
+        rrVal = r.rr;
+      } else {
+        const s = String(r.rr).trim();
+        if (s && s !== "null" && s !== "—") {
+          const parts = s.split(':');
+          const num = parseFloat(parts[0]);
+          if (!isNaN(num)) rrVal = num;
+        }
+      }
+    }
+
+    const gate_pass_raw = r.gate_pass || r.gate_pass_raw || r.gate_pass_status || "N/A";
+    
+    const g1_pass = gate_pass_raw.includes("G1:P");
+    const g2_pass = gate_pass_raw.includes("G2:P");
+    const g3_pass = gate_pass_raw.includes("G3:P");
+    const g4_pass = gate_pass_raw.includes("G4:P");
+    
+    let g3_state = "NEUTRAL";
+    if (gate_pass_raw.includes("G3STATE:")) {
+      const parts = gate_pass_raw.split(" ");
+      const part = parts.find((p: string) => p.startsWith("G3STATE:"));
+      if (part) {
+        g3_state = part.substring(part.indexOf(":") + 1).trim();
+      }
+    }
+
+    const currentPriceVal = parseNumeric(r.price || r.close);
+    const maValue = r.ma_stack || (r.trend === "UP" ? "BULLISH" : r.trend === "DOWN" ? "BEARISH" : "MIXED");
+
+    return {
+      ticker: r.ticker || "UNKNOWN",
+      price: currentPriceVal,
+      trend: r.trend || "NONE",
+      ma_stack: maValue,
+      rsi: Math.round(parseNumeric(r.rsi)),
+      atr_pct: parseNumeric(r.atr_pct || r.vol_ratio || 2.0),
+      vol_surge: parseNumeric(r.vol_surge || r.vol_ratio || 1.0),
+      acc_ratio: parseNumeric(r.acc_ratio || r.vol_ratio || 1.0),
+      upside_pct: Math.round(parseNumeric(r.upside_pct)),
+      fund_pass: r.fund_pass === true || r.fund_pass === 'true',
+      
+      sort_score: Math.round(parseNumeric(r.sort_score)),
+      composite: Math.round(parseNumeric(r.composite)),
+      vcs_score: parseNumeric(r.vcs_score || r.bull_score || r.neural_score),
+      neural_score: Math.round(parseNumeric(r.neural_score || r.bull_score)),
+      bull_score: Math.round(parseNumeric(r.bull_score || r.neural_score)),
+      steam: Math.round(parseNumeric(r.steam)),
+      bucket: r.bucket || "NONE",
+      bucket_rank: Math.round(parseNumeric(r.bucket_rank !== undefined ? r.bucket_rank : 6)),
+      rev_state: r.rev_state || "NEUTRAL",
+      
+      box_low: parseNumeric(r.box_low),
+      box_high: parseNumeric(r.box_high),
+      box_spread: parseNumeric(r.box_spread),
+      dist_ratio: parseNumeric(r.dist_ratio),
+      
+      algoEntry: parseNumeric(r.algoEntry || r.n_entry || currentPriceVal),
+      algoExit: parseNumeric(r.algoExit || r.n_exit),
+      algoTP1: parseNumeric(r.algoTP1 || r.n_tp1),
+      algoTP2: parseNumeric(r.algoTP2 || r.n_tp2),
+      
+      n_entry: parseNumericNullable(r.n_entry),
+      n_exit: parseNumericNullable(r.n_exit),
+      n_tp1: parseNumericNullable(r.n_tp1),
+      n_tp2: parseNumericNullable(r.n_tp2),
+      
+      rr: rrVal,
+      cs_signal: r.cs_signal || r.signal || "NONE",
+      
+      g1: r.g1 || "—",
+      g2: r.g2 || "—",
+      g3: r.g3 || "—",
+      g4: r.g4 || "—",
+      gate_pass_raw,
+      g1_pass,
+      g2_pass,
+      g3_pass,
+      g4_pass,
+      g3_state
+    };
+  }
 
   function extractGateField(state: string | undefined, field: "G1" | "G2" | "G3" | "G4"): string {
     if (!state) {
@@ -1140,46 +1409,23 @@ async function startServer() {
 
     // ── 6. Real upside and R:R ──────────────────────────
     const atr_pct = vcs.atr_pct || 2.0;
-    let upside_pct: number | null = 
-      (gate.targetMeanPrice && gate.targetMeanPrice > 0 && coiled.price > 0
-        ? Math.round((gate.targetMeanPrice / coiled.price - 1) * 100)
-        : null);
 
-    if (upside_pct !== null && upside_pct <= 0) {
-      upside_pct = null; // Ignore negative/stale analyst targets
-    }
+    const alignedLevels = calculateAlignedTacticalLevels(
+      bucket,
+      coiled,
+      gate,
+      coiled.price || gate.close,
+      atr_pct
+    );
 
-    upside_pct = upside_pct ??
-      (() => {
-        if (coiled.n_entry && coiled.n_entry !== "N/A" && coiled.n_tp1 && coiled.n_tp1 !== "N/A") {
-          const entry = parseFloat(coiled.n_entry.replace('$', '').replace(',', ''));
-          const tp1 = parseFloat(coiled.n_tp1.replace('$', '').replace(',', ''));
-          if (!isNaN(entry) && !isNaN(tp1) && entry > 0) {
-            return Math.round(((tp1 - entry) / entry) * 100);
-          }
-        }
-        return Math.round(atr_pct);
-      })();
+    const priceRef = coiled.price || gate.close;
+    const upside_pct = Math.round((Math.abs(alignedLevels.n_tp1 - priceRef) / priceRef) * 100);
+    const rr = alignedLevels.rr.toFixed(2) + ":1";
 
-    const rr: string | null =
-      gate.rr != null ? gate.rr.toFixed(2) + ":1" : 
-      (coiled as any).d_rr1 != null ? (coiled as any).d_rr1.toFixed(2) + ":1" :
-      (coiled as any).s_rr1 != null ? (coiled as any).s_rr1.toFixed(2) + ":1" :
-      (() => {
-        if (coiled.n_entry && coiled.n_entry !== "N/A" && coiled.n_exit && coiled.n_exit !== "N/A" && coiled.n_tp1 && coiled.n_tp1 !== "N/A") {
-          const entry = parseFloat(coiled.n_entry.replace('$', '').replace(',', ''));
-          const exit = parseFloat(coiled.n_exit.replace('$', '').replace(',', ''));
-          const tp1 = parseFloat(coiled.n_tp1.replace('$', '').replace(',', ''));
-          if (!isNaN(entry) && !isNaN(exit) && !isNaN(tp1)) {
-            const risk = Math.abs(entry - exit);
-            const reward = Math.abs(tp1 - entry);
-            if (risk > 0) {
-              return (reward / risk).toFixed(2) + ":1";
-            }
-          }
-        }
-        return null;
-      })();
+    const n_entry = "$" + alignedLevels.n_entry.toFixed(2);
+    const n_exit = "$" + alignedLevels.n_exit.toFixed(2);
+    const n_tp1 = "$" + alignedLevels.n_tp1.toFixed(2);
+    const n_tp2 = "$" + alignedLevels.n_tp2.toFixed(2);
 
     // Calculate Gate Base Score
     let gate_score = 0;
@@ -1215,10 +1461,10 @@ async function startServer() {
        cs_signal: coiled.signal,
        neural_score: Math.max(coiled.neural_score || 0, gate.bull_score || 0, vcs.bull_score || 0),
        bull_score: Math.max(coiled.neural_score || 0, gate.bull_score || 0, vcs.bull_score || 0),
-       n_entry: coiled.n_entry,
-       n_exit: coiled.n_exit,
-       n_tp1: coiled.n_tp1,
-       n_tp2: coiled.n_tp2,
+       n_entry,
+       n_exit,
+       n_tp1,
+       n_tp2,
        box_high: coiled.box_high,
        box_low: coiled.box_low,
        box_spread: coiled.box_spread,
@@ -1472,6 +1718,192 @@ async function startServer() {
     }
   });
 
+  // FAST API to fetch current raw news item array
+  app.get("/api/market-news-list", async (req, res) => {
+    try {
+      const feedRes = await fetch("https://finance.yahoo.com/news/rss");
+      if (!feedRes.ok) throw new Error("Failed to fetch Yahoo RSS feed");
+      const xml = await feedRes.text();
+      
+      const items: {title: string, link: string}[] = [];
+      const itemRegex = /<item>[\s\S]*?<title>(.*?)<\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<\/item>/g;
+      let match;
+      let count = 0;
+      while ((match = itemRegex.exec(xml)) !== null && count < 8) {
+        items.push({
+          title: match[1].replace("<![CDATA[", "").replace("]]>", ""),
+          link: match[2]
+        });
+        count++;
+      }
+      res.json({ success: true, items });
+    } catch (err: any) {
+      console.error("/api/market-news-list error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to fetch news list." });
+    }
+  });
+
+  // ROBUST decoupled analysis endpoint running on demand with error fallback to handle rate limits elegantly
+  app.post("/api/analyze-story", express.json(), async (req, res) => {
+    const { title, link } = req.body;
+    if (!title) return res.status(400).json({ error: "Missing title in request body." });
+
+    const gSearchPrompt = `You are an elite hedge fund analyst. Deeply evaluate and research this macro/market breaking headline:
+Headline: "${title}"
+Source Link: "${link || ''}"
+
+Perform deep mental reasoning. Trace the impact multiple levels deep:
+1. Direct Winners (Beneficiaries) & Direct Victims (Losers/Decline)
+2. Indirect Level 1 Ecosystem: Direct suppliers, partners, raw material inputs, or closest competitors.
+3. Indirect Level 2 Macro: Broad industry themes, secondary supply chain shifts, downstream consumer/enterprise demand shifts, or macro sector tailwinds/headwinds.
+
+Generate a highly-polished, institutional-grade quantitative and qualitative assessment, returning the result EXACTLY as a JSON object:
+{
+  "headline": "${title.replace(/"/g, '\\"')}",
+  "link": "${(link || '').replace(/"/g, '\\"')}",
+  "category": "Tech, Semis, Geopolitics, Biotech, Retail, Crypto, Cyber, Energy, Fintech, Strategy, or Policy",
+  "priority": 8, // Impact priority score from 1-10
+  "summaries": {
+    "level1": "Define direct technical details, underlying causes and narrative of why this headline happened immediately.",
+    "level2": "Detail the 2-level indirect ripple across ecosystem partners, suppliers, sub-components, and neighboring platforms.",
+    "level3": "Detail the macro interest rate, fiscal, geopolitical, or broad structural shift over the medium to long-term."
+  },
+  "timeline": {
+    "days": "Immediate day-one flow, hedging steps or sentiment momentum reactions",
+    "weeks": "Near-term options price, volume adjustments, or inventory shifts",
+    "months": "Medium-term quarterly earnings trends or Capex re-ranking effects",
+    "longterm": "Secular market share change, long-term disruption or structural re-rating"
+  },
+  "beneficiaries": {
+    "direct": [
+      { "name": "Company/Ticker Name", "reason": "Specific reasons of direct tailwinds and why" }
+    ],
+    "indirect_level1": [
+      { "name": "Ecosystem Partner / Supplier", "reason": "Why Level 1 Indirect Gain" }
+    ],
+    "indirect_level2": [
+      { "name": "Macro theme / Broad Index", "reason": "Why Level 2 Indirect Gain" }
+    ]
+  },
+  "victims": {
+    "direct": [
+      { "name": "Company/Ticker Name", "reason": "Specific reasons of direct headwind and why" }
+    ],
+    "indirect_level1": [
+      { "name": "Closest Competitor / Input cost victim", "reason": "Why Level 1 Indirect Loss" }
+    ],
+    "indirect_level2": [
+      { "name": "Downstream industry / Structural decay play", "reason": "Why Level 2 Indirect Loss" }
+    ]
+  },
+  "tickers": [
+    {
+      "symbol": "TICKER",
+      "score": 3, // Score from -3 to 3. (3=Strong Winner, 2=Winner, 1=Mild Winner, -1=Mild Loser, -2=Loser, -3=Strong Loser)
+      "horizonEffect": "Days, Weeks, Months, or Long-term"
+    }
+  ]
+}`;
+
+    try {
+      let responseText = "";
+
+      // Try first with full Google Search Grounding to ensure live details, but only 1 attempt
+      try {
+        const response = await generateContentWithRetry({
+          model: MODELS.FLASH,
+          contents: gSearchPrompt,
+          config: {
+            temperature: 0.2,
+            responseMimeType: "application/json",
+            tools: [{ googleSearch: {} }]
+          },
+        }, 1, 1000);
+        if (response.text) responseText = response.text;
+      } catch (searchErr: any) {
+        console.warn(`[API SEARCH GROUNDING REJECTED / LIMITED] Falling back immediately to baseline model reasoning for: ${title}`, searchErr.message);
+
+        // Fallback calling without tools to prevent limit/resource crash, utilizing retry mechanism
+        const fallbackRes = await generateContentWithRetry({
+          model: MODELS.FLASH,
+          contents: gSearchPrompt,
+          config: {
+            temperature: 0.2,
+            responseMimeType: "application/json"
+          }
+        }, 3, 2000);
+        if (fallbackRes.text) responseText = fallbackRes.text;
+      }
+
+      if (responseText) {
+        const parsed = JSON.parse(responseText.trim());
+        res.json({ success: true, data: parsed });
+      } else {
+        throw new Error("Empty model response.");
+      }
+    } catch (err: any) {
+      console.error("Analysis failed for headline:", title, err.message);
+      const isRateLimit = err.message?.includes("429") || 
+                          err.message?.toLowerCase().includes("exhausted") || 
+                          err.message?.toLowerCase().includes("rate limit") || 
+                          err.message?.toLowerCase().includes("quota") ||
+                          err.message?.toLowerCase().includes("resource");
+      if (isRateLimit) {
+        return res.status(429).json({ success: false, error: "Gemini Rate Limit hit during story reasoning fallback.", rateLimit: true });
+      }
+      res.status(500).json({ success: false, error: err.message || "Failed to analyze story" });
+    }
+  });
+
+  // POST endpoint to synthesize overall bottom-line from analyzed stories array
+  app.post("/api/synthesize-news", express.json(), async (req, res) => {
+    try {
+      const { analyzedStories } = req.body;
+      if (!analyzedStories || !Array.isArray(analyzedStories)) {
+        return res.status(400).json({ error: "Missing or invalid analyzedStories array." });
+      }
+
+      const headlinesText = analyzedStories.map((s, idx) => `${idx + 1}. ${s.headline}`).join("\n");
+      const synthesizePrompt = `Based on these recently analyzed news events and ticker scorecards:
+${headlinesText}
+
+Synthesize the definitive top 5 winners and top 5 losers/hedges across the entire landscape today.
+Output EXACTLY as a JSON object:
+{
+  "winners": [
+    { "name": "Ticker / Subject", "reason": "Specific comprehensive logic on why they win most today" }
+  ],
+  "losers": [
+    { "name": "Ticker / Subject", "reason": "Specific comprehensive logic on why they are impacted most negatively today" }
+  ]
+}`;
+
+      const response = await ai.models.generateContent({
+        model: MODELS.FLASH,
+        contents: synthesizePrompt,
+        config: {
+          temperature: 0.2,
+          responseMimeType: "application/json"
+        }
+      });
+
+      if (response.text) {
+        const parsed = JSON.parse(response.text.trim());
+        res.json({ success: true, data: parsed });
+      } else {
+        throw new Error("Empty response from synthesizer.");
+      }
+    } catch (err: any) {
+      console.error("/api/synthesize-news error:", err.message);
+      res.status(500).json({ success: false, error: err.message || "Failed to synthesize bottom line." });
+    }
+  });
+
+  // Keep compatibility endpoint with simple message
+  app.get("/api/market-news", async (req, res) => {
+    res.json({ message: "Legacy endpoint deprecated. Please utilize decoupled feeds /api/market-news-list instead." });
+  });
+
   app.post("/api/intelligence-feed", async (req, res) => {
     try {
       const { prompt } = req.body;
@@ -1480,7 +1912,7 @@ async function startServer() {
         model: MODELS.FLASH,
         contents: prompt || '',
         config: {
-          tools: [{ googleSearch: {} }],
+          temperature: 0.2
         }
       });
 
@@ -1604,7 +2036,7 @@ async function startServer() {
       .sort((a, b) => b.sort_score - a.sort_score);
 
     const resultsLimit = isCustom ? 1000 : topN;
-    const sorted = sortedFull.slice(0, resultsLimit); 
+    const sorted = sortedFull.slice(0, resultsLimit).map(r => parseScreenerTickerRecord(r)); 
 
     const indexLabels: Record<string, string> = {
       'sp500': 'S&P 500',
@@ -1748,7 +2180,8 @@ async function startServer() {
         return { ...r, sort_score: r.sort_score !== undefined ? r.sort_score : (r.bull_score || 0) + boost };
       })
       .sort((a, b) => b.sort_score - a.sort_score)
-      .slice(0, topN); 
+      .slice(0, topN)
+      .map(r => parseScreenerTickerRecord(r)); 
 
     const indexLabels: Record<string, string> = {
       'sp500': 'S&P 500',
