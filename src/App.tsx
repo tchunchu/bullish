@@ -77,6 +77,7 @@ import {
   getDoc
 } from 'firebase/firestore';
 import { ai, MODELS } from './lib/gemini';
+import { BeautifulNewsReader } from './components/BeautifulNewsReader';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -127,7 +128,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   // Not throwing to avoid crashing the app entirely, just logging
 }
 
-import type { Report, UserProfile, StockTrack, MacroTrack } from './types';
+import type { Report, UserProfile, StockTrack, MacroTrack, UploadedHtmlReport } from './types';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -2316,68 +2317,241 @@ Respond in professional, clean, scannable markdown formatting. Keep your answer 
     );
   };
 
-  const handleQueryKnowledge = async (customQuery?: string) => {
-    const queryText = (customQuery || knowledgeQuery).trim();
-    if (!queryText || isKnowledgeLoading) return;
+  const renderHistorySubTabContent = () => {
+    if (historySubTab === 'screener') {
+      if (!user) {
+        return (
+          <div className="p-6 border border-bento-accent/20 bg-bento-accent/5 rounded-2xl text-center space-y-3">
+             <div className="text-[10px] uppercase font-bold tracking-widest text-bento-accent">🔐 Persistent Cloud Active</div>
+             <p className="text-[11px] text-bento-muted font-sans leading-relaxed">
+               Snapshots are securely preserved inside Google Firebase Firestore under your profile and in-sync across desktop & mobile.
+             </p>
+             <button
+               onClick={signIn}
+               className="w-full bg-bento-accent hover:bg-opacity-90 text-black text-[9px] uppercase tracking-widest font-bold py-2 px-4 rounded-xl transition-all"
+             >
+               Sign In to Restore Snapshots
+             </button>
+             <div className="text-[8px] text-bento-muted max-w-xs mx-auto">
+               Viewing within a sandbox iframe? Open the application in a new tab to bypass browser restrictions.
+             </div>
+          </div>
+        );
+      }
+      if (savedSnapshots.length === 0) {
+        return (
+          <div className="p-8 border border-white/5 bg-white/[0.02] rounded-2xl text-center italic text-white/40 text-[10px] uppercase font-bold tracking-widest">
+             No saved snapshots found.
+          </div>
+        );
+      }
+      return savedSnapshots.map((snap) => (
+         <div 
+           key={snap.id} 
+           onClick={() => setActiveSnapshot(snap)}
+           className={cn("p-4 rounded-2xl border cursor-pointer transition-all hover:bg-white/[0.02] text-left", activeSnapshot?.id === snap.id ? "bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "bg-black border-white/10")}
+         >
+           <div className="flex justify-between items-start mb-2">
+             <div className="text-[10px] font-mono text-emerald-400 font-bold">
+               {snap.timestamp ? (() => {
+                 const ms = getTimestampMs(snap.timestamp);
+                 return ms ? format(new Date(ms), 'yyyy-MM-dd HH:mm') : 'LIVE';
+               })() : 'LIVE'}
+             </div>
+             <button 
+               onClick={async (e) => {
+                 e.stopPropagation();
+                 if (snap.id) {
+                   await deleteSnapshot(snap.id);
+                   if (activeSnapshot?.id === snap.id) setActiveSnapshot(null);
+                 }
+               }}
+               className="text-red-500/50 hover:text-red-400 p-1 -mt-1 -mr-1"
+             >
+               <Trash2 className="w-3 h-3" />
+             </button>
+           </div>
+           <div className="flex items-center justify-between gap-2 mt-1">
+             <span className="font-display font-black text-xs text-white uppercase tracking-wider">
+               {snap.results?.length > 0 ? `${snap.results.length} Tickers Chained` : `${snap.rawResults?.length || 0} Tickers`}
+             </span>
+             <div className="flex gap-2">
+               <div className="flex bg-purple-500/20 text-purple-400 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded">
+                 {snap.aiResults?.length > 0 ? `${snap.aiResults.length} Tickers Chained` : `${snap.rawResults?.length || 0} Tickers`}
+               </div>
+             </div>
+           </div>
+        </div>
+      ));
+    }
+
+    if (historySubTab === 'reports') {
+      if (!user) {
+        return (
+          <div className="p-6 border border-purple-500/20 bg-purple-500/5 rounded-2xl text-center space-y-3">
+             <div className="text-[10px] uppercase font-bold tracking-widest text-purple-400">📊 Research Archive Enabled</div>
+             <p className="text-[11px] text-bento-muted font-sans leading-relaxed">
+               Your AI-powered investment research reports are safe and synchronized across your desktop and mobile phone.
+             </p>
+             <button
+               onClick={signIn}
+               className="w-full bg-purple-600 hover:bg-purple-700 text-white text-[9px] uppercase tracking-widest font-bold py-2 px-4 rounded-xl transition-all"
+             >
+               Sign In to Restore Reports
+             </button>
+             <div className="text-[8px] text-bento-muted max-w-xs mx-auto">
+               Viewing within a sandbox iframe? Open the application in a new tab to bypass browser restrictions.
+             </div>
+          </div>
+        );
+      }
+      if (reports.length === 0) {
+        return (
+          <div className="p-8 border border-white/5 bg-white/[0.02] rounded-2xl text-center italic text-white/40 text-[10px] uppercase font-bold tracking-widest">
+             No generated reports found.
+          </div>
+        );
+      }
+      return reports.map((rep) => (
+         <div 
+           key={rep.id} 
+           onClick={() => setActiveReport(rep)}
+           className={cn("p-4 rounded-2xl border cursor-pointer transition-all hover:bg-white/[0.02] text-left", activeReport?.id === rep.id ? "bg-purple-500/10 border-purple-500/30 shadow-[0_0_15px_rgba(139,92,246,0.1)]" : "bg-black border-white/10")}
+         >
+           <div className="flex justify-between items-start mb-2">
+             <div className="text-[10px] font-mono text-purple-400 font-bold">
+               {rep.timestamp ? (() => {
+                 const ms = getTimestampMs(rep.timestamp);
+                 return ms ? format(new Date(ms), 'yyyy-MM-dd HH:mm') : 'LIVE';
+               })() : 'LIVE'}
+             </div>
+             <button 
+               onClick={async (e) => {
+                 e.stopPropagation();
+                 if (rep.id) {
+                   await handleDeleteReport(rep.id, true);
+                   if (activeReport?.id === rep.id) setActiveReport(null);
+                 }
+               }}
+               className="text-red-500/50 hover:text-red-400 p-1 -mt-1 -mr-1"
+             >
+               <Trash2 className="w-3 h-3" />
+             </button>
+           </div>
+           <div className="flex items-center justify-between gap-2 mt-1">
+             <span className="font-display font-black text-xs text-white uppercase tracking-wider">{rep.ticker}</span>
+             <span className="font-mono text-[8px] uppercase px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-bold">{rep.analysisType}</span>
+           </div>
+         </div>
+      ));
+    }
+
+    if (uploadedReports.length === 0) {
+      return (
+        <div className="p-8 border border-white/5 bg-white/[0.02] rounded-2xl text-center italic text-white/40 text-[10px] uppercase font-bold tracking-widest leading-loose">
+           No archived daily news. Connect templates in the News tab!
+        </div>
+      );
+    }
+    return uploadedReports.map((rep) => (
+      <div 
+        key={rep.id} 
+        onClick={() => setActiveNewsArchiveReport(rep)}
+        className={cn(
+          "p-4 rounded-2xl border cursor-pointer transition-all hover:bg-white/[0.02] text-left", 
+          activeNewsArchiveReport?.id === rep.id 
+            ? "bg-amber-500/10 border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.15)]" 
+            : "bg-black border-white/10"
+        )}
+      >
+        <div className="flex justify-between items-start mb-2">
+          <div className="text-[10px] font-mono text-amber-400 font-bold">
+            {rep.reportDate || 'DAILY NEWS'}
+          </div>
+        </div>
+        <div className="text-[11px] font-bold text-white truncate text-left font-display">
+          {rep.title}
+        </div>
+        <div className="flex items-center gap-1.5 mt-2">
+          <span className="font-mono text-[8.5px] uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25 font-bold font-mono">
+            {rep.reportType || "NEWS READER"}
+          </span>
+        </div>
+      </div>
+    ));
+  };
+
+  const triggerUniversalAiInquiry = async (customPrompt: string) => {
+    const promptText = customPrompt.trim();
+    if (!promptText || isUniversalChatLoading) return;
+
+    // Open/Slide up the Universal AI Companion Panel
+    setIsUniversalChatOpen(true);
 
     // Append to conversation
-    const newMsgs = [...knowledgeMessages, { role: 'user' as const, content: queryText }];
-    setKnowledgeMessages(newMsgs);
-    setKnowledgeQuery('');
-    setIsKnowledgeLoading(true);
+    setUniversalChatMessages(prev => [...prev, { role: 'user' as const, content: promptText }]);
+    setUniversalChatInput('');
+    setIsUniversalChatLoading(true);
 
     try {
-      const isScreenerActive = (activeTab === 'screener' && !isScreening && screenerResults.length > 0) || (activeTab === 'history' && historySubTab === 'screener' && activeSnapshot);
+      // 1. Context of stored News Archive Reports
+      const newsContext = uploadedReports
+        .slice(0, 8)
+        .map(r => `[REPORT TYPE: ${r.reportType.toUpperCase()} | DATE: ${r.reportDate} | TITLE: ${r.title}]\n${r.plainText}`)
+        .join("\n\n");
 
-      let activeTicker = ticker || 'TICKER';
-      let reportText = rawOutput;
-      
+      // 2. Active Screener snapshot Context
+      const isScreenerActive = (activeTab === 'screener' && !isScreening && screenerResults.length > 0) || (activeTab === 'history' && historySubTab === 'screener' && activeSnapshot);
+      let screenerContextText = "";
       if (isScreenerActive) {
          if (activeSnapshot) {
-             reportText = "Screener Raw Results: " + JSON.stringify(activeSnapshot.rawResults) + "\n\nNeural Insights: " + JSON.stringify(activeSnapshot.aiResults);
+             screenerContextText = "Screener Raw Results: " + JSON.stringify(activeSnapshot.rawResults) + "\n\nNeural Insights: " + JSON.stringify(activeSnapshot.aiResults) + "\n\nNeural Output: " + (activeSnapshot.neuralOutput || "");
          } else {
-             reportText = "Screener Raw Results: " + JSON.stringify(screenerResults) + "\n\nNeural Insights: " + neuralScreenerText;
+             screenerContextText = "Screener Raw Results: " + JSON.stringify(screenerResults) + "\n\nNeural Insights: " + neuralScreenerText;
          }
-      } else {
-        if (activeReport) {
-          activeTicker = activeReport.ticker;
-          reportText = activeReport.output;
-        } else if (viewingReportFromTrack) {
-          activeTicker = viewingReportFromTrack.ticker;
-          reportText = viewingReportFromTrack.output;
-        }
       }
 
-      const promptContext = isScreenerActive
-        ? `You are an elite quantitative analyst and AI screener assistant. 
-You are answering a user's ad-hoc inquiry regarding the latest generated Screener output.
-### GUIDELINES:
-- Provide high density, direct, and factually grounded details.
-- Avoid generalities. Use specifics regarding the provided screener data. Use real-time Google search grounding if necessary to augment the screener data.
-- Keep the answer concise.
+      // 3. Active Research Report Context
+      let reportContextText = "";
+      let activeTickerName = ticker || 'TICKER';
+      if (activeReport) {
+        activeTickerName = activeReport.ticker;
+        reportContextText = activeReport.output;
+      } else if (viewingReportFromTrack) {
+        activeTickerName = viewingReportFromTrack.ticker;
+        reportContextText = viewingReportFromTrack.output;
+      } else if (rawOutput) {
+        reportContextText = rawOutput;
+      }
 
-Current Screener Data Details:
-${reportText ? reportText.substring(0, 20000) : "No screener output available."}
+      // 4. Watchlist
+      const watchlistContextText = `Watchlist custom stocks: ${watchlistTickers}`;
 
-User Clarification Inquiry:
-"${queryText}"`
-        : `You are an elite institutional equity analyst and financial knowledge system. 
-You are answering a user's ad-hoc knowledge/search inquiry regarding ${activeTicker} to clarify specific aspects of the research report or sector metrics up to today (May 24, 2026).
+      const systemPrompt = `You are an elite quantitative researcher, portfolio strategist, and "Market Beat" Universal AI Terminal companion.
+You are given the aggregated historical context of multiple high-fidelity news reports, screener snapshots, the current research report, and the user's watchlist targets.
 
-### GUIDELINES:
-- Provide high density, direct, and factually grounded details.
-- Avoid generalities. Use specifics. Use real-time Google search grounding if necessary.
-- Keep the answer relatively brief but technically rich so it can be used to rebuild or update the report.
+Use these interconnected variables to answer the user's questions in a unified manner. Never silo your knowledge. For example, if the user asks about weeks to month outcomes, look at both the latest news sentiment trends and any relevant ticker signals inside their screener results or watchlist.
 
-Current Report Context:
-${reportText ? reportText.substring(0, 15000) : "No report context uploaded yet."}
+### CURRENT MULTI-CONTEXT WORKSPACE STATE:
+- User's Watchlist Stocks: ${watchlistContextText}
+- Active Research Report: ${reportContextText ? `Ticker: ${activeTickerName}\n${reportContextText.substring(0, 15000)}` : "No active single stock research report loaded."}
+- Active Screener Data: ${screenerContextText ? screenerContextText.substring(0, 18000) : "No active quantitative screener data loaded."}
+- Stored Historical Portfolio News & Scoreboards:
+${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded. Invite the user to upload HTML files under the News tab."}
 
-User Clarification Inquiry:
-"${queryText}"`;
+### INTELLECTUAL RESPONSE GUIDELINES:
+- Return answers in a beautifully styled, high-impact Terminal format using markdown (headings, bold text, bullet lists, numeric tables).
+- Always output clean Github Flavored Markdown (GFM) tables with appropriate headers if displaying statistics, prices, ranks, or ticker setups.
+- Provide ultra-dense, grounded details. Avoid weak generalities. Use real-time search if helpful.
+- Reference appropriate metrics, sentiment indices, or technical supports from the context to form predictions or insights.`;
 
-      const responseStream = await ai.models.generateContentStream({
-        model: selectedModel,
-        contents: promptContext,
+      setUniversalChatMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+      const stream = await ai.models.generateContentStream({
+        model: MODELS.FLASH,
+        contents: [
+          { role: 'user', parts: [{ text: `${systemPrompt}\n\nUSER INQUIRY: ${promptText}` }] }
+        ],
         config: {
           tools: [{ googleSearch: {} }],
           toolConfig: { includeServerSideToolInvocations: true }
@@ -2385,29 +2559,24 @@ User Clarification Inquiry:
       });
 
       let accumulated = "";
-      setKnowledgeMessages(prev => [...prev, { role: 'assistant' as const, content: '' }]);
-
-      for await (const chunk of responseStream) {
-        const text = chunk.text;
-        if (text) {
-          accumulated += text;
-          setKnowledgeMessages(prev => {
-            const updated = [...prev];
-            if (updated.length > 0) {
-              updated[updated.length - 1] = { role: 'assistant', content: accumulated };
-            }
-            return updated;
-          });
-        }
+      for await (const chunk of stream) {
+        accumulated += chunk.text || "";
+        setUniversalChatMessages(prev => {
+          const updated = [...prev];
+          if (updated.length > 0) {
+            updated[updated.length - 1] = { role: 'assistant', content: accumulated };
+          }
+          return updated;
+        });
       }
-    } catch (e: any) {
-      console.error(e);
-      setKnowledgeMessages(prev => [
-        ...prev,
-        { role: 'assistant', content: `⚠️ **AI Search Error**: ${e?.message || 'Failed to complete inline query.'}` }
+    } catch (err: any) {
+      console.error("Universal AI support failed:", err);
+      setUniversalChatMessages(prev => [
+        ...prev, 
+        { role: 'assistant', content: `⚠️ **AI Intelligence Error**: ${err?.message || 'Failed to complete unified analysis inquiry. Please check your API key setup.'}` }
       ]);
     } finally {
-      setIsKnowledgeLoading(false);
+      setIsUniversalChatLoading(false);
     }
   };
 
@@ -2446,170 +2615,197 @@ User Clarification Inquiry:
     await handleRebuildReport(reportText, activeTicker, reportId, currentType, updatedFollowUpMessages);
   };
 
-  const renderKnowledgeAssistant = () => {
+  const renderUniversalAiCompanion = () => {
+    // Determine active workspace variables
     const isScreenerActive = (activeTab === 'screener' && !isScreening && screenerResults.length > 0) || (activeTab === 'history' && historySubTab === 'screener' && activeSnapshot);
-    const isViewingAnyReport = 
-      (activeTab === 'generate' && rawOutput && !generating) ||
-      (activeTab === 'history' && historySubTab === 'reports' && activeReport) ||
-      (viewingReportFromTrack !== null);
-
-    if (!isViewingAnyReport && !isScreenerActive) return null;
-
+    const isReportActive = (activeTab === 'generate' && rawOutput && !generating) || (activeTab === 'history' && historySubTab === 'reports' && activeReport) || (viewingReportFromTrack !== null);
+    
     let activeTicker = ticker || 'TICKER';
-    if (isScreenerActive) {
-      activeTicker = "Screener Results";
-    } else if (activeReport) {
-       activeTicker = activeReport.ticker;
-    } else if (viewingReportFromTrack) {
-       activeTicker = viewingReportFromTrack.ticker;
-    }
+    if (activeReport) activeTicker = activeReport.ticker;
+    else if (viewingReportFromTrack) activeTicker = viewingReportFromTrack.ticker;
 
     return (
       <div className="fixed bottom-6 right-6 z-[95] font-sans">
         <AnimatePresence>
-          {isKnowledgeOpen && (
+          {isUniversalChatOpen && (
             <motion.div
+              id="universal-chat-panel"
               initial={{ opacity: 0, scale: 0.95, y: 30 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 30 }}
-              className="absolute bottom-16 right-0 w-[92vw] sm:w-[450px] md:w-[550px] lg:w-[700px] h-[500px] lg:h-[700px] max-h-[85vh] bg-[#0c0a15]/95 border border-[#6b21a8]/40 rounded-2xl flex flex-col shadow-2xl backdrop-blur-xl overflow-hidden text-left"
-              style={{ boxShadow: "0 20px 50px rgba(0,0,0,0.8), 0 0 30px rgba(107,33,168,0.25)" }}
+              className="absolute bottom-16 right-0 w-[92vw] sm:w-[480px] md:w-[580px] lg:w-[720px] h-[550px] lg:h-[750px] max-h-[85vh] bg-[#0b0c16]/95 border border-indigo-500/35 rounded-2xl flex flex-col shadow-2xl backdrop-blur-xl overflow-hidden text-left"
+              style={{ boxShadow: "0 25px 60px rgba(0,0,0,0.85), 0 0 35px rgba(99,102,241,0.2)" }}
             >
-              {/* Header */}
-              <div className="p-4 bg-[#140f24] border-b border-white/10 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center">
-                    <Brain className="w-3.5 h-3.5 text-purple-400" />
+              {/* Header Tab Panel */}
+              <div className="p-4 bg-[#111326] border-b border-[#243056] flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/35 flex items-center justify-center">
+                    <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
                   </div>
                   <div className="text-left">
-                    <h4 className="text-[11px] font-black uppercase tracking-widest text-white leading-tight">Inline Knowledge Assistant</h4>
-                    <p className="text-[8.5px] text-bento-muted tracking-wide mt-0.5">Ad-hoc Search & Clarification • {activeTicker}</p>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-white leading-tight flex items-center gap-1.5">
+                      <span>Market Beat Universal AI Assistant</span>
+                    </h4>
+                    <p className="text-[9px] text-[#9aa3c7] font-mono tracking-wide mt-0.5 uppercase">
+                      Cross-Context Cognitive Co-Pilot • {uploadedReports.length} News • {savedSnapshots.length} Snapshots
+                    </p>
                   </div>
                 </div>
                 <button
-                  onClick={() => setIsKnowledgeOpen(false)}
-                  className="w-7 h-7 rounded-lg hover:bg-white/5 flex items-center justify-center text-bento-muted hover:text-white transition-all"
+                  onClick={() => setIsUniversalChatOpen(false)}
+                  className="w-7 h-7 rounded-lg hover:bg-white/5 flex items-center justify-center text-[#9aa3c7] hover:text-white transition-all"
                 >
-                  <Plus className="w-4 h-4 rotate-45" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Message scroll space */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar max-h-[380px] bg-[#07050d]/80">
-                {knowledgeMessages.length === 0 ? (
-                  <div className="py-6 text-center space-y-3 px-2">
-                    <div className="w-10 h-10 rounded-full bg-purple-500/10 border border-purple-400/20 flex items-center justify-center mx-auto">
-                      <Search className="w-4 h-4 text-purple-300" />
+              {/* Cognitive Context Connectivity Feed */}
+              <div className="bg-black/40 border-b border-[#243056]/50 px-4 py-2 flex flex-wrap gap-x-3 gap-y-1 items-center text-[9px] font-mono">
+                <span className="text-[#9aa3c7] font-bold uppercase tracking-wider">WORKSPACE CONTEXT:</span>
+                <span className="flex items-center gap-1 text-emerald-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                  Watchlist Connected ({watchlistTickers.split(',').length} tickers)
+                </span>
+                {uploadedReports.length > 0 && (
+                  <span className="text-amber-400 flex items-center gap-1">
+                    <span>🟢</span> Stored News Linked ({uploadedReports.length})
+                  </span>
+                )}
+                {isScreenerActive && (
+                  <span className="text-purple-400 flex items-center gap-1">
+                    <span>🟢</span> Active Screener Data Linked
+                  </span>
+                )}
+                {isReportActive && (
+                  <span className="text-blue-400 flex items-center gap-1">
+                    <span>🟢</span> Active Stock Report: {activeTicker}
+                  </span>
+                )}
+              </div>
+
+              {/* Chat Message Box Scroll Workspace */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-[#06070e]/85">
+                {universalChatMessages.length === 0 ? (
+                  <div className="py-8 md:py-16 text-center space-y-4 px-4">
+                    <div className="w-12 h-12 rounded-full bg-indigo-500/10 border border-indigo-400/25 flex items-center justify-center mx-auto">
+                      <Terminal className="w-5 h-5 text-indigo-300" />
                     </div>
-                    <p className="text-[10px] text-gray-300 leading-relaxed max-w-sm mx-auto">
-                      {isScreenerActive ? (
-                        <>Clarify insights, cross-reference data, or look up recent news for the current <b className="text-purple-400">Screener Output</b>.</>
-                      ) : (
-                        <>Clarify features, calculate valuation options, or lookup active drivers for <b className="text-purple-400">{activeTicker}</b>. You can rebuild the entire master dossier right from your findings.</>
-                      )}
-                    </p>
-                    <div className="grid grid-cols-2 gap-2 pt-2">
-                      {(isScreenerActive ? [
-                        `Summarize the top setups`,
-                        `Which tickers have highest neural score?`,
-                        `Explain the macro regime`,
-                        `Any recent news on the top ticker?`
-                      ] : [
-                        `Detail active ${activeTicker} risks`,
-                        `Explain their operational margins`,
-                        `Worst-case downside limits`,
-                        `Competitor technical metrics`
-                      ]).map((item, idx) => (
+                    <div className="space-y-1 max-w-md mx-auto">
+                      <p className="text-xs font-bold text-white uppercase tracking-wider">Unified Multi-Context Terminal AI Active</p>
+                      <p className="text-[10px] text-[#9aa3c7] leading-relaxed">
+                        This assistant connects your financial workspace. Ask complex queries that cross-reference your <b>Watchlist</b>, archived <b>News/Scoreboard Daily templates</b>, and <b>Neural Screener</b> outputs seamlessly.
+                      </p>
+                    </div>
+
+                    {/* Pre-Baked Smart Cognitive Inquiry Triggers */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-xl mx-auto pt-4 text-left">
+                      {[
+                        {
+                          title: "💡 Watchlist News Implications",
+                          prompt: `Analyze the stored News archive and daily Scoreboards context to assess the week-to-month implications and risks for my Watchlist tickers: ${watchlistTickers}. Create a comparative matrix.`
+                        },
+                        {
+                          title: "🔍 Spot Geopolitical & Macro Waves",
+                          prompt: "Examine all geopolitical event flows and macroeconomic regimes across our historical daily logs to find the top systemic threats and winners."
+                        },
+                        {
+                          title: "📊 Correlate Screener setups",
+                          prompt: "Cross-reference the latest neural breakdown indicators from the screener setup output with target news catalysts to highlight the top 3 highest probability momentum breaks."
+                        },
+                        {
+                          title: "🎯 Ticker Risk Analysis",
+                          prompt: isReportActive 
+                            ? `Conduct a rigorous multi-stage risk audit and downside boundary valuation check for ${activeTicker} using today's market catalysts.`
+                            : `Examine the general systemic operational risk metrics for our watchlist under current interest rates.`
+                        }
+                      ].map((item, idx) => (
                         <button
                           key={idx}
-                          onClick={() => handleQueryKnowledge(item)}
-                          className="p-2 border border-white/5 bg-white/5 hover:bg-purple-950/20 hover:border-purple-500/30 rounded-lg text-[9px] text-left text-bento-muted hover:text-white font-medium transition-all"
+                          onClick={() => triggerUniversalAiInquiry(item.prompt)}
+                          className="p-3 border border-[#243056]/30 bg-black/30 hover:bg-[#1a213e]/40 hover:border-indigo-500/40 rounded-xl text-[10px] text-left text-[#cfd8ff] hover:text-white font-medium transition-all duration-200 group"
                         >
-                          {item}
+                          <div className="font-bold text-amber-300/95 group-hover:text-amber-300 mb-0.5 uppercase tracking-wide text-[9px]">{item.title}</div>
+                          <div className="text-[9px] text-gray-400 group-hover:text-gray-300 truncate font-mono">{item.prompt}</div>
                         </button>
                       ))}
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {knowledgeMessages.map((msg, idx) => (
+                    {universalChatMessages.map((msg, idx) => (
                       <div key={idx} className="space-y-1 text-left">
-                        <span className={`text-[8px] uppercase font-bold tracking-wider ${msg.role === 'user' ? 'text-purple-400' : 'text-emerald-400'}`}>
-                          {msg.role === 'user' ? 'Inquiry' : 'Assistant Support'}
-                        </span>
-                        <div className={`p-3 rounded-xl border text-[11px] leading-relaxed select-text ${
-                          msg.role === 'user' 
-                            ? 'bg-purple-500/5 border-purple-500/15 text-indigo-100' 
-                            : 'bg-stone-950/50 border-white/5 text-gray-200'
-                        }`}>
-                          <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                            {msg.content}
-                          </Markdown>
-                          
-                          {msg.role === 'assistant' && msg.content && !isKnowledgeLoading && !isScreenerActive && (
-                            <div className="mt-3 pt-3 border-t border-white/5 flex justify-end">
-                              <button
-                                onClick={() => {
-                                  const userQ = knowledgeMessages[idx - 1]?.content || "Dynamic clarification";
-                                  handleRebuildReportWithInsight(userQ, msg.content);
-                                }}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 rounded-lg text-[9px] font-black uppercase tracking-widest text-purple-300 transition-all hover:scale-[1.02] active:scale-[0.98]"
-                              >
-                                <RefreshCw className="w-3 h-3 text-purple-400 animate-spin-slow" />
-                                Rebuild Report with this insight
-                              </button>
-                            </div>
+                        <div className="flex items-center gap-1.5 uppercase font-mono text-[9px] tracking-wider">
+                          {msg.role === 'user' ? (
+                            <span className="text-indigo-400 font-extrabold flex items-center gap-1">
+                              <span>👤</span> User Terminal Inquiry
+                            </span>
+                          ) : (
+                            <span className="text-amber-400 font-extrabold flex items-center gap-1 animate-pulse">
+                              <span>⚡</span> Multi-Context AI Copilot
+                            </span>
                           )}
+                        </div>
+                        <div className={`p-3.5 rounded-xl border text-xs leading-relaxed select-text font-sans ${
+                          msg.role === 'user' 
+                            ? 'bg-indigo-500/5 border-indigo-500/20 text-[#cfd8ff]' 
+                            : 'bg-black/45 border-[#243056]/40 text-gray-200 shadow-inner'
+                        }`}>
+                          <div className="markdown-body">
+                            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                              {msg.content}
+                            </Markdown>
+                          </div>
                         </div>
                       </div>
                     ))}
-                    {isKnowledgeLoading && (
-                      <div className="flex items-center gap-2 text-[10px] text-bento-muted font-mono animate-pulse p-1 text-left">
-                        <Brain className="w-3.5 h-3.5 text-purple-400 animate-spin" />
-                        AI is performing live financial search grounding...
+                    {isUniversalChatLoading && (
+                      <div className="flex items-center gap-2 text-[10px] text-[#9aa3c7] font-mono animate-pulse p-2 text-left">
+                        <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
+                        AI is correlating news, screener snapshots, & watchlist variables...
                       </div>
                     )}
                   </div>
                 )}
+                <div ref={universalChatBottomRef} />
               </div>
 
-              {/* Input section */}
-              <div className="p-3 bg-[#110c1f] border-t border-white/10 flex items-center gap-2">
+              {/* Chat Input Console Form Footer */}
+              <div className="p-3 bg-[#0d0f1f] border-t border-[#243056] flex items-center gap-2">
                 <input
                   type="text"
-                  value={knowledgeQuery}
-                  onChange={(e) => setKnowledgeQuery(e.target.value)}
+                  value={universalChatInput}
+                  onChange={(e) => setUniversalChatInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && knowledgeQuery.trim()) {
-                      handleQueryKnowledge();
+                    if (e.key === 'Enter' && universalChatInput.trim()) {
+                      triggerUniversalAiInquiry(universalChatInput);
                     }
                   }}
-                  disabled={isKnowledgeLoading}
-                  placeholder={`Ask Knowledge Assistant about ${activeTicker}...`}
-                  className="flex-1 bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-bento-muted/50 focus:outline-none focus:border-purple-500/50"
+                  disabled={isUniversalChatLoading}
+                  placeholder="Ask a question across news archive, screener context, or watchlist..."
+                  className="flex-1 bg-black/60 border border-[#243056] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/80 transition-colors"
                 />
                 <button
-                  onClick={() => handleQueryKnowledge()}
-                  disabled={isKnowledgeLoading || !knowledgeQuery.trim()}
-                  className="px-3 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-purple-500/10 disabled:text-bento-muted text-white text-xs font-bold uppercase rounded-xl transition-all"
+                  onClick={() => triggerUniversalAiInquiry(universalChatInput)}
+                  disabled={isUniversalChatLoading || !universalChatInput.trim()}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-[#1a213e]/50 disabled:text-gray-500 text-white text-xs font-bold uppercase rounded-xl transition-all duration-200"
                 >
-                  Query
+                  Send
                 </button>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Floating Bubble Trigger */}
+        {/* Dynamic Navigation Floating Pulse Bubble */}
         <button
-          onClick={() => setIsKnowledgeOpen(!isKnowledgeOpen)}
-          className="w-12 h-12 rounded-full bg-purple-600 hover:bg-purple-500 text-white flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all relative border border-purple-400/30 group animate-fadeIn"
-          title="Open Inline Knowledge Assistant"
-          style={{ boxShadow: "0 8px 30px rgba(107,33,168,0.4)" }}
+          onClick={() => setIsUniversalChatOpen(!isUniversalChatOpen)}
+          className="w-14 h-14 rounded-full bg-gradient-to-tr from-indigo-700 to-indigo-500 hover:from-indigo-600 hover:to-indigo-400 text-white flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all relative border border-indigo-400/40 group animate-pulse"
+          title="Toggle Universal AI Assistant Terminal"
+          style={{ boxShadow: "0 10px 30px rgba(79,70,229,0.4)" }}
         >
-          <Brain className="w-5 h-5 text-purple-100 group-hover:rotate-12 transition-transform" />
-          <span className="absolute right-14 bg-black/80 border border-purple-500/30 text-[9px] font-black uppercase tracking-widest text-purple-300 py-1 px-2.5 rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-            🧠 Ask Knowledge Assistant
+          <Brain className="w-6 h-6 text-indigo-50 hover:rotate-12 transition-transform" />
+          <span className="absolute right-16 bg-black/90 border border-indigo-500/45 text-[9px] font-black uppercase tracking-widest text-[#cfd8ff] py-1 px-3 rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+            🧠 OPEN UNIVERSAL MARKET AI TERMINAL
           </span>
         </button>
       </div>
@@ -3021,8 +3217,17 @@ User Clarification Inquiry:
   const [savedSnapshots, setSavedSnapshots] = useState<any[]>([]);
   const [activeSnapshot, setActiveSnapshot] = useState<any>(null);
   const [snapshotSortBy, setSnapshotSortBy] = useState<'neural' | 'vcs' | 'raw'>('neural');
-  const [historySubTab, setHistorySubTab] = useState<'screener' | 'reports'>('screener');
+  const [historySubTab, setHistorySubTab] = useState<'screener' | 'reports' | 'news'>('screener');
   const [activeReport, setActiveReport] = useState<Report | null>(null);
+  const [uploadedReports, setUploadedReports] = useState<UploadedHtmlReport[]>([]);
+  const [activeNewsArchiveReport, setActiveNewsArchiveReport] = useState<UploadedHtmlReport | null>(null);
+
+  // Universal AI Terminal Companion States
+  const universalChatBottomRef = useRef<HTMLDivElement>(null);
+  const [isUniversalChatOpen, setIsUniversalChatOpen] = useState(false);
+  const [universalChatMessages, setUniversalChatMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
+  const [universalChatInput, setUniversalChatInput] = useState('');
+  const [isUniversalChatLoading, setIsUniversalChatLoading] = useState(false);
 
   // AI Follow-up & Rebuilder Systems
   const [followUpMessages, setFollowUpMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
@@ -3155,6 +3360,65 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       setSelectedSnapshotId(savedSnapshots[0].id); 
     } 
   }, [savedSnapshots, selectedSnapshotId]);
+
+  useEffect(() => {
+    (window as any).triggerUniversalAiInquiry = (promptText: string) => {
+      triggerUniversalAiInquiry(promptText);
+    };
+    return () => {
+      delete (window as any).triggerUniversalAiInquiry;
+    };
+  }, [uploadedReports, screenerResults, activeReport, activeSnapshot, watchlistTickers]);
+
+  // Scroll Universal AI chat to bottom when container opens or messages update
+  useEffect(() => {
+    if (isUniversalChatOpen) {
+      setTimeout(() => {
+        universalChatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [universalChatMessages, isUniversalChatLoading, isUniversalChatOpen]);
+
+  // Global mouseup event listener to capture text selections and double clicks for AI inquiry
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      setTimeout(() => {
+        const selection = window.getSelection();
+        const selectedText = selection?.toString().trim();
+        if (!selectedText || selectedText.length < 5 || selectedText.length > 800) return;
+
+        let anchorNode = selection.anchorNode;
+        if (!anchorNode) return;
+        let parentElement = anchorNode.parentElement;
+        if (!parentElement) return;
+
+        // Verify that selection originates from within a report context or screener table
+        const isTriggerable = 
+          parentElement.closest('.markdown-body') || 
+          parentElement.closest('table') || 
+          parentElement.closest('.screener-results-container') ||
+          parentElement.closest('.stock-report-container') ||
+          parentElement.closest('.ai-triggerable');
+
+        // Prevent unwanted triggers inside chat box, text inputs, search boxes
+        const isInsideChatOrInput = 
+          parentElement.closest('#universal-chat-panel') || 
+          parentElement.closest('.bg-\\[\\#0b0c16\\]') || 
+          parentElement.closest('input') || 
+          parentElement.closest('textarea');
+
+        if (isTriggerable && !isInsideChatOrInput) {
+          triggerUniversalAiInquiry(`Analyze and explain this selected reference from the terminal active screen: "${selectedText}"`);
+          selection.removeAllRanges();
+        }
+      }, 50);
+    };
+
+    document.addEventListener("mouseup", handleGlobalMouseUp);
+    return () => {
+      document.removeEventListener("mouseup", handleGlobalMouseUp);
+    };
+  }, [uploadedReports, screenerResults, activeReport, activeSnapshot, watchlistTickers]);
 
   const [savedIntelligence, setSavedIntelligence] = useState<any[]>([]);
 
@@ -3749,6 +4013,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
     const sq = query(collection(db, 'snapshots'), where('userId', '==', user.uid));
     const iq = query(collection(db, 'intelligence_bookmarks'), where('userId', '==', user.uid));
+    const nq = query(collection(db, 'uploaded_html_reports'), where('userId', '==', user.uid));
 
     const unsubscribeSnapshots = onSnapshot(sq, (snapshot) => {
       const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
@@ -3762,9 +4027,16 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       setSavedIntelligence(docs);
     }, (error) => handleFirestoreError(error, OperationType.GET, 'intelligence_bookmarks'));
 
+    const unsubscribeNews = onSnapshot(nq, (snapshot) => {
+      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
+      docs.sort((a, b) => b.timestamp - a.timestamp);
+      setUploadedReports(docs);
+    }, (error) => console.error("Error listening to uploaded_html_reports:", error));
+
     return () => {
       unsubscribeSnapshots();
       unsubscribeIntel();
+      unsubscribeNews();
     };
   }, [user]);
 
@@ -6817,6 +7089,16 @@ ${stationInput}
                           <FileText className="w-3.5 h-3.5" />
                           Reports ({reports.length})
                         </button>
+                        <button
+                          onClick={() => setHistorySubTab('news')}
+                          className={cn(
+                            "text-[10px] font-bold px-4 py-2 rounded-lg transition-all uppercase tracking-widest flex items-center gap-2",
+                            historySubTab === 'news' ? "bg-amber-500/10 border border-amber-500/30 text-amber-500 font-black" : "text-bento-muted hover:text-bento-foreground"
+                          )}
+                        >
+                          <Newspaper className="w-3.5 h-3.5" />
+                          News Archive ({uploadedReports.length})
+                        </button>
                       </div>
 
                       {historySubTab === 'screener' && savedSnapshots.length > 0 && (
@@ -6835,119 +7117,19 @@ ${stationInput}
                       "w-full lg:w-56 shrink-0 flex flex-col gap-3",
                       historySubTab === 'screener' 
                         ? (activeSnapshot ? "hidden lg:flex" : "flex") 
-                        : (activeReport ? "hidden lg:flex" : "flex")
+                        : historySubTab === 'reports'
+                          ? (activeReport ? "hidden lg:flex" : "flex")
+                          : (activeNewsArchiveReport ? "hidden lg:flex" : "flex")
                     )}>
-                      {historySubTab === 'screener' ? (
-                        !user ? (
-                          <div className="p-6 border border-bento-accent/20 bg-bento-accent/5 rounded-2xl text-center space-y-3">
-                             <div className="text-[10px] uppercase font-bold tracking-widest text-bento-accent">🔐 Persistent Cloud Active</div>
-                             <p className="text-[11px] text-bento-muted font-sans leading-relaxed">
-                               Snapshots are securely preserved inside Google Firebase Firestore under your profile and in-sync across desktop & mobile.
-                             </p>
-                             <button
-                               onClick={signIn}
-                               className="w-full bg-bento-accent hover:bg-bento-accent/80 text-black text-[9px] uppercase tracking-widest font-bold py-2 px-4 rounded-xl transition-all"
-                             >
-                               Sign In with Google
-                             </button>
-                             <div className="text-[8px] text-bento-muted max-w-xs mx-auto">
-                               Note: Some browsers block cookies in embedded preview iframes. Open the app in a new tab to bypass restrictions.
-                             </div>
-                          </div>
-                        ) : savedSnapshots.length === 0 ? (
-                          <div className="p-8 border border-white/5 bg-white/[0.02] rounded-2xl text-center italic text-white/40 text-[10px] uppercase font-bold tracking-widest">
-                             No saved snapshots found.
-                          </div>
-                        ) : (
-                          savedSnapshots.map((snap) => (
-                            <div 
-                              key={snap.id} 
-                              onClick={() => setActiveSnapshot(snap)}
-                              className={cn("p-4 rounded-2xl border cursor-pointer transition-all hover:bg-white/[0.02]", activeSnapshot?.id === snap.id ? "bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "bg-black border-white/10")}
-                            >
-                              <div className="flex justify-between items-start mb-2">
-                                <div className="text-[10px] font-mono text-emerald-400 font-bold">{new Date(snap.timestamp).toLocaleString()}</div>
-                                <button 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteSnapshot(snap.id);
-                                    if (activeSnapshot?.id === snap.id) setActiveSnapshot(null);
-                                  }}
-                                  className="text-red-500/50 hover:text-red-400 p-1 -mt-1 -mr-1"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                              <div className="text-[11px] font-bold text-white mb-2 truncate">
-                                {snap.index || 'Screener Session'}
-                              </div>
-                              <div className="flex gap-2">
-                                <div className="flex bg-purple-500/20 text-purple-400 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded">
-                                  {snap.aiResults?.length > 0 ? `${snap.aiResults.length} Tickers Chained` : `${snap.rawResults?.length || 0} Tickers`}
-                                </div>
-                              </div>
-                            </div>
-                         ))
-                        )
-                      ) : (
-                        !user ? (
-                          <div className="p-6 border border-purple-500/20 bg-purple-500/5 rounded-2xl text-center space-y-3">
-                             <div className="text-[10px] uppercase font-bold tracking-widest text-purple-400">📊 Research Archive Enabled</div>
-                             <p className="text-[11px] text-bento-muted font-sans leading-relaxed">
-                               Your AI-powered investment research reports are safe and synchronized across your desktop and mobile phone.
-                             </p>
-                             <button
-                               onClick={signIn}
-                               className="w-full bg-purple-600 hover:bg-purple-700 text-white text-[9px] uppercase tracking-widest font-bold py-2 px-4 rounded-xl transition-all"
-                             >
-                               Sign In to Restore Reports
-                             </button>
-                             <div className="text-[8px] text-bento-muted max-w-xs mx-auto">
-                               Viewing within a sandbox iframe? Open the application in a new tab to bypass browser restrictions.
-                             </div>
-                          </div>
-                        ) : reports.length === 0 ? (
-                          <div className="p-8 border border-white/5 bg-white/[0.02] rounded-2xl text-center italic text-white/40 text-[10px] uppercase font-bold tracking-widest">
-                             No generated reports found.
-                          </div>
-                        ) : (
-                          reports.map((rep) => (
-                             <div 
-                               key={rep.id} 
-                               onClick={() => setActiveReport(rep)}
-                               className={cn("p-4 rounded-2xl border cursor-pointer transition-all hover:bg-white/[0.02] text-left", activeReport?.id === rep.id ? "bg-purple-500/10 border-purple-500/30 shadow-[0_0_15px_rgba(139,92,246,0.1)]" : "bg-black border-white/10")}
-                             >
-                               <div className="flex justify-between items-start mb-2">
-                                 <div className="text-[10px] font-mono text-purple-400 font-bold">
-                                   {rep.timestamp ? format((rep.timestamp as Timestamp).toDate(), 'yyyy-MM-dd HH:mm') : 'LIVE'}
-                                 </div>
-                                 <button 
-                                   onClick={async (e) => {
-                                     e.stopPropagation();
-                                     if (rep.id) {
-                                       await handleDeleteReport(rep.id, true);
-                                       if (activeReport?.id === rep.id) setActiveReport(null);
-                                     }
-                                   }}
-                                   className="text-red-500/50 hover:text-red-400 p-1 -mt-1 -mr-1"
-                                 >
-                                   <Trash2 className="w-3 h-3" />
-                                 </button>
-                               </div>
-                               <div className="flex items-center justify-between gap-2 mt-1">
-                                 <span className="font-display font-black text-xs text-white uppercase tracking-wider">{rep.ticker}</span>
-                                 <span className="font-mono text-[8px] uppercase px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-bold">{rep.analysisType}</span>
-                               </div>
-                             </div>
-                          ))
-                        )
-                      )}
+                      {renderHistorySubTabContent()}
                     </div>
                     <div className={cn(
                       "flex-1 min-w-0 overflow-x-auto flex flex-col gap-4 border border-white/5 rounded-3xl p-4 bg-black relative",
                       historySubTab === 'screener'
                         ? (activeSnapshot ? "flex" : "hidden lg:flex")
-                        : (activeReport ? "flex" : "hidden lg:flex")
+                        : historySubTab === 'reports'
+                          ? (activeReport ? "flex" : "hidden lg:flex")
+                          : (activeNewsArchiveReport ? "flex" : "hidden lg:flex")
                     )}>
                       {historySubTab === 'screener' ? (activeSnapshot ? (
                          <div className="flex-1 flex flex-col overflow-auto custom-scrollbar pr-2 pb-6">
@@ -7013,7 +7195,10 @@ ${stationInput}
                                     Horizon: {activeSnapshot.horizon || 'N/A'} |{' '}
                                   </>
                                 )}
-                                {new Date(activeSnapshot.timestamp).toLocaleString()}
+                                {(() => {
+                                  const ms = getTimestampMs(activeSnapshot.timestamp);
+                                  return ms ? new Date(ms).toLocaleString() : 'LIVE';
+                                })()}
                               </span>
                               <div className="ml-auto flex items-center gap-2">
                                 <button
@@ -7279,7 +7464,7 @@ ${stationInput}
                          <div className="flex-1 flex items-center justify-center text-white/20 uppercase font-black text-xs tracking-widest text-center">
                             Select a Snapshot <br/>to view details
                          </div>
-                      )) : (
+                      )) : historySubTab === 'reports' ? (
                         activeReport ? (
                           <div className="flex-1 flex flex-col overflow-auto custom-scrollbar pr-2 pb-6 text-left">
                             <button
@@ -7295,7 +7480,10 @@ ${stationInput}
                                   <span className="font-mono text-[9px] uppercase px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 font-bold">{activeReport.analysisType}</span>
                                 </div>
                                 <span className="text-[10px] text-bento-muted font-mono mt-1">
-                                  Saved At: {activeReport.timestamp ? format((activeReport.timestamp as Timestamp).toDate(), 'PP p') : 'LIVE'} • Author: {user?.email}
+                                  Saved At: {activeReport.timestamp ? (() => {
+                                    const ms = getTimestampMs(activeReport.timestamp);
+                                    return ms ? format(new Date(ms), 'PP p') : 'LIVE';
+                                  })() : 'LIVE'} • Author: {user?.email}
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
@@ -7358,6 +7546,27 @@ ${stationInput}
                           <div className="flex-1 flex flex-col items-center justify-center text-white/20 uppercase font-black text-xs tracking-widest text-center whitespace-normal">
                             <FileText className="w-8 h-8 text-bento-muted/50 mx-auto mb-2 opacity-30" />
                             Select a Report <br/>to view details
+                          </div>
+                        )
+                      ) : (
+                        activeNewsArchiveReport ? (
+                          <div className="flex-1 flex flex-col overflow-auto custom-scrollbar pr-2 pb-6 text-[#cfd8ff] text-left">
+                            <button
+                              onClick={() => setActiveNewsArchiveReport(null)}
+                              className="lg:hidden mb-4 self-start flex items-center gap-2 text-xs font-black uppercase tracking-widest text-amber-500 border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 rounded-xl hover:bg-amber-500/10 shadow-sm"
+                            >
+                              ← Back to News Archive
+                            </button>
+                            <BeautifulNewsReader 
+                              report={activeNewsArchiveReport} 
+                              triggerInstantAiInquiry={triggerUniversalAiInquiry} 
+                              styleClass="flex-1 p-0 border-0 bg-transparent"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex-1 flex flex-col items-center justify-center text-white/20 uppercase font-black text-xs tracking-widest text-center whitespace-normal">
+                            <Newspaper className="w-8 h-8 text-bento-muted/50 mx-auto mb-2 opacity-30" />
+                            Select a News Template <br/>to view details
                           </div>
                         )
                       )}
@@ -9247,7 +9456,10 @@ ${stationInput}
                   <div>
                     <h3 className="text-lg font-display font-bold text-white leading-tight text-left uppercase tracking-tight">Intelligence Archive Recall</h3>
                     <p className="text-[10px] text-bento-muted uppercase font-bold tracking-widest text-left">
-                      {viewingReportFromTrack.ticker} • {viewingReportFromTrack.timestamp?.toDate ? format(viewingReportFromTrack.timestamp.toDate(), 'PPP p') : 'Archived'}
+                      {viewingReportFromTrack.ticker} • {(() => {
+                        const ms = getTimestampMs(viewingReportFromTrack.timestamp);
+                        return ms ? format(new Date(ms), 'PPP p') : 'Archived';
+                      })()}
                     </p>
                   </div>
                 </div>
@@ -9278,7 +9490,7 @@ ${stationInput}
         )}
       </AnimatePresence>
 
-      {renderKnowledgeAssistant()}
+      {renderUniversalAiCompanion()}
     </div>
   );
 }
