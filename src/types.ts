@@ -56,5 +56,32 @@ export interface UploadedHtmlReport {
   htmlContent: string;
   plainText: string;
   timestamp: any; // Firestore Timestamp
+  reportTimestamp?: string;
+  generatedUtc?: string;
 }
+
+export interface DailyNewsLog {
+  id?: string;
+  userId: string;
+  reportDate: string;
+  title: string;
+  macroRegime?: string;
+  macroLede?: string;
+  macroEvents?: any[];
+  actionSummary?: {
+    title: string;
+    cols: {
+      title: string;
+      isWin: boolean;
+      isLose: boolean;
+      items: string[];
+    }[];
+  } | null;
+  insiderStats?: string[];
+  insiderTables?: any[];
+  timestamp: any;
+  reportTimestamp?: string;
+  generatedUtc?: string;
+}
+
 

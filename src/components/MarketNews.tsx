@@ -43,7 +43,7 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { ai, MODELS } from '../lib/gemini';
-import { UploadedHtmlReport } from '../types';
+import { UploadedHtmlReport, DailyNewsLog } from '../types';
 import { BeautifulNewsReader } from './BeautifulNewsReader';
 
 function cn(...classes: any[]) {
@@ -123,6 +123,31 @@ function parseReportData(html: string) {
 
     const title = doc.querySelector("h1")?.textContent || "Market Beat Report";
     const sub = doc.querySelector(".sub")?.textContent || "";
+
+    // Parse timestamp and generatedUtc
+    const stampEl = doc.querySelector(".stamp") || doc.querySelector(".hero .stamp");
+    let reportTimestamp = "";
+    let generatedUtc = "";
+    if (stampEl) {
+      reportTimestamp = stampEl.querySelector("b")?.textContent?.trim() || "";
+      const spanText = stampEl.querySelector("span")?.textContent || "";
+      const genMatch = spanText.match(/generated\s+([0-9a-zA-Z-.:_Z]+)/i);
+      if (genMatch && genMatch[1]) {
+        generatedUtc = genMatch[1].trim();
+      }
+    }
+    if (!reportTimestamp) {
+      const stampMatch = html.match(/Report timestamp:\s*<b>([\s\S]*?)<\/b>/i);
+      if (stampMatch && stampMatch[1]) {
+        reportTimestamp = stampMatch[1].trim();
+      }
+    }
+    if (!generatedUtc) {
+      const genMatch = html.match(/\(generated\s+([0-9a-zA-Z.:T_-]+)\)/i);
+      if (genMatch && genMatch[1]) {
+        generatedUtc = genMatch[1].trim();
+      }
+    }
 
     // Common mood cells
     const moodItems: any[] = [];
@@ -382,7 +407,7 @@ function parseReportData(html: string) {
               links
             });
           });
-          if (cells.length > 0) rows.push(cells);
+          if (cells.length > 0) rows.push({ cells });
         });
 
         tables.push({
@@ -415,7 +440,9 @@ function parseReportData(html: string) {
       scoreTables,
       bottomLineData,
       actionSummaryData,
-      insidersData
+      insidersData,
+      reportTimestamp,
+      generatedUtc
     };
   } catch (err) {
     console.error("DOMParser error:", err);
@@ -428,6 +455,11 @@ export function MarketNews() {
   const [uploadedReports, setUploadedReports] = useState<UploadedHtmlReport[]>([]);
   const [activePreviewReport, setActivePreviewReport] = useState<UploadedHtmlReport | null>(null);
   const [viewMode, setViewMode] = useState<'iframe' | 'reader'>('reader'); // Default to reader for stylized mobile view!
+
+  // Daily News Extraction Tracking Logs
+  const [dailyNewsLogs, setDailyNewsLogs] = useState<DailyNewsLog[]>([]);
+  const [activeLogView, setActiveLogView] = useState<DailyNewsLog | null>(null);
+  const [localLogs, setLocalLogs] = useState<DailyNewsLog[]>([]);
 
   // Drag over states
   const [dragCurrentActive, setDragCurrentActive] = useState(false);
@@ -450,16 +482,6 @@ export function MarketNews() {
     plainText: string;
   } | null>(null);
 
-  // AI Chat Assistant State specifically tuned for portfolio trend tracking
-  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
-    { 
-      role: 'assistant', 
-      content: '🔮 **Welcome to the Trend Analytics assistant.** I have real-time semantic access to each of your uploaded Daily Analyses and Cumulative Scoreboards. Ask me any technical trends, winner-rotation questions, or Brent oil geopolitical shifts!' 
-    }
-  ]);
-  const [userInput, setUserInput] = useState('');
-  const [chatLoading, setChatLoading] = useState(false);
-  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
   const [isImmersiveReaderOpen, setIsImmersiveReaderOpen] = useState(false);
 
   // Listen for user sign-in state shifts
@@ -472,7 +494,7 @@ export function MarketNews() {
 
   // Safe manual local fallback reader
   const loadLocalReports = () => {
-    const keys = Object.keys(localStorage).filter(k => k.startsWith('local_html_report_'));
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('local_html_report_') || k === 'local_latest_daily_report');
     const items: UploadedHtmlReport[] = [];
     keys.forEach(k => {
       try {
@@ -487,21 +509,38 @@ export function MarketNews() {
     setLocalArchive(items);
   };
 
+  // Safe manual local logs loader
+  const loadLocalLogs = () => {
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('local_daily_news_log_'));
+    const items: DailyNewsLog[] = [];
+    keys.forEach(k => {
+      try {
+        const item = JSON.parse(localStorage.getItem(k) || '');
+        if (item) items.push(item);
+      } catch (err) {
+        console.warn("Could not read local log item:", k, err);
+      }
+    });
+    items.sort((a, b) => b.reportDate.localeCompare(a.reportDate));
+    setLocalLogs(items);
+  };
+
   // Safe active remote query stream from Firestore
   useEffect(() => {
     if (!currentUser) {
       loadLocalReports();
+      loadLocalLogs();
       return;
     }
 
+    // A. Stream the uploaded reports (Latest only)
     const reportsRef = collection(db, "uploaded_html_reports");
-    const q = query(
+    const qReports = query(
       reportsRef,
-      where("userId", "==", currentUser.uid),
-      orderBy("reportDate", "desc")
+      where("userId", "==", currentUser.uid)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribeReports = onSnapshot(qReports, (snapshot) => {
       const list: UploadedHtmlReport[] = [];
       snapshot.forEach((docSnap) => {
         list.push({ id: docSnap.id, ...docSnap.data() } as UploadedHtmlReport);
@@ -510,14 +549,38 @@ export function MarketNews() {
 
       // Default active preview to latest if not set
       if (list.length > 0 && !activePreviewReport) {
-        setActivePreviewReport(list[0]);
+        // Sort descending by date just to be seguro
+        const sortedList = [...list].sort((a, b) => b.reportDate.localeCompare(a.reportDate));
+        setActivePreviewReport(sortedList[0]);
       }
     }, (err) => {
-      console.error("onSnapshot error:", err);
+      console.error("onSnapshot reports error:", err);
       handleFirestoreError(err, OperationType.LIST, "uploaded_html_reports");
     });
 
-    return () => unsubscribe();
+    // B. Stream the daily tracking logs
+    const logsRef = collection(db, "daily_news_logs");
+    const qLogs = query(
+      logsRef,
+      where("userId", "==", currentUser.uid)
+    );
+
+    const unsubscribeLogs = onSnapshot(qLogs, (snapshot) => {
+      const list: DailyNewsLog[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({ id: docSnap.id, ...docSnap.data() } as DailyNewsLog);
+      });
+      list.sort((a, b) => b.reportDate.localeCompare(a.reportDate));
+      setDailyNewsLogs(list);
+    }, (err) => {
+      console.error("onSnapshot logs error:", err);
+      handleFirestoreError(err, OperationType.LIST, "daily_news_logs");
+    });
+
+    return () => {
+      unsubscribeReports();
+      unsubscribeLogs();
+    };
   }, [currentUser]);
 
   // Handle parsing after dropping or selecting file
@@ -533,12 +596,34 @@ export function MarketNews() {
         const html = e.target?.result as string;
         if (!html) throw new Error("File content is empty or unreadable.");
 
-        // Clean extract date from title matching YYYY-MM-DD
-        const dateMatches = html.match(/\b\d{4}-\d{2}-\d{2}\b/g);
-        let extractedDate = new Date().toISOString().split("T")[0]; // default fallback
-        if (dateMatches && dateMatches.length > 0) {
-          const sorted = [...dateMatches].sort();
-          extractedDate = sorted[sorted.length - 1]; // Pick latest reference date
+        // Clean extract date from title or stamp matching YYYY-MM-DD
+        let extractedDate = "";
+        
+        // 1. Try matching inside the title first: e.g., "Market Beat ... 2026-06-03"
+        const titleMatchCheck = html.match(/<title>([\s\S]*?)<\/title>/i) || html.match(/<h1>([\s\S]*?)<\/h1>/i);
+        if (titleMatchCheck && titleMatchCheck[1]) {
+          const tDateMatch = titleMatchCheck[1].match(/\b\d{4}-\d{2}-\d{2}\b/);
+          if (tDateMatch) {
+            extractedDate = tDateMatch[0];
+          }
+        }
+        
+        // 2. Try matching inside stamp b tag (the actual report timestamp value)
+        if (!extractedDate) {
+          const stampMatch = html.match(/Report timestamp:\s*<b>\s*(\d{4}-\d{2}-\d{2})/i) || html.match(/class="stamp"[^>]*>\s*🕐\s*Report\s*timestamp:\s*<b>\s*(\d{4}-\d{2}-\d{2})/i);
+          if (stampMatch && stampMatch[1]) {
+            extractedDate = stampMatch[1];
+          }
+        }
+
+        // 3. Fallback to the first occurrence in the document
+        if (!extractedDate) {
+          const dateMatches = html.match(/\b\d{4}-\d{2}-\d{2}\b/g);
+          if (dateMatches && dateMatches.length > 0) {
+            extractedDate = dateMatches[0]; // Usually first mention is the report title/header date
+          } else {
+            extractedDate = new Date().toISOString().split("T")[0]; // default fallback
+          }
         }
 
         // Clean extract title
@@ -583,24 +668,57 @@ export function MarketNews() {
     setErrorMsg("");
     setSuccessMsg("");
 
+    const parsed = parseReportData(pendingUpload.htmlContent);
+
     if (!currentUser) {
       // Local storage fallback for convenience
       try {
-        const localKey = `local_html_report_${pendingUpload.reportType}_${pendingUpload.reportDate}`;
+        const localKey = `local_latest_${pendingUpload.reportType}_report`;
         const newLocalItem: UploadedHtmlReport = {
-          id: `${pendingUpload.reportType}_${pendingUpload.reportDate}`,
+          id: `latest_${pendingUpload.reportType}_report`,
           userId: "anonymous",
           reportType: pendingUpload.reportType,
           reportDate: pendingUpload.reportDate,
           title: pendingUpload.title,
           htmlContent: pendingUpload.htmlContent,
           plainText: pendingUpload.plainText,
+          reportTimestamp: parsed?.reportTimestamp || "",
+          generatedUtc: parsed?.generatedUtc || "",
           timestamp: new Date().toISOString()
         };
         localStorage.setItem(localKey, JSON.stringify(newLocalItem));
-        setSuccessMsg(`[Local Cache] Overwritten & saved locally for: ${pendingUpload.title}`);
+
+        // ALSO CREATE THE HISTORIC DAILY TRACK LOG ENTRY Offline
+        let localLogSuffix = "";
+        if (parsed?.generatedUtc) {
+          localLogSuffix = "_" + parsed.generatedUtc.replace(/[^a-zA-Z0-9]/g, "");
+        } else if (parsed?.reportTimestamp) {
+          localLogSuffix = "_" + parsed.reportTimestamp.replace(/[^a-zA-Z0-9]/g, "");
+        } else {
+          localLogSuffix = "_" + Date.now();
+        }
+        const logLocalKey = `local_daily_news_log_${pendingUpload.reportDate}${localLogSuffix}`;
+        const localLogPayload: DailyNewsLog = {
+          id: logLocalKey,
+          userId: "anonymous",
+          reportDate: pendingUpload.reportDate,
+          title: pendingUpload.title,
+          macroRegime: parsed?.macroRegime || "",
+          macroLede: parsed?.macroLede || "",
+          macroEvents: parsed?.macroEvents || [],
+          actionSummary: parsed?.actionSummaryData || null,
+          insiderStats: parsed?.insidersData?.stats || [],
+          insiderTables: parsed?.insidersData?.tables || [],
+          reportTimestamp: parsed?.reportTimestamp || "",
+          generatedUtc: parsed?.generatedUtc || "",
+          timestamp: new Date().toISOString()
+        };
+        localStorage.setItem(logLocalKey, JSON.stringify(localLogPayload));
+
+        setSuccessMsg(`[Local Cache] Overwritten latest news report and appended daily highlights log for [${pendingUpload.reportDate}].`);
         setPendingUpload(null);
         loadLocalReports();
+        loadLocalLogs();
         
         // Immediately set as active preview report
         setActivePreviewReport(newLocalItem);
@@ -613,8 +731,8 @@ export function MarketNews() {
     }
 
     try {
-      // Stable compound key ensure overwrite capability
-      const docId = `${currentUser.uid}_${pendingUpload.reportType}_${pendingUpload.reportDate}`;
+      // Overwrite ONLY the latest active html news analysis file of this reportType
+      const docId = `${currentUser.uid}_latest_${pendingUpload.reportType}_report`;
       const reportRef = doc(db, "uploaded_html_reports", docId);
 
       const payload = {
@@ -624,12 +742,43 @@ export function MarketNews() {
         title: pendingUpload.title,
         htmlContent: pendingUpload.htmlContent,
         plainText: pendingUpload.plainText,
+        reportTimestamp: parsed?.reportTimestamp || "",
+        generatedUtc: parsed?.generatedUtc || "",
         timestamp: serverTimestamp()
       };
 
       await setDoc(reportRef, payload);
 
-      setSuccessMsg(`Archived successfully & securely to Firestore. Date: ${pendingUpload.reportDate}`);
+      // ALSO SAVE TO THE DISTINCT HISTORIC NEWS LOGS WITH EXTRACTED SECTIONS
+      // Suffix keyed on custom timestamp to support multiple entries on the same day without overwriting
+      let logSuffix = "";
+      if (parsed?.generatedUtc) {
+        logSuffix = "_" + parsed.generatedUtc.replace(/[^a-zA-Z0-9]/g, "");
+      } else if (parsed?.reportTimestamp) {
+        logSuffix = "_" + parsed.reportTimestamp.replace(/[^a-zA-Z0-9]/g, "");
+      } else {
+        logSuffix = "_" + Date.now();
+      }
+      const logId = `${currentUser.uid}_${pendingUpload.reportDate}${logSuffix}`;
+      const logRef = doc(db, "daily_news_logs", logId);
+      const logPayload = {
+        userId: currentUser.uid,
+        reportDate: pendingUpload.reportDate,
+        title: pendingUpload.title,
+        macroRegime: parsed?.macroRegime || "",
+        macroLede: parsed?.macroLede || "",
+        macroEvents: parsed?.macroEvents || [],
+        actionSummary: parsed?.actionSummaryData || null,
+        insiderStats: parsed?.insidersData?.stats || [],
+        insiderTables: parsed?.insidersData?.tables || [],
+        reportTimestamp: parsed?.reportTimestamp || "",
+        generatedUtc: parsed?.generatedUtc || "",
+        timestamp: serverTimestamp()
+      };
+
+      await setDoc(logRef, logPayload);
+
+      setSuccessMsg(`Report archived. Highlights auto-logged chronologically to Tracking Feed.`);
       
       // Immediately set as active preview report
       setActivePreviewReport({
@@ -654,7 +803,7 @@ export function MarketNews() {
 
     if (!currentUser) {
       try {
-        const localKey = `local_html_report_${report.reportType}_${report.reportDate}`;
+        const localKey = `local_latest_daily_report`;
         localStorage.removeItem(localKey);
         setSuccessMsg(`Deleted from local cache: ${report.title}`);
         loadLocalReports();
@@ -671,13 +820,97 @@ export function MarketNews() {
       if (!report.id) return;
       const docRef = doc(db, "uploaded_html_reports", report.id);
       await deleteDoc(docRef);
-      setSuccessMsg(`Successfully purged from database: ${report.reportDate}`);
+      setSuccessMsg(`Successfully purged latest report: ${report.reportDate}`);
       if (activePreviewReport?.id === report.id) {
         setActivePreviewReport(null);
       }
     } catch (err: any) {
       setErrorMsg(`Deletion failed: ${err.message}`);
       handleFirestoreError(err, OperationType.DELETE, `uploaded_html_reports/${report.id}`);
+    }
+  };
+
+  // Remove daily log item from archive tracking feed
+  const handleDeleteDailyLog = async (log: DailyNewsLog) => {
+    if (!confirm(`Are you absolutely sure you want to delete the daily log for date ${log.reportDate}?`)) return;
+
+    setErrorMsg("");
+    setSuccessMsg("");
+
+    if (!currentUser) {
+      try {
+        if (log.id) {
+          localStorage.removeItem(log.id);
+          setSuccessMsg(`Deleted daily log for ${log.reportDate} from local cache.`);
+          loadLocalLogs();
+          if (activeLogView?.id === log.id) {
+            setActiveLogView(null);
+          }
+        }
+      } catch (err: any) {
+        setErrorMsg(`Failed local deletion: ${err.message}`);
+      }
+      return;
+    }
+
+    try {
+      if (!log.id) return;
+      await deleteDoc(doc(db, "daily_news_logs", log.id));
+      setSuccessMsg(`Successfully deleted daily log for ${log.reportDate}`);
+      if (activeLogView?.id === log.id) {
+        setActiveLogView(null);
+      }
+    } catch (err: any) {
+      setErrorMsg(`Deletion failed: ${err.message}`);
+      handleFirestoreError(err, OperationType.DELETE, `daily_news_logs/${log.id}`);
+    }
+  };
+
+  // Support manual logging
+  const handleLogHtmlReportToHistory = async (report: UploadedHtmlReport) => {
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const parsed = parseReportData(report.htmlContent);
+      if (!currentUser) {
+        const logId = `local_daily_news_log_${report.reportDate}_${Date.now()}`;
+        const logPayload: DailyNewsLog = {
+          id: logId,
+          userId: "anonymous",
+          reportDate: report.reportDate,
+          title: report.title,
+          macroRegime: parsed?.macroRegime || "",
+          macroLede: parsed?.macroLede || "",
+          macroEvents: parsed?.macroEvents || [],
+          actionSummary: parsed?.actionSummaryData || null,
+          insiderStats: parsed?.insidersData?.stats || [],
+          insiderTables: parsed?.insidersData?.tables || [],
+          timestamp: new Date().toISOString()
+        };
+        localStorage.setItem(logId, JSON.stringify(logPayload));
+        setSuccessMsg(`Manually logged insights tracker for ${report.reportDate} locally.`);
+        loadLocalLogs();
+        return;
+      }
+
+      const logId = `${currentUser.uid}_${report.reportDate}_${Date.now()}`;
+      const logRef = doc(db, "daily_news_logs", logId);
+      const logPayload = {
+        userId: currentUser.uid,
+        reportDate: report.reportDate,
+        title: report.title,
+        macroRegime: parsed?.macroRegime || "",
+        macroLede: parsed?.macroLede || "",
+        macroEvents: parsed?.macroEvents || [],
+        actionSummary: parsed?.actionSummaryData || null,
+        insiderStats: parsed?.insidersData?.stats || [],
+        insiderTables: parsed?.insidersData?.tables || [],
+        timestamp: serverTimestamp()
+      };
+      await setDoc(logRef, logPayload);
+      setSuccessMsg(`Manually logged insights tracker for ${report.reportDate} to Cloud Firestore.`);
+    } catch (err: any) {
+      setErrorMsg(`Manual logging failed: ${err.message}`);
     }
   };
 
@@ -704,59 +937,6 @@ export function MarketNews() {
     if (typeof (window as any).triggerUniversalAiInquiry === 'function') {
       (window as any).triggerUniversalAiInquiry(customPrompt);
       return;
-    }
-
-    // Open/Slide up the unified AI Companion Panel
-    setIsAiPanelOpen(true);
-
-    // Only scroll the background dashboard container on desktop screens
-    if (window.innerWidth >= 1024) {
-      chatSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
-    setChatMessages(prev => [...prev, { role: 'user', content: customPrompt }]);
-    setUserInput('');
-    setChatLoading(true);
-
-    try {
-      const reportsContext = activeReportsList
-        .slice(0, 8)
-        .map(r => `[REPORT TYPE: ${r.reportType.toUpperCase()} | DATE: ${r.reportDate} | TITLE: ${r.title}]\n${r.plainText}`)
-        .join("\n\n");
-
-      const systemPrompt = `You are an elite quantitative researcher and portfolio analyst in "Market Beat", a specialized research terminal.
-You are given the plain-text semantic version of multiple uploaded high-fidelity HTML reports from the user's secure archive (last 5 business days).
-Use this aggregated historical context to answer the user's specific inquiry. Focus on identifying trends, matching price momentum, counting volume flips, or assessing Brent crude oil risk escalation.
-
-HISTORICAL AND TREND REVENUE ARCHIVE DATA:
-${reportsContext || "No reports have been uploaded yet. Encourage the user to drop HTML files above."}`;
-
-      setChatMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-
-      const stream = await ai.models.generateContentStream({
-        model: MODELS.FLASH,
-        contents: [
-          { role: 'user', parts: [{ text: `${systemPrompt}\n\nUSER QUESTION: ${customPrompt}` }] }
-        ]
-      });
-
-      let accumulated = "";
-      for await (const chunk of stream) {
-        accumulated += chunk.text || "";
-        setChatMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = { role: 'assistant', content: accumulated };
-          return updated;
-        });
-      }
-    } catch (err: any) {
-      console.error("AI trends prediction failed:", err);
-      setChatMessages(prev => [
-        ...prev, 
-        { role: 'assistant', content: `⚠️ **AI Intelligence Error**: ${err?.message || 'Failed to complete trend analysis inquiry. Please check your API key setup.'}` }
-      ]);
-    } finally {
-      setChatLoading(false);
     }
   };
 
@@ -813,62 +993,7 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
     }
   };
 
-  // Call Gemini trends intelligence
-  const handleChatSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userInput.trim()) return;
 
-    const userMessage = userInput.trim();
-    setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
-    setUserInput('');
-    setChatLoading(true);
-
-    try {
-      // Aggregate text context from all relevant rolling archive reports
-      const reportsContext = activeReportsList
-        .slice(0, 8) // Include up to last 8 items across both types to capture full trends context
-        .map(r => `[REPORT TYPE: ${r.reportType.toUpperCase()} | DATE: ${r.reportDate} | TITLE: ${r.title}]\n${r.plainText}`)
-        .join("\n\n");
-
-      const systemPrompt = `You are an elite quantitative researcher and portfolio analyst in "Market Beat", a specialized research terminal.
-You are given the plain-text semantic version of multiple uploaded high-fidelity HTML reports from the user's secure archive (last 5 business days).
-Use this aggregated historical context to answer the user's specific inquiry. Focus on identifying trends, matching price momentum, counting volume flips, or assessing Brent crude oil risk escalation.
-
-HISTORICAL AND TREND REVENUE ARCHIVE DATA:
-${reportsContext || "No reports have been uploaded yet. Encourage the user to drop HTML files above."}`;
-
-      setChatMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-
-      const stream = await ai.models.generateContentStream({
-        model: MODELS.FLASH,
-        contents: [
-          { role: 'user', parts: [{ text: `${systemPrompt}\n\nUSER QUESTION: ${userMessage}` }] }
-        ]
-      });
-
-      let accumulated = "";
-      for await (const chunk of stream) {
-        accumulated += chunk.text || "";
-        setChatMessages(prev => {
-          const updated = [...prev];
-          updated[updated.length - 1] = { role: 'assistant', content: accumulated };
-          return updated;
-        });
-      }
-    } catch (err: any) {
-      console.error("AI trends prediction failed:", err);
-      setChatMessages(prev => [
-        ...prev, 
-        { role: 'assistant', content: `⚠️ **AI Intelligence Error**: ${err?.message || 'Failed to complete trend analysis inquiry. Please check your API key setup.'}` }
-      ]);
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-  const handleApplyPresetQuestion = (q: string) => {
-    triggerInstantAiInquiry(q);
-  };
 
   return (
     <div className="bg-[#0b1020] text-[#e8ecf8] p-6 rounded-3xl border border-[#243056] shadow-2xl flex flex-col space-y-6 h-full overflow-y-auto">
@@ -924,7 +1049,7 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
       )}
 
       {/* Uploading workspace bento block */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <section className="col-span-full">
         
         {/* Dropzone A: Daily News analysis */}
         <div 
@@ -935,7 +1060,7 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
             setDragCurrentActive(false);
             if (e.dataTransfer.files?.length > 0) parseHtmlReportFile(e.dataTransfer.files[0], "current");
           }}
-          className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center text-center transition-all cursor-pointer relative ${
+          className={`border-2 border-dashed rounded-2xl p-7 flex flex-col items-center justify-center text-center transition-all cursor-pointer relative ${
             dragCurrentActive 
               ? "border-[#16c784] bg-emerald-500/5 shadow-[0_0_15px_rgba(22,199,132,0.1)]" 
               : "border-purple-500/20 bg-[#121935]/40 hover:border-purple-500/40 hover:bg-[#121935]/60"
@@ -951,47 +1076,12 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
             }}
           />
           <label htmlFor="current-drop-input" className="w-full h-full flex flex-col items-center justify-center cursor-pointer">
-            <Upload className="w-8 h-8 text-[#16c784] mb-2 drop-shadow-md" />
+            <Upload className="w-10 h-10 text-[#16c784] mb-2 drop-shadow-md" />
             <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-              📤 Drop Current Report
+              📤 Drop New Daily Market HTML Report
             </h3>
-            <p className="text-[11px] text-[#9aa3c7] font-medium max-w-[200px]">
-              Upload modern News Impact Analysis Template (`marketbeat_report_*`)
-            </p>
-          </label>
-        </div>
-
-        {/* Dropzone B: Scoreboard */}
-        <div 
-          onDragOver={(e) => { e.preventDefault(); setDragStatusActive(true); }}
-          onDragLeave={() => setDragStatusActive(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragStatusActive(false);
-            if (e.dataTransfer.files?.length > 0) parseHtmlReportFile(e.dataTransfer.files[0], "status");
-          }}
-          className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center text-center transition-all cursor-pointer relative ${
-            dragStatusActive 
-              ? "border-[#3b82f6] bg-blue-500/5 shadow-[0_0_15px_rgba(59,130,246,0.1)]" 
-              : "border-purple-500/20 bg-[#121935]/40 hover:border-purple-500/40 hover:bg-[#121935]/60"
-          }`}
-        >
-          <input 
-            type="file" 
-            accept=".html,.htm"
-            id="status-drop-input"
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files?.length) parseHtmlReportFile(e.target.files[0], "status");
-            }}
-          />
-          <label htmlFor="status-drop-input" className="w-full h-full flex flex-col items-center justify-center cursor-pointer">
-            <Layers className="w-8 h-8 text-[#3b82f6] mb-2 drop-shadow-md" />
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1">
-              📈 Drop Scoreboard Report
-            </h3>
-            <p className="text-[11px] text-[#9aa3c7] font-medium max-w-[200px]">
-              Upload Multi-Day Ticker Cumulative Scoreboard (`market_scoreboard_*`)
+            <p className="text-[11px] text-[#9aa3c7] font-medium max-w-[400px]">
+              Upload `marketbeat_report_*` for parsing. This will update the latest reader preview and automatically extract and append a structured log entry under highlights.
             </p>
           </label>
         </div>
@@ -1002,10 +1092,10 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
       {pendingUpload && (
         <div className="bg-[#121935] border border-amber-500/30 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-fade-in shadow-xl">
           <div className="flex items-center gap-3">
-            <div className={`p-3 rounded-lg ${pendingUpload.reportType === "current" ? "bg-emerald-500/10 text-emerald-400" : "bg-blue-500/10 text-blue-400"}`}>
-              {pendingUpload.reportType === "current" ? <Newspaper className="w-6 h-6" /> : <Layers className="w-6 h-6" />}
+            <div className="p-3 rounded-lg bg-emerald-500/10 text-emerald-400">
+              <Newspaper className="w-6 h-6" />
             </div>
-            <div>
+            <div className="text-left">
               <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#f5b21a]">
                 Pending Document Ready to Publish
               </span>
@@ -1028,182 +1118,91 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
             <button
               onClick={savePendingToArchive}
               disabled={isFileLoading}
-              className="px-5 py-2 text-xs font-bold uppercase tracking-wider bg-[#1ea55d] hover:bg-[#2dc070] text-white rounded-xl transition-all flex items-center gap-1.5 shadow-md"
+              className="px-5 py-2 text-xs font-bold uppercase tracking-wider bg-[#1ea55d] hover:bg-[#2dc070] text-white rounded-xl transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
             >
               {isFileLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-              Save & Overwrite Date Target
+              Publish & Auto-Log Highlights
             </button>
           </div>
         </div>
       )}
 
       {/* Split Archive table vs AI analytics panel */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <section className="grid grid-cols-1 gap-6 items-start">
         
-        {/* Left Column (Grid width 7): Reports Archive List */}
-        <div className="lg:col-span-7 bg-[#121935] p-5 rounded-3xl border border-[#243056] shadow-xl flex flex-col space-y-4">
+        {/* Left Column (Full width): Reports Archive List */}
+        <div className="col-span-full bg-[#121935] p-5 rounded-3xl border border-[#243056] shadow-xl flex flex-col space-y-4">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="text-left">
               <h3 className="text-md font-extrabold text-white flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-[#cfd8ff]" />
-                REPORT CHRONOLOGY ARCHIVE
+                DAILY HIGHLIGHTS TRACKING LOG
               </h3>
-              <p className="text-[10px] text-bento-muted uppercase tracking-wider mt-0.5">Rolling last 5 uploaded analysis dates</p>
+              <p className="text-[10px] text-bento-muted uppercase tracking-wider mt-0.5">Chronological history of extracted key indicators</p>
             </div>
             <span className="text-[10px] bg-purple-500/10 text-purple-300 font-mono px-2 py-0.5 rounded border border-purple-500/20">
-              {activeReportsList.length} files stored
+              {(currentUser ? dailyNewsLogs : localLogs).length} logs stored
             </span>
           </div>
 
-          {groupedReports.length === 0 ? (
+          {(currentUser ? dailyNewsLogs : localLogs).length === 0 ? (
             <div className="p-8 text-center border border-dashed border-[#243056] rounded-2xl flex flex-col items-center justify-center text-[#9aa3c7] space-y-2">
               <Upload className="w-8 h-8 opacity-20" />
-              <p className="text-xs font-medium">Your reports chronology list is currently empty.</p>
-              <p className="text-[10px] max-w-[280px]">Drop daily `.html` files in the upload zones above to build your high-fidelity trends archive.</p>
+              <p className="text-xs font-medium">Your tracking logs list is currently empty.</p>
+              <p className="text-[10px] max-w-[280px]">Upload a Daily Market HTML news file above to automatically extract, log, and render the trends history.</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {groupedReports.map((group, uiIdx) => (
-                <div key={uiIdx} className="bg-[#0b1020] border border-[#243056] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:border-purple-500/20 transition-all">
+              {(currentUser ? dailyNewsLogs : localLogs).map((log, uiIdx) => (
+                <div key={uiIdx} className="bg-[#0b1020] border border-[#243056] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:border-indigo-500/30 transition-all text-left">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2.5 bg-[#cfd8ff]/5 border border-[#243056] rounded-xl text-center flex flex-col justify-center min-w-[70px]">
-                      <span className="block text-[11px] font-black text-white font-mono leading-none">{group.date}</span>
+                    <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/25 rounded-xl text-center flex flex-col justify-center min-w-[70px]">
+                      <span className="block text-[11px] font-black text-[#5c7cfa] font-mono leading-none">{log.reportDate}</span>
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-white capitalize leading-tight">
-                        Daily Portfolio Snapshot
+                      <h4 className="text-xs font-bold text-white leading-tight">
+                        {log.title || "Daily Analysis Log"}
                       </h4>
-                      <p className="text-[10px] text-[#9aa3c7] font-medium mt-0.5">
-                        {group.current && group.status ? "Complete double-matrix archived" : "Partial session uploaded"}
+                      {log.reportTimestamp && (
+                        <p className="text-[10px] text-amber-400 font-mono font-bold mt-1 flex items-center gap-1">
+                          <span>🕐</span> Report timestamp: {log.reportTimestamp}
+                        </p>
+                      )}
+                      <p className="text-[9px] text-[#9aa3c7] font-medium mt-1 uppercase tracking-wide">
+                        🎯 {log.actionSummary?.cols?.length || 0} Actions • 🟢 {log.insiderTables?.length || 0} Insider Groups • 📅 {log.macroEvents?.length || 0} Macro Events
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    {/* Current analysis slot */}
-                    {group.current ? (
-                      <div className="flex items-center gap-1 bg-[#153434]/50 border border-emerald-500/15 rounded-lg pl-2.5 pr-1 py-1">
-                        <span className="text-[10px] font-bold text-emerald-400">Current</span>
-                        <button 
-                          onClick={() => setActivePreviewReport(group.current!)}
-                          className={cn("p-1 rounded hover:bg-white/10 transition-colors", activePreviewReport?.reportType === "current" && activePreviewReport?.reportDate === group.current.reportDate && "bg-[#16c784] text-black hover:text-black")}
-                          title="Preview HTML Report"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-emerald-300" />
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteReport(group.current!)}
-                          className="p-1 text-[#ea3943] hover:text-red-300 transition-colors"
-                          title="Purge"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-[10px] font-bold text-white/20 border border-white/5 bg-[#121935] px-2 py-1 rounded-lg">No Daily Report</span>
-                    )}
-
-                    {/* Status analysis slot */}
-                    {group.status ? (
-                      <div className="flex items-center gap-1 bg-[#1a2c4a]/50 border border-blue-500/15 rounded-lg pl-2.5 pr-1 py-1">
-                        <span className="text-[10px] font-bold text-blue-400">Scoreboard</span>
-                        <button 
-                          onClick={() => setActivePreviewReport(group.status!)}
-                          className={cn("p-1 rounded hover:bg-white/10 transition-colors", activePreviewReport?.reportType === "status" && activePreviewReport?.reportDate === group.status.reportDate && "bg-[#3b82f6] text-black hover:text-black")}
-                          title="Preview Cumulative Report"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-blue-300" />
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteReport(group.status!)}
-                          className="p-1 text-[#ea3943] hover:text-red-300 transition-colors"
-                          title="Purge"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-[10px] font-bold text-white/20 border border-white/5 bg-[#121935] px-2 py-1 rounded-lg">No Scoreboard</span>
-                    )}
+                  <div className="flex flex-wrap items-center gap-2 justify-end">
+                    <button 
+                      onClick={() => {
+                        setActiveLogView(log);
+                        setViewMode('reader');
+                      }}
+                      className={cn(
+                        "flex items-center gap-1.5 text-[10px] uppercase font-black px-3 py-1.5 rounded-lg border transition-all cursor-pointer",
+                        activeLogView?.id === log.id 
+                          ? "bg-indigo-600 text-white border-indigo-400" 
+                          : "bg-black/30 text-indigo-300 border-[#243056] hover:bg-indigo-500/15"
+                      )}
+                    >
+                      <BookOpen className="w-3.5 h-3.5" />
+                      <span>View Log</span>
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteDailyLog(log)}
+                      className="p-1 px-2 text-[#ea3943] hover:bg-red-500/5 rounded border border-[#ea3943]/20 hover:border-red-500/40 transition-colors"
+                      title="Purge Log"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
           )}
 
-        </div>
-
-        {/* Right Column (Grid width 5): Trends Chat studio */}
-        <div ref={chatSectionRef} className="lg:col-span-5 bg-[#121935] p-5 rounded-3xl border border-[#243056] shadow-xl flex flex-col space-y-4 h-[420px]">
-          <div>
-            <h3 className="text-md font-extrabold text-white flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              TRENDS INTELLIGENCE AGENT
-            </h3>
-            <p className="text-[10px] text-bento-muted uppercase tracking-wider mt-0.5">Semantic reasoning across rolling archive history</p>
-          </div>
-
-          <div className="flex-1 overflow-y-auto space-y-3 p-3 bg-[#0b1020] rounded-2xl scrollbar-thin scrollbar-thumb-white/5 text-left select-text">
-            {chatMessages.map((msg, idx) => (
-              <div key={idx} className={cn(
-                "flex flex-col max-w-[85%] rounded-xl p-3 text-xs leading-relaxed",
-                msg.role === 'user' 
-                  ? "bg-[#cfd8ff]/10 text-white border border-[#243056] ml-auto rounded-tr-none" 
-                  : "bg-[#1f2a55]/40 text-[#cfd8ff] border border-blue-500/10 rounded-tl-none whitespace-pre-line"
-              )}>
-                <span className="text-[9px] font-mono opacity-50 uppercase tracking-widest mb-1">
-                  {msg.role === 'user' ? 'Client Request' : 'Trends Studio'}
-                </span>
-                <div>{msg.content}</div>
-              </div>
-            ))}
-            {chatLoading && (
-              <div className="bg-[#1f2a55]/20 text-[#cfd8ff] border border-blue-500/5 rounded-xl rounded-tl-none p-3 max-w-[85%] flex items-center gap-2 text-xs">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
-                <span>Scanning parsed chronology patterns...</span>
-              </div>
-            )}
-          </div>
-
-          {/* Quick preset chips */}
-          <div className="flex flex-wrap gap-1.5 justify-start">
-            <button 
-              onClick={() => handleApplyPresetQuestion("What are the core winners over the last week?")}
-              className="text-[9px] px-2 py-1 border border-white/5 font-bold rounded-lg bg-black/20 text-[#cfd8ff] hover:bg-white/5 hover:text-white transition-all whitespace-nowrap"
-            >
-              🏆 Winners Check
-            </button>
-            <button 
-              onClick={() => handleApplyPresetQuestion("Assess the Brent crude oil trend and escalation impacts")}
-              className="text-[9px] px-2 py-1 border border-white/5 font-bold rounded-lg bg-black/20 text-[#cfd8ff] hover:bg-white/5 hover:text-white transition-all whitespace-nowrap"
-            >
-              🛢️ Oil & Risks
-            </button>
-            <button 
-              onClick={() => handleApplyPresetQuestion("Compare cryptocurrency safe haven behavior with gold")}
-              className="text-[9px] px-2 py-1 border border-white/5 font-bold rounded-lg bg-black/20 text-[#cfd8ff] hover:bg-white/5 hover:text-white transition-all whitespace-nowrap"
-            >
-              🪙 Crypto vs Gold
-            </button>
-          </div>
-
-          <form onSubmit={handleChatSubmit} className="flex gap-2">
-            <input 
-              type="text"
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              disabled={chatLoading}
-              placeholder="Ask Trends Agent (e.g. Compare NVIDIA scores)..."
-              className="flex-1 bg-black/30 border border-[#243056] px-3.5 py-2 text-xs rounded-xl focus:ring-1 focus:ring-indigo-500 outline-none placeholder-[#9aa3c7]/50 text-white"
-            />
-            <button
-              type="submit"
-              disabled={chatLoading}
-              className="p-2 px-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-            >
-              <Send className="w-3.5 h-3.5" />
-            </button>
-          </form>
         </div>
 
       </section>
@@ -1217,7 +1216,7 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
           )}>
 
         {/* Dynamic Fullscreen Exit & Context Bar */}
-        {isImmersiveReaderOpen && activePreviewReport && (
+        {isImmersiveReaderOpen && (activePreviewReport || activeLogView) && (
           <div className="bg-[#121935]/90 border border-[#243056] p-3 sm:p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xl shrink-0 backdrop-blur-md animate-fade-in">
             <div className="flex items-center justify-between sm:justify-start gap-3">
               <button
@@ -1230,43 +1229,54 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
               </button>
               <div className="text-left sm:hidden">
                 <span className="text-[9px] uppercase font-bold text-gray-400 block font-mono">Date</span>
-                <span className="text-xs font-black text-[#ecc94b] font-mono">{activePreviewReport.reportDate}</span>
+                <span className="text-xs font-black text-[#ecc94b] font-mono">{(activePreviewReport || activeLogView)?.reportDate}</span>
               </div>
             </div>
 
             <div className="hidden sm:flex flex-col text-center">
               <h4 className="text-[9px] font-black uppercase text-[#cfd8ff]/70 font-mono tracking-widest">⚡ IMMERSIVE READING DESK</h4>
-              <p className="text-xs font-black text-white mt-0.5">{activePreviewReport.reportType === "current" ? "Daily Portfolio News Analysis" : "Cumulative Ticker Scoreboard"} ({activePreviewReport.reportDate})</p>
+              <p className="text-xs font-black text-white mt-0.5">
+                {activeLogView 
+                  ? "Extracted Metric Insights Log" 
+                  : (activePreviewReport?.reportType === "current" ? "Daily Portfolio News Analysis" : "Cumulative Ticker Scoreboard")
+                } ({(activePreviewReport || activeLogView)?.reportDate})
+              </p>
             </div>
             
             <div className="flex items-center justify-between sm:justify-end gap-2.5 border-t border-white/5 pt-2.5 sm:border-0 sm:pt-0">
-              <div className="flex items-center bg-black/40 border border-[#243056] p-1 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('reader')}
-                  className={cn(
-                    "px-2.5 py-1 rounded text-[9px] uppercase font-black transition-all",
-                    viewMode === 'reader' ? "bg-purple-500/30 text-purple-300 shadow-sm" : "text-gray-400 hover:text-white"
-                  )}
-                >
-                  Readout
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('iframe')}
-                  className={cn(
-                    "px-2.5 py-1 rounded text-[9px] uppercase font-black transition-all",
-                    viewMode === 'iframe' ? "bg-purple-500/30 text-purple-300 shadow-sm" : "text-gray-400 hover:text-white"
-                  )}
-                >
-                  Iframe
-                </button>
-              </div>
+              {!activeLogView && activePreviewReport && (
+                <div className="flex items-center bg-black/40 border border-[#243056] p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('reader')}
+                    className={cn(
+                      "px-2.5 py-1 rounded text-[9px] uppercase font-black transition-all",
+                      viewMode === 'reader' ? "bg-purple-500/30 text-purple-300 shadow-sm" : "text-gray-400 hover:text-white"
+                    )}
+                  >
+                    Readout
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('iframe')}
+                    className={cn(
+                      "px-2.5 py-1 rounded text-[9px] uppercase font-black transition-all",
+                      viewMode === 'iframe' ? "bg-purple-500/30 text-purple-300 shadow-sm" : "text-gray-400 hover:text-white"
+                    )}
+                  >
+                    Iframe
+                  </button>
+                </div>
+              )}
 
               <button
                 type="button"
                 onClick={() => {
-                  triggerInstantAiInquiry(`Discuss the key highlights & macro risks from the ${activePreviewReport.reportType === "current" ? "news analysis" : "scoreboard"} report dated ${activePreviewReport.reportDate}.`);
+                  if (activeLogView) {
+                    triggerInstantAiInquiry(`Provide a detailed professional breakdown of the exact developments, top winners, and key risks from the extracted metric insights log dated ${activeLogView.reportDate}.`);
+                  } else if (activePreviewReport) {
+                    triggerInstantAiInquiry(`Discuss the key highlights & macro risks from the ${activePreviewReport.reportType === "current" ? "news analysis" : "scoreboard"} report dated ${activePreviewReport.reportDate}.`);
+                  }
                 }}
                 className="flex items-center gap-1.5 text-[10px] uppercase font-extrabold bg-[#cfd8ff]/10 text-white border border-[#243056] hover:bg-indigo-600 px-3 py-2 rounded-xl transition-all cursor-pointer"
               >
@@ -1278,7 +1288,7 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
         )}
 
         {/* Mobile vertical orientation helper banner */}
-        {!isImmersiveReaderOpen && activePreviewReport && (
+        {!isImmersiveReaderOpen && (activePreviewReport || activeLogView) && (
           <div className="block lg:hidden bg-indigo-950/40 border border-indigo-500/20 p-3 rounded-2xl">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-left">
@@ -1302,22 +1312,27 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-2 border-b border-[#243056]">
             <div className="flex flex-wrap items-center gap-3">
               <div>
-                <h3 className="text-sm font-black text-white flex items-center gap-2">
+                <h3 className="text-sm font-black text-white flex items-center gap-2 text-left">
                   <Cpu className="w-4 h-4 text-[#ecc94b]" />
-                  HIGH-FIDELITY PREVIEW CANVAS
+                  {activeLogView ? "EXTRACTED METRIC INSIGHTS" : "HIGH-FIDELITY PREVIEW CANVAS"}
                 </h3>
-                <p className="text-[10px] text-bento-muted uppercase tracking-wider mt-0.5">Encapsulated high contrast local preview container</p>
+                <p className="text-[10px] text-bento-muted uppercase tracking-wider mt-0.5 text-left">
+                  {activeLogView ? "Historical indicators and trend logging records" : "Encapsulated high contrast local preview container"}
+                </p>
               </div>
 
-              {/* Quick multi-report selection drop list in canvas */}
-              {activeReportsList.length > 0 && (
+              {/* Quick multi-report selection drop list in canvas if not viewing log */}
+              {!activeLogView && activeReportsList.length > 0 && (
                 <div className="flex items-center gap-2 bg-black/40 border border-[#243056] py-1.5 px-3 rounded-xl shadow-inner">
                   <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Active Report:</span>
                   <select
                     value={activePreviewReport ? `${activePreviewReport.reportType}_${activePreviewReport.reportDate}` : ""}
                     onChange={(e) => {
                       const selected = activeReportsList.find(r => `${r.reportType}_${r.reportDate}` === e.target.value);
-                      if (selected) setActivePreviewReport(selected);
+                      if (selected) {
+                        setActivePreviewReport(selected);
+                        setActiveLogView(null);
+                      }
                     }}
                     className="bg-transparent border-0 text-xs text-white font-bold font-mono outline-none focus:ring-0 cursor-pointer pr-1"
                   >
@@ -1337,8 +1352,32 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* Reset log focus to Live News */}
+              {activeLogView && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsImmersiveReaderOpen(true)}
+                    className="flex items-center gap-1.5 text-[10px] uppercase font-black bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-400/30 px-3.5 py-1.5 rounded-lg hover:scale-105 active:scale-95 transition-all shadow-md shadow-indigo-950/40 cursor-pointer"
+                    title="Enter Immersive Distraction-Free Fullscreen Mode"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-amber-300" />
+                    <span>📱 Fullscreen reading desk</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveLogView(null)}
+                    className="flex items-center gap-1.5 text-[10px] font-black uppercase text-indigo-300 bg-indigo-500/10 hover:bg-slate-800 border border-indigo-500/20 px-3.5 py-1.5 rounded-lg transition-all cursor-pointer active:scale-95"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Live Newspaper view</span>
+                  </button>
+                </>
+              )}
+
               {/* Optimized layout View switcher */}
-              {activePreviewReport && (
+              {!activeLogView && activePreviewReport && (
                 <div className="flex items-center bg-black/40 border border-[#243056] p-1 rounded-xl">
                   <button
                     type="button"
@@ -1363,7 +1402,7 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
                 </div>
               )}
 
-              {activePreviewReport && (
+              {!activeLogView && activePreviewReport && (
                 <div className="flex flex-wrap items-center gap-2 md:gap-3">
                   {/* Type pill */}
                   <span className={cn(
@@ -1375,41 +1414,17 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
                     {activePreviewReport.reportType === "current" ? "📰 Daily News" : "📊 Scoreboard"}
                   </span>
 
-                  {/* Sibling Toggle button if available */}
-                  {siblingReport && (
-                    <button
-                      type="button"
-                      onClick={() => setActivePreviewReport(siblingReport)}
-                      className="flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/30 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer"
-                      title={`Switch to matching ${siblingReport.reportType === "current" ? "Daily News Report" : "Cumulative Scoreboard"} for ${activePreviewReport.reportDate}`}
-                    >
-                      <RefreshCw className="w-2.5 h-2.5 text-amber-300" />
-                      Swap View
-                    </button>
-                  )}
-
                   {/* Ask AI button */}
                   <button
                     type="button"
                     onClick={() => {
-                      setUserInput(`Provide a detailed professional breakdown of the exact developments, top winners, and key risks mentioned in the active ${activePreviewReport.reportType === "current" ? "Daily News Impact Analysis" : "Cumulative Ticker Scoreboard"} report dated ${activePreviewReport.reportDate}.`);
+                      triggerInstantAiInquiry(`Provide a detailed professional breakdown of the exact developments, top winners, and key risks mentioned in the active ${activePreviewReport.reportType === "current" ? "Daily News Impact Analysis" : "Cumulative Ticker Scoreboard"} report dated ${activePreviewReport.reportDate}.`);
                     }}
                     className="flex items-center gap-1.5 text-[10px] uppercase font-bold tracking-wider bg-[#cfd8ff]/10 border border-[#243056] text-white hover:bg-[#cfd8ff]/15 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer"
                     title="Ask AI questions with active preview context"
                   >
                     <Sparkles className="w-2.5 h-2.5 text-amber-300" />
                     Ask AI
-                  </button>
-
-                  {/* Immersive Mobile-Oriented Fullscreen Reader Button */}
-                  <button
-                    type="button"
-                    onClick={() => setIsImmersiveReaderOpen(true)}
-                    className="flex items-center gap-1.5 text-[10px] uppercase font-black bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-400/30 px-3 py-1.5 rounded-lg hover:scale-105 active:scale-95 transition-all shadow-md shadow-indigo-950/40 cursor-pointer"
-                    title="Enter Immersive Distraction-Free Fullscreen Mode"
-                  >
-                    <BookOpen className="w-3 h-3 text-amber-300" />
-                    <span>📱 Fullscreen reading desk</span>
                   </button>
 
                   <span className="text-[10px] uppercase font-mono font-bold bg-[#cfd8ff]/5 border border-[#243056] px-2.5 py-1 rounded-lg text-white">
@@ -1429,7 +1444,179 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
           </div>
         )}
 
-        {activePreviewReport ? (
+        {activeLogView ? (
+          /* GLORIOUS BENTO INDICATORS TRACKING FEED */
+          <div className={cn(
+            "bg-[#0b1020] border border-[#243056] rounded-2xl p-6 space-y-6 text-left select-text animate-fade-in shadow-2xl",
+            isImmersiveReaderOpen 
+              ? "flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 pb-20" 
+              : ""
+          )}>
+            
+            {/* Log Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-[#243056] pb-4 gap-3">
+              <div>
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-400 uppercase tracking-widest leading-none">
+                  <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>EXTRACTED TRACKING LOG SECTIONS</span>
+                </div>
+                <h3 className="text-lg font-black text-white mt-1">{activeLogView.title}</h3>
+                <p className="text-[10px] text-gray-400">Archived Date: <span className="font-mono text-amber-300 font-bold">{activeLogView.reportDate}</span></p>
+              </div>
+              
+              <button
+                type="button"
+                onClick={() => setActiveLogView(null)}
+                className="flex items-center gap-1.5 text-[10px] font-black uppercase text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 px-3.5 py-2 rounded-xl transition-all cursor-pointer active:scale-95"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Switch to Live Newspaper</span>
+              </button>
+            </div>
+
+            {/* Section 1: 🎯 Action Summary (Three Columns) */}
+            {activeLogView.actionSummary && (
+              <div className="space-y-3">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🎯</span> {activeLogView.actionSummary.title || "Action Summary"}
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {activeLogView.actionSummary.cols?.map((col: any, colIdx: number) => (
+                    <div key={colIdx} className={cn(
+                      "p-4 rounded-xl border flex flex-col space-y-2 text-left",
+                      col.isWin ? "bg-emerald-950/25 border-emerald-500/25 text-emerald-100" :
+                      col.isLose ? "bg-red-950/25 border-red-500/25 text-red-100" : "bg-black/30 border-[#243056] text-amber-100"
+                    )}>
+                      <h5 className={cn(
+                        "text-[10px] font-black uppercase tracking-wider border-b pb-1.5 text-left",
+                        col.isWin ? "text-emerald-400 border-emerald-500/10" :
+                        col.isLose ? "text-red-400 border-red-500/10" : "text-amber-400 border-[#243056]"
+                      )}>
+                        {col.title}
+                      </h5>
+                      <ul className="space-y-1.5 text-[11px] leading-normal text-gray-300 flex-1 text-left">
+                        {col.items?.map((item: string, itIdx: number) => (
+                          <li key={itIdx} className="flex items-start gap-1">
+                            <span className="text-gray-500">•</span>
+                            <span>{item}</span>
+                          </li>
+                        ))}
+                        {(!col.items || col.items.length === 0) && (
+                          <span className="text-gray-500 italic block text-xs">No items reported.</span>
+                        )}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Section 2: 🟢 Insider Buy (Two columns / boxes) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 pt-2">
+              <div className="md:col-span-4 bg-[#0b1020] border border-[#243056] p-4 rounded-xl flex flex-col space-y-3">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🟢</span> Insider Cluster Buys
+                </h4>
+                
+                {activeLogView.insiderStats && activeLogView.insiderStats.length > 0 ? (
+                  <div className="space-y-2">
+                    {activeLogView.insiderStats.map((stat: string, stIdx: number) => (
+                      <div key={stIdx} className="bg-[#121935]/40 border border-[#243056] p-2.5 rounded-lg text-[10px] font-medium text-indigo-300 leading-tight">
+                        {stat}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-gray-500 italic">No static ratios logged for this period.</p>
+                )}
+              </div>
+
+              <div className="md:col-span-8 bg-[#0b1020] border border-[#243056] p-4 rounded-xl overflow-hidden flex flex-col space-y-3">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <span>📋</span> Recorded Clusters
+                </h4>
+                
+                <div className="overflow-x-auto">
+                  {activeLogView.insiderTables && activeLogView.insiderTables.length > 0 ? (
+                    activeLogView.insiderTables.map((tbl: any, tblIdx: number) => (
+                      <table key={tblIdx} className="w-full text-left text-[10px] border-collapse">
+                        <thead>
+                          <tr className="border-b border-[#243056] text-gray-400">
+                            {tbl.headers?.map((hdr: string, hdrIdx: number) => (
+                              <th key={hdrIdx} className="pb-2 font-black uppercase tracking-wider">{hdr}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 text-gray-300">
+                          {tbl.rows?.map((row: any, rowIdx: number) => {
+                            const cells = Array.isArray(row) ? row : (row?.cells || []);
+                            return (
+                              <tr key={rowIdx} className="hover:bg-white/5 transition-colors">
+                                {cells.map((cell: any, cellIdx: number) => (
+                                  <td key={cellIdx} className="py-2 pr-2">
+                                    {cell.text}
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    ))
+                  ) : (
+                    <p className="text-[10px] text-gray-500 italic">No insider transaction tables logged.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Section 3: 📅 Macro Weekly Calendar Summary */}
+            <div className="bg-black/20 border border-[#243056] p-4 rounded-xl space-y-3 pt-4">
+              <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                <span>📅</span> Macro Calendar summary
+              </h4>
+              {activeLogView.macroRegime && (
+                <div className="border border-amber-500/15 bg-amber-500/5 p-3 rounded-lg flex flex-col space-y-1">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-amber-400 leading-none">Regime Focus</span>
+                  <span className="text-xs font-bold text-white font-mono leading-tight">{activeLogView.macroRegime}</span>
+                  {activeLogView.macroLede && <p className="text-[10px] text-gray-300 leading-normal mt-1">{activeLogView.macroLede}</p>}
+                </div>
+              )}
+
+              {activeLogView.macroEvents && activeLogView.macroEvents.length > 0 ? (
+                <div className="overflow-x-auto text-left">
+                  <table className="w-full text-left text-[10px] border-collapse">
+                    <thead>
+                      <tr className="border-b border-[#243056] text-gray-400">
+                        <th className="pb-2 font-black uppercase tracking-wider">When (EST)</th>
+                        <th className="pb-2 font-black uppercase tracking-wider">Indicator / Event</th>
+                        <th className="pb-2 font-black uppercase tracking-wider text-center">Reference / Consensus</th>
+                        <th className="pb-2 font-black uppercase tracking-wider text-right">Delta / Release</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 text-gray-300">
+                      {activeLogView.macroEvents.map((ev: any, evIdx: number) => (
+                        <tr key={evIdx} className="hover:bg-white/5 transition-colors align-top">
+                          <td className="py-2 font-mono text-purple-400 font-bold whitespace-nowrap">{ev.when}</td>
+                          <td className="py-2 font-bold pr-3">{ev.kl}</td>
+                          <td className="py-2 text-center text-gray-300 font-mono pr-2">{ev.kv}</td>
+                          <td className={cn(
+                            "py-2 text-right font-mono font-bold",
+                            ev.className?.includes("pos") ? "text-emerald-400" :
+                            ev.className?.includes("neg") ? "text-red-400" : "text-amber-400"
+                          )}>{ev.kd || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-[10px] text-gray-500 italic">No weekly macro events logged in log entry.</p>
+              )}
+            </div>
+
+          </div>
+        ) : activePreviewReport ? (
           viewMode === 'iframe' ? (
             <div className={cn(
               "w-full relative bg-black shadow-inner overflow-hidden",
@@ -1490,212 +1677,6 @@ ${reportsContext || "No reports have been uploaded yet. Encourage the user to dr
           </>
         ) : previewCanvas;
       })()}
-
-      {/* Floating AI Companion Trigger Badge (Persistent Toggle) */}
-      {typeof (window as any).triggerUniversalAiInquiry !== 'function' && (
-        <div className={cn(
-          "fixed bottom-6 right-6 flex flex-col items-end gap-2 text-right pointer-events-none transition-all duration-300",
-          isImmersiveReaderOpen ? "z-[110]" : "z-40"
-        )}>
-          {/* Help tooltip pop */}
-          {!isAiPanelOpen && (
-            <span className="bg-[#121935] border border-[#243056] text-[#cfd8ff] text-[9px] font-bold uppercase py-1 px-2.5 rounded-lg shadow-xl font-mono tracking-wider animate-bounce select-none pointer-events-auto">
-              ⚡ Tap Report lines to Ask AI
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setIsAiPanelOpen(!isAiPanelOpen);
-            }}
-            className="pointer-events-auto bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold flex items-center gap-2 p-3 sm:px-4 rounded-full shadow-2xl transition-all hover:scale-105 active:scale-95 border border-[#cfd8ff]/20 cursor-pointer"
-          >
-            <div className="relative">
-              <Sparkles className="w-5 h-5 text-amber-300 animate-pulse" />
-              {chatLoading && (
-                <span className="absolute -top-1 -right-1 block h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-[#0b1020] animate-ping" />
-              )}
-            </div>
-            <span className="text-xs tracking-wider hidden sm:inline uppercase font-bold">Trends Companion {isAiPanelOpen ? "Close" : "Open"}</span>
-          </button>
-        </div>
-      )}
-
-      {/* Floating / Docked AI Companion Panel Sheet */}
-      {typeof (window as any).triggerUniversalAiInquiry !== 'function' && isAiPanelOpen && (
-        <div className={cn(
-          "fixed bottom-0 right-0 bg-[#121935] shadow-2xl flex flex-col overflow-hidden transition-all duration-300 transform translate-y-0",
-          isImmersiveReaderOpen
-            ? "inset-x-0 bottom-0 top-[10px] sm:top-auto sm:right-6 sm:bottom-6 sm:left-auto sm:w-[480px] sm:h-[650px] border-t border-[#243056] sm:border sm:rounded-3xl rounded-t-3xl z-[120]"
-            : "w-full sm:w-[480px] h-[75vh] sm:h-[620px] bottom-0 right-0 sm:bottom-6 sm:right-6 border-t sm:border border-[#243056] rounded-t-3xl sm:rounded-3xl z-50"
-        )}>
-          
-          {/* Header */}
-          <div className="bg-[#1a2347] px-4 py-3.5 border-b border-[#243056] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="p-1 w-7 h-7 bg-purple-500/10 rounded-lg border border-purple-500/20 flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-amber-400 animate-pulse" />
-              </div>
-              <div className="text-left">
-                <h4 className="text-xs font-black text-white uppercase tracking-wider">Trends AI Quick Desk</h4>
-                <p className="text-[9px] text-emerald-400 font-mono font-medium flex items-center gap-1 leading-none mt-0.5">
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                  Live Sync Companion
-                </p>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setChatMessages([
-                    { role: 'assistant', content: '📊 Ask me any quantitative inquiries regarding your active high-fidelity report snapshot. Tab any row, news badge, or event to begin!' }
-                  ]);
-                }}
-                className="p-1 px-2 text-[9px] uppercase font-black tracking-wider text-gray-400 bg-black/40 hover:bg-black/60 rounded-lg hover:text-white transition-all cursor-pointer border border-[#243056]/40"
-                title="Clear Desk Messages"
-              >
-                Reset
-              </button>
-              
-              <button
-                type="button"
-                onClick={() => setIsAiPanelOpen(false)}
-                className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/5 transition-all cursor-pointer"
-                title="Collapse Companion"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          {/* Chat Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#0b1020] text-left select-text scrollbar-thin scrollbar-thumb-white/5">
-            {chatMessages.map((msg, idx) => {
-              const isUser = msg.role === 'user';
-              return (
-                <div key={idx} className={cn(
-                  "flex flex-col max-w-[90%] sm:max-w-[85%] rounded-xl p-3.5 text-[11px] leading-relaxed transition-all shadow-md",
-                  isUser 
-                    ? "bg-[#cfd8ff]/10 text-white border border-[#243056] ml-auto rounded-tr-none font-medium whitespace-pre-wrap" 
-                    : "bg-[#1f2a55]/60 text-[#cfd8ff] border border-blue-500/15 rounded-tl-none"
-                )}>
-                  <div className="flex items-center justify-between gap-2 mb-1.5 border-b border-white/5 pb-1 opacity-65">
-                    <span className="text-[8px] font-mono uppercase tracking-widest font-bold text-[#cfd8ff]">
-                      {isUser ? 'Client Request' : 'Trends Studio Analysis'}
-                    </span>
-                    <span className="text-[8px] opacity-40 font-mono">
-                      {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  
-                  {isUser ? (
-                    <div>{msg.content}</div>
-                  ) : (
-                    <div className="prose prose-invert max-w-none text-[11px] text-[#cfd8ff] space-y-2">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          h1: ({ children, ...props }) => <h1 className="text-xs font-black text-white mt-3 mb-1.5 uppercase tracking-wider border-b border-indigo-500/20 pb-0.5" {...props}>{children}</h1>,
-                          h2: ({ children, ...props }) => <h2 className="text-[11px] font-black text-white mt-2.5 mb-1.5 uppercase tracking-wider" {...props}>{children}</h2>,
-                          h3: ({ children, ...props }) => <h3 className="text-[10px] font-black text-amber-400 mt-2.5 mb-1" {...props}>{children}</h3>,
-                          p: ({ children, ...props }) => <p className="text-[11px] leading-relaxed mb-2 text-[#cfd8ff]/90" {...props}>{children}</p>,
-                          ul: ({ children, ...props }) => <ul className="list-disc pl-4 mb-2 space-y-1" {...props}>{children}</ul>,
-                          ol: ({ children, ...props }) => <ol className="list-decimal pl-4 mb-2 space-y-1" {...props}>{children}</ol>,
-                          li: ({ children, ...props }) => <li className="text-[11px] text-[#cfd8ff]/90 leading-relaxed" {...props}>{children}</li>,
-                          strong: ({ children, ...props }) => <strong className="font-extrabold text-white animate-pulse" {...props}>{children}</strong>,
-                          em: ({ children, ...props }) => <em className="italic text-indigo-300 font-medium" {...props}>{children}</em>,
-                          table: ({ children, ...props }) => (
-                            <div className="overflow-x-auto w-full my-3 border border-indigo-500/20 rounded-xl bg-black/40">
-                              <table className="w-full text-left border-collapse text-[10px] min-w-[240px]" {...props}>{children}</table>
-                            </div>
-                          ),
-                          thead: ({ children, ...props }) => <thead className="bg-[#1f2a55]/60 border-b border-[#243056]" {...props}>{children}</thead>,
-                          th: ({ children, ...props }) => <th className="p-2 font-black font-mono text-white uppercase tracking-wider border border-[#243056]/40 text-[9px]" {...props}>{children}</th>,
-                          tbody: ({ children, ...props }) => <tbody className="divide-y divide-[#243056]/30" {...props}>{children}</tbody>,
-                          tr: ({ children, ...props }) => <tr className="hover:bg-indigo-500/5 odd:bg-[#1a2347]/10" {...props}>{children}</tr>,
-                          td: ({ children, ...props }) => <td className="p-2 font-mono text-[#cfd8ff]/90 border border-[#243056]/20" {...props}>{children}</td>,
-                          code: ({ className, children, ...props }: any) => {
-                            const isMultiline = String(children || '').includes('\n');
-                            return !isMultiline ? (
-                              <code className="font-mono bg-black/50 px-1 py-0.5 rounded text-[10px] text-[#ecc94b] font-bold" {...props}>{children}</code>
-                            ) : (
-                              <pre className="bg-black/60 p-2.5 rounded-xl border border-[#243056]/50 overflow-x-auto my-2">
-                                <code className={cn("font-mono text-[10px] text-emerald-400 block", className)} {...props}>{children}</code>
-                              </pre>
-                            );
-                          }
-                        }}
-                      >
-                        {msg.content}
-                      </ReactMarkdown>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            
-            {chatLoading && (
-              <div className="bg-[#1f2a55]/30 text-[#cfd8ff] border border-blue-500/10 rounded-xl rounded-tl-none p-3 max-w-[85%] flex items-center gap-2 text-xs">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
-                <span className="font-mono text-[9px] uppercase tracking-wide">Synthesizing trends...</span>
-              </div>
-            )}
-          </div>
-
-          {/* Helper Suggestions Box inside Quick Drawer */}
-          <div className="px-3.5 py-2.5 bg-[#121935] border-t border-[#243056]/30 flex gap-2 overflow-x-auto select-none no-scrollbar items-center">
-            <span className="text-[8px] font-black uppercase text-gray-500 tracking-wider flex-shrink-0 font-mono">Presets:</span>
-            <button 
-              onClick={() => handleApplyPresetQuestion("What are the core winners over the last week?")}
-              className="text-[9px] px-2 py-1 border border-white/5 font-extrabold rounded-lg bg-black/20 text-[#cfd8ff] hover:bg-[#cfd8ff]/10 hover:text-white transition-all whitespace-nowrap"
-            >
-              🏆 Winners Check
-            </button>
-            <button 
-              onClick={() => handleApplyPresetQuestion("Assess the Brent crude oil trend and escalation impacts")}
-              className="text-[9px] px-2 py-1 border border-white/5 font-extrabold rounded-lg bg-[#ccbc33]/20 text-[#ecc94b] hover:bg-[#cfd8ff]/10 hover:text-white transition-all whitespace-nowrap"
-            >
-              🛢️ Oil & Risks
-            </button>
-            <button 
-              onClick={() => handleApplyPresetQuestion("Compare cryptocurrency safe haven behavior with gold")}
-              className="text-[9px] px-2 py-1 border border-white/5 font-extrabold rounded-lg bg-black/20 text-[#cfd8ff] hover:bg-[#cfd8ff]/10 hover:text-white transition-all whitespace-nowrap"
-            >
-              🪙 Crypto vs Gold
-            </button>
-          </div>
-
-          {/* Form input */}
-          <form 
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!userInput.trim()) return;
-              triggerInstantAiInquiry(userInput.trim());
-            }}
-            className="p-3 bg-[#121935] border-t border-[#243056] flex gap-2"
-          >
-            <input 
-              type="text"
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              disabled={chatLoading}
-              placeholder="Ask Companion follow-up..."
-              className="flex-1 bg-black/40 border border-[#243056] px-3.5 py-2 text-xs rounded-xl focus:ring-1 focus:ring-indigo-500 outline-none text-white placeholder-gray-500 font-medium"
-            />
-            <button
-              type="submit"
-              disabled={chatLoading || !userInput.trim()}
-              className="p-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center cursor-pointer disabled:opacity-40"
-            >
-              <Send className="w-3.5 h-3.5" />
-            </button>
-          </form>
-        </div>
-      )}
 
     </div>
   );

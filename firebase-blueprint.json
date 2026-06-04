@@ -78,6 +78,21 @@
         "timestamp": { "type": "string", "format": "date-time", "description": "The exact time when the document was published inside the archive database." }
       },
       "required": ["userId", "reportType", "reportDate", "title", "htmlContent", "plainText", "timestamp"]
+    },
+    "DailyNewsLog": {
+      "title": "DailyNewsLog",
+      "description": "A persistent, extracted log of daily market news including Action Summary, Insider Cluster info, and Macro calendar elements.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Registered owner UID." },
+        "reportDate": { "type": "string", "description": "Calendar date for the logged context (YYYY-MM-DD)." },
+        "title": { "type": "string", "description": "Main title of the daily news log." },
+        "actionSummary": { "type": "object", "description": "Map containing arrays of buy signals, sell signals, and watchlist targets." },
+        "insiderInfo": { "type": "object", "description": "Map containing insider statistical benchmarks and tabular listings." },
+        "macroCalendar": { "type": "object", "description": "Map containing weekly macroeconomic indicators and events." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Exact creation/upload server timestamp." }
+      },
+      "required": ["userId", "reportDate", "title", "timestamp"]
     }
   },
   "firestore": {
@@ -88,6 +103,10 @@
     "/uploaded_html_reports/{reportId}": {
       "schema": "UploadedHtmlReport",
       "description": "Rolling multi-day reports uploaded as pure high-fidelity HTML templates."
+    },
+    "/daily_news_logs/{logId}": {
+      "schema": "DailyNewsLog",
+      "description": "Extracted historic insights, macro events, buy/sell targets, and insider cluster activity logs."
     },
     "/users/{userId}": {
       "schema": "UserProfile",

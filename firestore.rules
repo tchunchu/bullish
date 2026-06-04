@@ -56,6 +56,14 @@ service cloud.firestore {
         && data.timestamp == request.time;
     }
 
+    function isValidDailyNewsLog(data) {
+      return data.keys().hasAll(['userId', 'reportDate', 'title', 'timestamp'])
+        && data.userId == request.auth.uid
+        && data.reportDate is string && data.reportDate.size() <= 64
+        && data.title is string && data.title.size() <= 256
+        && data.timestamp == request.time;
+    }
+
     function isValidStockTrack(data) {
       return data.keys().hasAll(['userId', 'ticker', 'analysisDate', 'suggestion', 'entryPrice', 'timestamp'])
         && data.userId == request.auth.uid
@@ -107,6 +115,13 @@ service cloud.firestore {
       allow get: if isOwner(existing().userId) && isValidId(reportId);
       allow list: if isOwner(resource.data.userId); 
       allow create, update: if isVerified() && isValidId(reportId) && isValidUploadedHtmlReport(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /daily_news_logs/{logId} {
+      allow get: if isOwner(existing().userId) && isValidId(logId);
+      allow list: if isOwner(resource.data.userId); 
+      allow create, update: if isVerified() && isValidId(logId) && isValidDailyNewsLog(incoming());
       allow delete: if isOwner(existing().userId);
     }
 

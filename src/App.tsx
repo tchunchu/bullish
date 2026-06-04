@@ -4050,7 +4050,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
     const queryParams = new URLSearchParams({
       horizon: screenHorizon,
-      tickers: screenIndex === 'watchlist' ? watchlistTickers : (screenIndex === 'custom' ? screenTickers : screenTickers),
+      tickers: screenIndex === 'watchlist' ? watchlistTickers : (screenIndex === 'custom' ? screenTickers : ""),
       index: screenIndex,
       screenerType: screenerMode,
       topN: (screenIndex === 'watchlist' || screenIndex === 'custom' ? "200" : "150") // fetch more to allow client-side raw limit
