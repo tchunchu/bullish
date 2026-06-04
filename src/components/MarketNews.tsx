@@ -40,11 +40,13 @@ import {
   setDoc, 
   doc, 
   deleteDoc, 
+  getDocs,
   serverTimestamp 
 } from 'firebase/firestore';
 import { ai, MODELS } from '../lib/gemini';
 import { UploadedHtmlReport, DailyNewsLog } from '../types';
 import { BeautifulNewsReader } from './BeautifulNewsReader';
+import { parseReportData } from './reportParser';
 
 function cn(...classes: any[]) {
   return classes.filter(Boolean).filter(Boolean).join(' ');
@@ -84,6 +86,37 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   console.error('Firestore Error: ', JSON.stringify(errInfo));
 }
 
+// Helper to compare dates/timestamps of different formats for descending sort
+function comparePayloadDateTimes(a: any, b: any) {
+  let timeA = 0;
+  if (a.generatedUtc) {
+    timeA = new Date(a.generatedUtc).getTime();
+  } else if (a.timestamp) {
+    if (typeof a.timestamp.toMillis === 'function') {
+      timeA = a.timestamp.toMillis();
+    } else {
+      timeA = new Date(a.timestamp).getTime();
+    }
+  } else if (a.reportDate) {
+    timeA = new Date(a.reportDate).getTime();
+  }
+
+  let timeB = 0;
+  if (b.generatedUtc) {
+    timeB = new Date(b.generatedUtc).getTime();
+  } else if (b.timestamp) {
+    if (typeof b.timestamp.toMillis === 'function') {
+      timeB = b.timestamp.toMillis();
+    } else {
+      timeB = new Date(b.timestamp).getTime();
+    }
+  } else if (b.reportDate) {
+    timeB = new Date(b.reportDate).getTime();
+  }
+
+  return timeB - timeA;
+}
+
 // Strip HTML tags to create lightweight text summaries for context ingestion
 function extractPlainTextFromHtml(html: string): string {
   let clean = html.replace(/<style[\s\S]*?<\/style>/gi, "");
@@ -113,7 +146,7 @@ function extractPlainTextFromHtml(html: string): string {
 }
 
 // Dynamic client-side parser to translate offline high-fidelity HTML templates to native responsive objects
-function parseReportData(html: string) {
+function parseReportDataOld(html: string) {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
@@ -124,12 +157,15 @@ function parseReportData(html: string) {
     const title = doc.querySelector("h1")?.textContent || "Market Beat Report";
     const sub = doc.querySelector(".sub")?.textContent || "";
 
-    // Parse timestamp and generatedUtc
-    const stampEl = doc.querySelector(".stamp") || doc.querySelector(".hero .stamp");
+    // Parse timestamp and generatedUtc with dynamic extraction and custom fallback
+    const stampEl = doc.querySelector(".stamp") || doc.querySelector(".hero .stamp") || doc.querySelector("[class*='stamp']");
     let reportTimestamp = "";
     let generatedUtc = "";
     if (stampEl) {
       reportTimestamp = stampEl.querySelector("b")?.textContent?.trim() || "";
+      if (!reportTimestamp) {
+        reportTimestamp = stampEl.textContent?.replace(/Report timestamp:\s*/i, "").trim() || "";
+      }
       const spanText = stampEl.querySelector("span")?.textContent || "";
       const genMatch = spanText.match(/generated\s+([0-9a-zA-Z-.:_Z]+)/i);
       if (genMatch && genMatch[1]) {
@@ -137,16 +173,48 @@ function parseReportData(html: string) {
       }
     }
     if (!reportTimestamp) {
-      const stampMatch = html.match(/Report timestamp:\s*<b>([\s\S]*?)<\/b>/i);
+      const stampMatch = html.match(/Report timestamp:\s*<b>([\s\S]*?)<\/b>/i) || html.match(/Report timestamp:\s*([^<)\n\r]+)/i);
       if (stampMatch && stampMatch[1]) {
         reportTimestamp = stampMatch[1].trim();
       }
     }
+    if (!reportTimestamp) {
+      // Look for emoji 🕐 and get text after it
+      const matchClock = html.match(/🕐\s*([^<)\n\r]+)/i);
+      if (matchClock && matchClock[1]) {
+        reportTimestamp = matchClock[1].trim();
+      }
+    }
     if (!generatedUtc) {
-      const genMatch = html.match(/\(generated\s+([0-9a-zA-Z.:T_-]+)\)/i);
+      const genMatch = html.match(/\(generated\s+([0-9a-zA-Z.:T_-]+)\)/i) || html.match(/generated\s+([0-9a-zA-Z.:T_-]+)/i);
       if (genMatch && genMatch[1]) {
         generatedUtc = genMatch[1].trim();
       }
+    }
+    if (!reportTimestamp) {
+      // Find date inside of title
+      const titleEl = doc.querySelector("title") || doc.querySelector("h1");
+      const titleText = titleEl?.textContent || "";
+      const tDateMatch = titleText.match(/\b\d{4}-\d{2}-\d{2}\b/);
+      if (tDateMatch) {
+        reportTimestamp = tDateMatch[0];
+      }
+    }
+    // Final fallback to uploaded time if we cannot find it anywhere
+    if (!reportTimestamp) {
+      const d = new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      let hours = d.getHours();
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const ampm = hours >= 12 ? 'pm' : 'am';
+      hours = hours % 12;
+      hours = hours ? hours : 12;
+      reportTimestamp = `${yyyy}-${mm}-${dd} · ${hours}:${minutes}${ampm} ET (Upload fallback)`;
+    }
+    if (!generatedUtc) {
+      generatedUtc = new Date().toISOString();
     }
 
     // Common mood cells
@@ -247,6 +315,27 @@ function parseReportData(html: string) {
         className: el.className
       });
     });
+
+    // ROBUST FULL-CONTENT EXTRACTION: Extract all text sections of the macro block
+    const macroEl = doc.querySelector(".macro");
+    let macroHtml = "";
+    let macroFullText = "";
+    let macroTextLines: string[] = [];
+    if (macroEl) {
+      macroHtml = macroEl.innerHTML || "";
+      macroFullText = macroEl.textContent || "";
+      // Gather lines inside paragraphs, list items or general containers
+      macroEl.querySelectorAll("p, li, .lede, .regime, .kev").forEach(el => {
+        // Exclude parent container texts or nested redundancy
+        if (el.children.length > 2 && !el.classList.contains("kev")) return;
+        const text = el.textContent?.trim() || "";
+        if (text && text.length > 5 && !macroTextLines.includes(text)) {
+          // Clean text line
+          const cleanedText = text.replace(/\s+/g, " ");
+          if (cleanedText && !macroTextLines.includes(cleanedText)) macroTextLines.push(cleanedText);
+        }
+      });
+    }
 
     // Scoreboard ticker rankings inside tables
     const scoreTables: any[] = [];
@@ -437,6 +526,9 @@ function parseReportData(html: string) {
       macroRegime,
       macroLede,
       macroEvents,
+      macroHtml,
+      macroFullText,
+      macroTextLines,
       scoreTables,
       bottomLineData,
       actionSummaryData,
@@ -492,20 +584,39 @@ export function MarketNews() {
     return () => unsubscribe();
   }, []);
 
-  // Safe manual local fallback reader
+  // Safe manual local fallback reader with auto-pruning (more than 2 days old)
   const loadLocalReports = () => {
-    const keys = Object.keys(localStorage).filter(k => k.startsWith('local_html_report_') || k === 'local_latest_daily_report');
+    const keys = Object.keys(localStorage).filter(k => 
+      k.startsWith('local_html_report_') || 
+      k === 'local_latest_daily_report' ||
+      k === 'local_latest_current_report' ||
+      k === 'local_latest_score_report' ||
+      k === 'local_latest_scoreboard_report' ||
+      k.startsWith('local_latest_')
+    );
     const items: UploadedHtmlReport[] = [];
+    const now = Date.now();
+    const twoDaysInMs = 2 * 24 * 60 * 60 * 1000;
+
     keys.forEach(k => {
       try {
         const item = JSON.parse(localStorage.getItem(k) || '');
-        if (item) items.push(item);
+        if (item) {
+          const uploadTime = item.timestamp ? new Date(item.timestamp).getTime() : new Date(item.reportDate).getTime();
+          if (now - uploadTime > twoDaysInMs) {
+            localStorage.removeItem(k);
+          } else {
+            // Ensure ID is set for local items
+            if (!item.id && k) item.id = k;
+            items.push(item);
+          }
+        }
       } catch (err) {
         console.warn("Could not read local report item:", k, err);
       }
     });
-    // Sort descending by date
-    items.sort((a, b) => b.reportDate.localeCompare(a.reportDate));
+    // Sort descending by calculated timestamp/UTC values
+    items.sort((a, b) => comparePayloadDateTimes(a, b));
     setLocalArchive(items);
   };
 
@@ -521,7 +632,7 @@ export function MarketNews() {
         console.warn("Could not read local log item:", k, err);
       }
     });
-    items.sort((a, b) => b.reportDate.localeCompare(a.reportDate));
+    items.sort((a, b) => comparePayloadDateTimes(a, b));
     setLocalLogs(items);
   };
 
@@ -533,7 +644,7 @@ export function MarketNews() {
       return;
     }
 
-    // A. Stream the uploaded reports (Latest only)
+    // A. Stream the uploaded reports (Latest only) with auto-pruning
     const reportsRef = collection(db, "uploaded_html_reports");
     const qReports = query(
       reportsRef,
@@ -542,16 +653,44 @@ export function MarketNews() {
 
     const unsubscribeReports = onSnapshot(qReports, (snapshot) => {
       const list: UploadedHtmlReport[] = [];
+      const now = Date.now();
+      const twoDaysInMs = 2 * 24 * 60 * 60 * 1000;
+
       snapshot.forEach((docSnap) => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as UploadedHtmlReport);
+        const data = docSnap.data();
+        const docId = docSnap.id;
+
+        let uploadTime = now;
+        if (data.timestamp) {
+          if (typeof data.timestamp.toMillis === 'function') {
+            uploadTime = data.timestamp.toMillis();
+          } else {
+            uploadTime = new Date(data.timestamp).getTime();
+          }
+        } else if (data.reportDate) {
+          uploadTime = new Date(data.reportDate).getTime();
+        }
+
+        if (now - uploadTime > twoDaysInMs) {
+          // Cloud auto pruning older than 2 days
+          deleteDoc(doc(db, "uploaded_html_reports", docId)).catch(err => {
+            console.error("Auto pruning failed for report doc:", docId, err);
+          });
+        } else {
+          list.push({ id: docId, ...data } as UploadedHtmlReport);
+        }
       });
+      list.sort((a, b) => comparePayloadDateTimes(a, b));
       setUploadedReports(list);
 
       // Default active preview to latest if not set
-      if (list.length > 0 && !activePreviewReport) {
-        // Sort descending by date just to be seguro
-        const sortedList = [...list].sort((a, b) => b.reportDate.localeCompare(a.reportDate));
-        setActivePreviewReport(sortedList[0]);
+      if (list.length > 0) {
+        const sortedList = [...list].sort((a, b) => comparePayloadDateTimes(a, b));
+        if (!activePreviewReport || !list.find(r => r.id === activePreviewReport.id)) {
+          setActivePreviewReport(sortedList[0]);
+        }
+      } else {
+        setActivePreviewReport(null);
       }
     }, (err) => {
       console.error("onSnapshot reports error:", err);
@@ -570,7 +709,7 @@ export function MarketNews() {
       snapshot.forEach((docSnap) => {
         list.push({ id: docSnap.id, ...docSnap.data() } as DailyNewsLog);
       });
-      list.sort((a, b) => b.reportDate.localeCompare(a.reportDate));
+      list.sort((a, b) => comparePayloadDateTimes(a, b));
       setDailyNewsLogs(list);
     }, (err) => {
       console.error("onSnapshot logs error:", err);
@@ -706,6 +845,9 @@ export function MarketNews() {
           macroRegime: parsed?.macroRegime || "",
           macroLede: parsed?.macroLede || "",
           macroEvents: parsed?.macroEvents || [],
+          macroHtml: parsed?.macroHtml || "",
+          macroFullText: parsed?.macroFullText || "",
+          macroTextLines: parsed?.macroTextLines || [],
           actionSummary: parsed?.actionSummaryData || null,
           insiderStats: parsed?.insidersData?.stats || [],
           insiderTables: parsed?.insidersData?.tables || [],
@@ -768,6 +910,9 @@ export function MarketNews() {
         macroRegime: parsed?.macroRegime || "",
         macroLede: parsed?.macroLede || "",
         macroEvents: parsed?.macroEvents || [],
+        macroHtml: parsed?.macroHtml || "",
+        macroFullText: parsed?.macroFullText || "",
+        macroTextLines: parsed?.macroTextLines || [],
         actionSummary: parsed?.actionSummaryData || null,
         insiderStats: parsed?.insidersData?.stats || [],
         insiderTables: parsed?.insidersData?.tables || [],
@@ -796,15 +941,34 @@ export function MarketNews() {
 
   // Remove report item from archive
   const handleDeleteReport = async (report: UploadedHtmlReport) => {
-    if (!confirm(`Are you absolutely sure you want to delete "${report.title}" on date ${report.reportDate}?`)) return;
+    // Note: window.confirm is removed because it is blocked in iframes
     
     setErrorMsg("");
     setSuccessMsg("");
 
     if (!currentUser) {
       try {
-        const localKey = `local_latest_daily_report`;
-        localStorage.removeItem(localKey);
+        const keysToRemove = [
+          `local_latest_${report.reportType}_report`,
+          `local_latest_daily_report`,
+          `local_latest_score_report`,
+          `local_latest_scoreboard_report`,
+          `local_latest_current_report`,
+          `local_latest_status_report`,
+          report.id
+        ];
+
+        keysToRemove.forEach(k => {
+          if (k) localStorage.removeItem(k);
+        });
+
+        // Search dates and prefix matches for reports ONLY
+        Object.keys(localStorage).forEach(k => {
+          if (k.startsWith('local_html_report_') && k.includes(report.reportDate || "")) {
+            localStorage.removeItem(k);
+          }
+        });
+
         setSuccessMsg(`Deleted from local cache: ${report.title}`);
         loadLocalReports();
         if (activePreviewReport?.id === report.id) {
@@ -820,7 +984,9 @@ export function MarketNews() {
       if (!report.id) return;
       const docRef = doc(db, "uploaded_html_reports", report.id);
       await deleteDoc(docRef);
-      setSuccessMsg(`Successfully purged latest report: ${report.reportDate}`);
+      
+      setUploadedReports(prev => prev.filter(r => r.id !== report.id));
+      setSuccessMsg(`Successfully purged report: ${report.reportDate}`);
       if (activePreviewReport?.id === report.id) {
         setActivePreviewReport(null);
       }
@@ -832,7 +998,7 @@ export function MarketNews() {
 
   // Remove daily log item from archive tracking feed
   const handleDeleteDailyLog = async (log: DailyNewsLog) => {
-    if (!confirm(`Are you absolutely sure you want to delete the daily log for date ${log.reportDate}?`)) return;
+    // Note: window.confirm is removed because it is blocked in iframes
 
     setErrorMsg("");
     setSuccessMsg("");
@@ -856,6 +1022,7 @@ export function MarketNews() {
     try {
       if (!log.id) return;
       await deleteDoc(doc(db, "daily_news_logs", log.id));
+      setDailyNewsLogs(prev => prev.filter(l => l.id !== log.id));
       setSuccessMsg(`Successfully deleted daily log for ${log.reportDate}`);
       if (activeLogView?.id === log.id) {
         setActiveLogView(null);
@@ -882,6 +1049,9 @@ export function MarketNews() {
           macroRegime: parsed?.macroRegime || "",
           macroLede: parsed?.macroLede || "",
           macroEvents: parsed?.macroEvents || [],
+          macroHtml: parsed?.macroHtml || "",
+          macroFullText: parsed?.macroFullText || "",
+          macroTextLines: parsed?.macroTextLines || [],
           actionSummary: parsed?.actionSummaryData || null,
           insiderStats: parsed?.insidersData?.stats || [],
           insiderTables: parsed?.insidersData?.tables || [],
@@ -902,6 +1072,9 @@ export function MarketNews() {
         macroRegime: parsed?.macroRegime || "",
         macroLede: parsed?.macroLede || "",
         macroEvents: parsed?.macroEvents || [],
+        macroHtml: parsed?.macroHtml || "",
+        macroFullText: parsed?.macroFullText || "",
+        macroTextLines: parsed?.macroTextLines || [],
         actionSummary: parsed?.actionSummaryData || null,
         insiderStats: parsed?.insidersData?.stats || [],
         insiderTables: parsed?.insidersData?.tables || [],
@@ -1090,28 +1263,38 @@ export function MarketNews() {
 
       {/* Parser Stage block */}
       {pendingUpload && (
-        <div className="bg-[#121935] border border-amber-500/30 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-fade-in shadow-xl">
-          <div className="flex items-center gap-3">
-            <div className="p-3 rounded-lg bg-emerald-500/10 text-emerald-400">
+        <div className="bg-[#121935] border border-amber-500/30 p-5 rounded-2xl flex flex-col md:flex-col lg:flex-row lg:items-center justify-between gap-4 animate-fade-in shadow-xl text-left w-full">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-1 w-full">
+            <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-400 self-start sm:self-center">
               <Newspaper className="w-6 h-6" />
             </div>
-            <div className="text-left">
-              <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#f5b21a]">
+            <div className="flex-1 w-full space-y-2">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#f5b21a] block">
                 Pending Document Ready to Publish
               </span>
-              <h4 className="text-sm font-bold text-white leading-tight mt-0.5">
-                {pendingUpload.title}
-              </h4>
-              <p className="text-[11px] text-[#9aa3c7] font-mono mt-0.5">
-                Inferred Date: <span className="text-white font-bold">{pendingUpload.reportDate}</span> | Word Count: {pendingUpload.plainText.split(/\s+/).length}
+              <div className="space-y-1 w-full max-w-xl">
+                <label className="text-[10px] uppercase font-bold tracking-wider text-purple-400 block" htmlFor="custom-report-title-input">
+                  Customize Report & Log Title (Name)
+                </label>
+                <input
+                  type="text"
+                  id="custom-report-title-input"
+                  value={pendingUpload.title}
+                  onChange={(e) => setPendingUpload(prev => prev ? { ...prev, title: e.target.value } : null)}
+                  className="w-full px-3 py-2 text-xs bg-black/40 border border-[#243056] text-white rounded-xl focus:outline-none focus:border-[#1ea55d] transition-all font-bold font-sans"
+                  placeholder="Enter a custom name for this report and its highlights tracking logs..."
+                />
+              </div>
+              <p className="text-[10px] text-[#9aa3c7] font-mono">
+                Inferred Date: <span className="text-white font-bold">{pendingUpload.reportDate}</span> | Word Count: <span className="text-white font-medium">{pendingUpload.plainText.split(/\s+/).length}</span>
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 self-end lg:self-center">
             <button 
               onClick={() => setPendingUpload(null)} 
-              className="px-3.5 py-1.5 text-xs text-[#9aa3c7] hover:text-white border border-[#243056] hover:bg-white/5 rounded-xl transition-all"
+              className="px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider text-[#9aa3c7] hover:text-white border border-[#243056] hover:bg-white/5 rounded-xl transition-all cursor-pointer"
             >
               Cancel
             </button>
@@ -1347,6 +1530,15 @@ export function MarketNews() {
                       </option>
                     ))}
                   </select>
+                  {activePreviewReport && (
+                    <button
+                      onClick={() => handleDeleteReport(activePreviewReport)}
+                      className="text-red-400 hover:text-red-300 ml-1.5 hover:bg-red-500/10 p-1 rounded transition-colors cursor-pointer"
+                      title="Purge active report from canvas"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1438,6 +1630,15 @@ export function MarketNews() {
                   >
                     Download Export <ArrowUpRight className="w-2.5 h-2.5" />
                   </a>
+
+                  <button
+                    onClick={() => handleDeleteReport(activePreviewReport)}
+                    className="flex items-center gap-1 text-[10px] uppercase font-bold text-red-400 bg-red-500/10 border border-red-500/20 hover:border-red-500/40 hover:bg-red-500/20 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer ml-auto"
+                    title="Purge Active Report from Studio Canvas"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" />
+                    <span>Delete Canvas Report</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -1611,7 +1812,21 @@ export function MarketNews() {
                   </table>
                 </div>
               ) : (
-                <p className="text-[10px] text-gray-500 italic">No weekly macro events logged in log entry.</p>
+                <p className="text-[10px] text-gray-500 italic">No structured calendar events logged.</p>
+              )}
+
+              {activeLogView.macroTextLines && activeLogView.macroTextLines.length > 0 && (
+                <div className="bg-black/35 border border-[#243056]/60 p-3.5 rounded-xl space-y-2 mt-4 text-left">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-[#ecc94b] leading-none block">📝 Comprehensive Extracted Macro Sections</span>
+                  <div className="space-y-1.5 text-xs text-gray-200 font-medium font-sans max-h-[300px] overflow-y-auto scrollbar-thin pr-1">
+                    {activeLogView.macroTextLines.map((line: string, idx: number) => {
+                      if (line.toLowerCase().includes("regime") || line.toLowerCase().includes("weekly macro") || line.startsWith("🕐")) {
+                        return <p key={idx} className="text-indigo-300 font-mono text-[10px] font-extrabold mt-2.5 border-b border-[#243056]/40 pb-1 uppercase tracking-wider">{line}</p>;
+                      }
+                      return <p key={idx} className="leading-relaxed pl-2 border-l-2 border-indigo-500/25 text-gray-300 text-[11px]">{line}</p>;
+                    })}
+                  </div>
+                </div>
               )}
             </div>
 

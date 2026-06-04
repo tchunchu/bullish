@@ -1,312 +1,11 @@
 import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { UploadedHtmlReport } from '../types';
+import { parseReportData } from './reportParser';
 
 // Simple class utility 
 function cn(...classes: any[]) {
   return classes.filter(Boolean).join(' ');
-}
-
-// Dynamic client-side parser to translate offline high-fidelity HTML templates to native responsive objects
-export function parseReportData(html: string) {
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-
-    // Determine if it is scoreboard or daily news
-    const isScoreboard = html.includes("Cumulative Ticker Scoreboard") || (doc.querySelector("h1")?.textContent || "").includes("Scoreboard");
-
-    const title = doc.querySelector("h1")?.textContent || "Market Beat Report";
-    const sub = doc.querySelector(".sub")?.textContent || "";
-
-    // Common mood cells
-    const moodItems: any[] = [];
-    doc.querySelectorAll(".mood .cell").forEach(cell => {
-      moodItems.push({
-        k: cell.querySelector(".k")?.textContent?.trim() || "",
-        v: cell.querySelector(".v")?.textContent?.trim() || "",
-        d: cell.querySelector(".d")?.textContent?.trim() || "",
-        isPos: cell.querySelector(".d")?.classList.contains("pos") || false,
-        isNeg: cell.querySelector(".d")?.classList.contains("neg") || false,
-        isNeu: cell.querySelector(".d")?.classList.contains("neu") || false,
-      });
-    });
-
-    // Winners & Losers in leader section
-    const winners: string[] = [];
-    const losers: string[] = [];
-    doc.querySelectorAll(".leader .lbox.win li, .leader .lbox:first-of-type li").forEach(li => {
-      winners.push(li.textContent?.trim() || "");
-    });
-    doc.querySelectorAll(".leader .lbox.lose li, .leader .lbox:last-of-type li").forEach(li => {
-      if (!winners.includes(li.textContent?.trim() || "")) {
-        losers.push(li.textContent?.trim() || "");
-      }
-    });
-
-    // News cards
-    const newsItems: any[] = [];
-    doc.querySelectorAll(".news").forEach((news) => {
-      const heading = news.querySelector("h3")?.textContent?.trim() || "";
-      const meta = news.querySelector(".meta")?.textContent?.trim() || "";
-      const priority = news.querySelector(".pill.prio")?.textContent?.trim() || "Lv 1";
-      const category = news.querySelector(".pill.cat")?.textContent?.trim() || "News";
-      const confidence = news.querySelector(".pill.conf")?.textContent?.trim() || "High";
-      
-      // Tickers
-      const tickers: any[] = [];
-      news.querySelectorAll(".tk").forEach(tk => {
-        tickers.push({
-          text: tk.textContent?.trim() || "",
-          className: tk.className
-        });
-      });
-
-      // Levels
-      const levels: any[] = [];
-      news.querySelectorAll(".level").forEach(lvl => {
-        levels.push({
-          lh: lvl.querySelector(".lh")?.textContent?.trim() || "",
-          lc: lvl.querySelector(".lc")?.textContent?.trim() || "",
-        });
-      });
-
-      // Beneficiaries & Victims list
-      const beneficiaries: string[] = [];
-      news.querySelectorAll(".col.win li, .col:first-of-type li").forEach(li => {
-        beneficiaries.push(li.textContent?.trim() || "");
-      });
-      const victims: string[] = [];
-      news.querySelectorAll(".col.lose li, .col:last-of-type li").forEach(li => {
-        victims.push(li.textContent?.trim() || "");
-      });
-
-      // Timeline box
-      const timeline: any[] = [];
-      news.querySelectorAll(".tbox").forEach(tbox => {
-        timeline.push({
-          b: tbox.querySelector("b")?.textContent?.trim() || "",
-          text: tbox.textContent?.trim() || ""
-        });
-      });
-
-      newsItems.push({
-        heading,
-        meta,
-        priority,
-        category,
-        confidence,
-        tickers,
-        levels,
-        beneficiaries,
-        victims,
-        timeline
-      });
-    });
-
-    // Macro calendar items
-    const macroRegime = doc.querySelector(".macro .regime")?.textContent?.trim() || "";
-    const macroLede = doc.querySelector(".macro .lede")?.textContent?.trim() || "";
-    const macroEvents: any[] = [];
-    doc.querySelectorAll(".macro .kev").forEach(el => {
-      macroEvents.push({
-        when: el.querySelector(".when")?.textContent?.trim() || "",
-        kl: el.querySelector(".kl")?.textContent?.trim() || "",
-        kv: el.querySelector(".kv")?.textContent?.trim() || "",
-        kd: el.querySelector(".kd")?.textContent?.trim() || "",
-        className: el.className
-      });
-    });
-
-    // Scoreboard ticker rankings inside tables
-    const scoreTables: any[] = [];
-    doc.querySelectorAll("table").forEach((table) => {
-      if (table.closest(".insiders")) return; // Skip nested insider tables in generic processor
-      const headers: string[] = [];
-      table.querySelectorAll("th").forEach(th => headers.push(th.textContent?.trim() || ""));
-      
-      const rows: any[] = [];
-      table.querySelectorAll("tr").forEach((tr) => {
-        if (tr.querySelector("th")) return; // skip header row
-        const cells: any[] = [];
-        tr.querySelectorAll("td").forEach(td => {
-          // Capture inner styles & colorized tags
-          const text = td.textContent?.trim() || "";
-          const sparkles: any[] = [];
-          td.querySelectorAll(".cell, .tk").forEach(c => {
-            sparkles.push({
-              text: c.textContent?.trim() || "",
-              className: c.className
-            });
-          });
-          cells.push({ text, sparkles });
-        });
-        if (cells.length > 0) rows.push(cells);
-      });
-
-      // Find preceding sibling header or label
-      let prevSibling = table.previousElementSibling;
-      let label = "Metrics Panel";
-      while (prevSibling) {
-        if (prevSibling.tagName.toLowerCase().startsWith("h") || prevSibling.classList.contains("header") || prevSibling.textContent?.trim()) {
-          label = prevSibling.textContent?.trim() || "Metrics Panel";
-          break;
-        }
-        prevSibling = prevSibling.previousElementSibling;
-      }
-
-      scoreTables.push({
-        title: label,
-        headers,
-        rows
-      });
-    });
-
-    // Parse bottomLineData (🏆 Bottom Line — Who Wins Today)
-    const leaderElement = doc.querySelector(".leader");
-    let bottomLineData: any = null;
-    if (leaderElement) {
-      const winBox = leaderElement.querySelector(".lbox.win, .lbox:first-of-type");
-      const loseBox = leaderElement.querySelector(".lbox.lose, .lbox:last-of-type");
-      
-      const parsedWinners: any[] = [];
-      if (winBox) {
-        winBox.querySelectorAll("li").forEach(li => {
-          parsedWinners.push({
-            text: li.textContent?.trim() || "",
-            html: li.innerHTML,
-            medal: li.querySelector(".medal")?.textContent?.trim() || ""
-          });
-        });
-      }
-
-      const parsedLosers: any[] = [];
-      if (loseBox) {
-        loseBox.querySelectorAll("li").forEach(li => {
-          parsedLosers.push({
-            text: li.textContent?.trim() || "",
-            html: li.innerHTML,
-            medal: li.querySelector(".medal")?.textContent?.trim() || ""
-          });
-        });
-      }
-
-      bottomLineData = {
-        title: "🏆 Bottom Line — Who Wins Today",
-        winners: parsedWinners,
-        losers: parsedLosers
-      };
-    }
-
-    // Parse actionSummaryData (🎯 Action Summary)
-    const actionElement = doc.querySelector(".action");
-    let actionSummaryData: any = null;
-    if (actionElement) {
-      const cols: any[] = [];
-      actionElement.querySelectorAll(".col").forEach(col => {
-        const title = col.querySelector("h4")?.textContent?.trim() || "Signal";
-        const isWin = col.classList.contains("win") || title.toLowerCase().includes("buy") || title.toLowerCase().includes("winner");
-        const isLose = col.classList.contains("lose") || title.toLowerCase().includes("sell") || title.toLowerCase().includes("loser") || title.toLowerCase().includes("hedge");
-        
-        const items: string[] = [];
-        col.querySelectorAll("li").forEach(li => {
-          items.push(li.textContent?.trim() || "");
-        });
-
-        cols.push({
-          title,
-          isWin,
-          isLose,
-          items
-        });
-      });
-
-      actionSummaryData = {
-        title: "🎯 Action Summary",
-        cols
-      };
-    }
-
-    // Parse insidersData (🟢 Insider Cluster Buys)
-    const insidersElement = doc.querySelector(".insiders");
-    let insidersData: any = null;
-    if (insidersElement) {
-      const title = insidersElement.querySelector(".ib-title")?.textContent?.trim() || "🟢 Insider Cluster Buys";
-      const sub = insidersElement.querySelector(".ib-sub")?.textContent?.trim() || "";
-      const note = insidersElement.querySelector(".ib-note")?.textContent?.trim() || "";
-      const foot = insidersElement.querySelector(".ib-foot")?.textContent?.trim() || "";
-      
-      const stats: string[] = [];
-      insidersElement.querySelectorAll(".ib-stat").forEach(el => {
-        stats.push(el.textContent?.trim() || "");
-      });
-
-      const tables: any[] = [];
-      insidersElement.querySelectorAll("table").forEach(table => {
-        const headers: string[] = [];
-        table.querySelectorAll("th").forEach(th => headers.push(th.textContent?.trim() || ""));
-
-        const rows: any[] = [];
-        table.querySelectorAll("tr").forEach(tr => {
-          if (tr.querySelector("th")) return;
-          const cells: any[] = [];
-          tr.querySelectorAll("td").forEach(td => {
-            const sparkles: any[] = [];
-            td.querySelectorAll(".cell, .tk").forEach(c => {
-              sparkles.push({
-                text: c.textContent?.trim() || "",
-                className: c.className
-              });
-            });
-            cells.push({
-              text: td.textContent?.trim() || "",
-              links: Array.from(td.querySelectorAll("a")).map((a: any) => ({ text: a.textContent?.trim() || "", href: a.getAttribute("href") || "" })),
-              sparkles,
-              isCenter: td.getAttribute("align") === "center" || td.classList.contains("center"),
-              isRight: td.getAttribute("align") === "right" || td.classList.contains("right"),
-              isBold: td.tagName === "B" || td.querySelector("b") || td.classList.contains("bold")
-            });
-          });
-          if (cells.length > 0) rows.push(cells);
-        });
-
-        tables.push({
-          title: table.previousElementSibling?.textContent?.trim() || "",
-          headers,
-          rows
-        });
-      });
-
-      insidersData = {
-        title,
-        sub,
-        note,
-        foot,
-        stats,
-        tables
-      };
-    }
-
-    return {
-      isScoreboard,
-      title,
-      sub,
-      moodItems,
-      winners,
-      losers,
-      newsItems,
-      macroRegime,
-      macroLede,
-      macroEvents,
-      scoreTables,
-      bottomLineData,
-      actionSummaryData,
-      insidersData
-    };
-  } catch (err) {
-    console.error("parseReportData error:", err);
-    return null;
-  }
 }
 
 interface BeautifulNewsReaderProps {
@@ -530,8 +229,9 @@ export function BeautifulNewsReader({ report, triggerInstantAiInquiry, styleClas
                     </tr>
                   </thead>
                   <tbody>
-                    {table.rows.map((row: any[], rIdx: number) => {
-                      const rowText = row.map(c => c.text).filter(Boolean).join(" | ");
+                    {table.rows.map((rowItem: any, rIdx: number) => {
+                      const row = (rowItem && typeof rowItem === 'object' && 'cells' in rowItem && Array.isArray(rowItem.cells)) ? rowItem.cells : (Array.isArray(rowItem) ? rowItem : []);
+                      const rowText = row.map((c: any) => c?.text).filter(Boolean).join(" | ");
                       return (
                         <tr 
                           key={rIdx}
@@ -590,7 +290,7 @@ export function BeautifulNewsReader({ report, triggerInstantAiInquiry, styleClas
       )}
 
       {/* Macro Regime Calendar Section */}
-      {(parsed.macroRegime || parsed.macroEvents.length > 0) && (
+      {(parsed.macroRegime || parsed.macroEvents.length > 0 || parsed.macroLede || (parsed.macroTextLines && parsed.macroTextLines.length > 0)) && (
         <div className="bg-black/20 border border-[#243056] p-4 rounded-xl space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-1 border-b border-[#243056] pb-2">
             <span className="text-xs font-black text-white tracking-wide uppercase">
@@ -609,7 +309,7 @@ export function BeautifulNewsReader({ report, triggerInstantAiInquiry, styleClas
             </p>
           )}
 
-          {parsed.macroEvents.length > 0 && (
+          {parsed.macroEvents.length > 0 ? (
             <div className="space-y-3 pt-1">
               {parsed.macroEvents.map((evt, eIdx) => (
                 <div 
@@ -627,6 +327,14 @@ export function BeautifulNewsReader({ report, triggerInstantAiInquiry, styleClas
                 </div>
               ))}
             </div>
+          ) : (
+            parsed.macroTextLines && parsed.macroTextLines.length > 0 && (
+              <div className="space-y-2 pt-1">
+                {parsed.macroTextLines.map((line, idx) => (
+                  <p key={idx} className="text-xs text-[#cfd8ff] font-medium border-l-2 border-indigo-500/20 pl-2 py-0.5">{line}</p>
+                ))}
+              </div>
+            )
           )}
         </div>
       )}
@@ -655,7 +363,8 @@ export function BeautifulNewsReader({ report, triggerInstantAiInquiry, styleClas
                     </tr>
                   </thead>
                   <tbody>
-                    {tbl.rows.slice(0, 100).map((row, rIdx) => {
+                    {tbl.rows.slice(0, 100).map((rowItem, rIdx) => {
+                      const row = (rowItem && typeof rowItem === 'object' && 'cells' in rowItem && Array.isArray(rowItem.cells)) ? rowItem.cells : (Array.isArray(rowItem) ? rowItem : []);
                       const values = row.map((cellObj: any) => cellObj?.text || "").filter(Boolean).join(", ");
                       return (
                         <tr 
@@ -701,7 +410,8 @@ export function BeautifulNewsReader({ report, triggerInstantAiInquiry, styleClas
               {/* Mobile Screens: Highly responsive Screener Grid Tiles */}
               <div className="block md:hidden p-3.5 space-y-3.5 bg-black/10">
                 <div className="grid grid-cols-1 gap-3">
-                  {tbl.rows.slice(0, 100).map((row, rIdx) => {
+                  {tbl.rows.slice(0, 100).map((rowItem, rIdx) => {
+                    const row = (rowItem && typeof rowItem === 'object' && 'cells' in rowItem && Array.isArray(rowItem.cells)) ? rowItem.cells : (Array.isArray(rowItem) ? rowItem : []);
                     const mainCell = row[0];
                     const restCells = row.slice(1);
                     const mainHeader = tbl.headers[0] || "Asset";

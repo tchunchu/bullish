@@ -70,6 +70,7 @@ import {
   addDoc, 
   deleteDoc, 
   doc, 
+  getDocs,
   serverTimestamp,
   Timestamp,
   updateDoc,
@@ -2458,7 +2459,7 @@ Respond in professional, clean, scannable markdown formatting. Keep your answer 
         key={rep.id} 
         onClick={() => setActiveNewsArchiveReport(rep)}
         className={cn(
-          "p-4 rounded-2xl border cursor-pointer transition-all hover:bg-white/[0.02] text-left", 
+          "p-4 rounded-2xl border cursor-pointer transition-all hover:bg-white/[0.02] text-left relative group", 
           activeNewsArchiveReport?.id === rep.id 
             ? "bg-amber-500/10 border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.15)]" 
             : "bg-black border-white/10"
@@ -2468,6 +2469,19 @@ Respond in professional, clean, scannable markdown formatting. Keep your answer 
           <div className="text-[10px] font-mono text-amber-400 font-bold">
             {rep.reportDate || 'DAILY NEWS'}
           </div>
+          <button 
+            onClick={async (e) => {
+              e.stopPropagation();
+              await handleDeleteUploadedNewsReport(rep);
+              if (activeNewsArchiveReport?.id === rep.id) {
+                setActiveNewsArchiveReport(null);
+              }
+            }}
+            className="text-red-500/50 hover:text-red-400 p-1 -mt-1 -mr-1 transition-colors cursor-pointer"
+            title="Delete News Report"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
         </div>
         <div className="text-[11px] font-bold text-white truncate text-left font-display">
           {rep.title}
@@ -4029,7 +4043,11 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
     const unsubscribeNews = onSnapshot(nq, (snapshot) => {
       const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      docs.sort((a, b) => b.timestamp - a.timestamp);
+      docs.sort((a, b) => {
+        const timeB = getTimestampMs(b.timestamp) || (b.reportDate ? new Date(b.reportDate).getTime() : 0);
+        const timeA = getTimestampMs(a.timestamp) || (a.reportDate ? new Date(a.reportDate).getTime() : 0);
+        return timeB - timeA;
+      });
       setUploadedReports(docs);
     }, (error) => console.error("Error listening to uploaded_html_reports:", error));
 
@@ -4038,6 +4056,32 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       unsubscribeIntel();
       unsubscribeNews();
     };
+  }, [user]);
+
+  // Load uploaded HTML reports fallback for offline mode
+  useEffect(() => {
+    if (!user) {
+      const loadLocalHTMLReports = () => {
+        const keys = Object.keys(localStorage).filter(k => k.startsWith('local_html_report_') || k === 'local_latest_daily_report' || k === 'local_latest_score_report' || k === 'local_latest_current_report' || k.startsWith('local_latest_'));
+        const items: UploadedHtmlReport[] = [];
+        keys.forEach(k => {
+          try {
+            const item = JSON.parse(localStorage.getItem(k) || '');
+            if (item) {
+              if (!items.some(r => r.id === item.id || (r.reportDate === item.reportDate && r.reportType === item.reportType))) {
+                items.push(item);
+              }
+            }
+          } catch (e) {}
+        });
+        items.sort((a, b) => b.reportDate.localeCompare(a.reportDate));
+        setUploadedReports(items);
+      };
+      loadLocalHTMLReports();
+      // Listen to storage changes to keep synced
+      window.addEventListener('storage', loadLocalHTMLReports);
+      return () => window.removeEventListener('storage', loadLocalHTMLReports);
+    }
   }, [user]);
 
   const runDailyScreen = () => {
@@ -4463,16 +4507,21 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
         console.error("Failed to delete snapshot from db", e);
       }
     } else {
-      setSavedSnapshots(prev => prev.filter(snap => snap.id !== id));
+      setSavedSnapshots(prev => {
+        const updated = prev.filter(snap => snap.id !== id);
+        localStorage.setItem('vcs_snapshots', JSON.stringify(updated));
+        return updated;
+      });
     }
   };
 
   const clearSnapshots = async () => {
     if (!user) {
       setSavedSnapshots([]);
+      localStorage.setItem('vcs_snapshots', JSON.stringify([]));
       return;
     }
-    const confirm = window.confirm("Are you sure you want to clear your entire snapshot history?");
+    const confirm = true; // window.confirm("Are you sure you want to clear your entire snapshot history?");
     if (!confirm) return;
     
     try {
@@ -4524,6 +4573,43 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
       } else {
         alert("Failed to delete report. Please try again.");
       }
+    }
+  };
+
+  const handleDeleteUploadedNewsReport = async (report: UploadedHtmlReport) => {
+    // Note: window.confirm is removed because it is blocked in iframes
+    if (!user) {
+      try {
+        const potentialKeys = [
+          `local_latest_${report.reportType}_report`,
+          `local_latest_daily_report`,
+          report.id
+        ];
+        potentialKeys.forEach(k => {
+          if (k) localStorage.removeItem(k);
+        });
+
+        // Search keys
+        Object.keys(localStorage).forEach(k => {
+          if (k.startsWith('local_html_report_') && k.includes(report.reportDate)) {
+            localStorage.removeItem(k);
+          }
+        });
+
+        setUploadedReports(prev => prev.filter(r => r.id !== report.id));
+      } catch (err: any) {
+        alert(`Error: ${err.message}`);
+      }
+      return;
+    }
+
+    try {
+      if (report.id) {
+        await deleteDoc(doc(db, 'uploaded_html_reports', report.id));
+        setUploadedReports(prev => prev.filter(r => r.id !== report.id));
+      }
+    } catch (err: any) {
+      alert(`Failed to delete: ${err.message}`);
     }
   };
 
@@ -7864,7 +7950,7 @@ ${stationInput}
                         <button
                           type="button"
                           onClick={() => {
-                            if (confirm("Reset watch list tickers to standard setups?")) {
+                            if (true) {
                               setWatchlistTickers('AAPL, MSFT, GOOGL, NVDA, TSLA, AMD, META, NFLX, AMZN, AVGO');
                               localStorage.setItem('watchlist_tickers', 'AAPL, MSFT, GOOGL, NVDA, TSLA, AMD, META, NFLX, AMZN, AVGO');
                             }

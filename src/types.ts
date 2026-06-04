@@ -68,6 +68,9 @@ export interface DailyNewsLog {
   macroRegime?: string;
   macroLede?: string;
   macroEvents?: any[];
+  macroHtml?: string;
+  macroFullText?: string;
+  macroTextLines?: string[];
   actionSummary?: {
     title: string;
     cols: {
