@@ -94,6 +94,10 @@ service cloud.firestore {
         && data.timestamp == request.time;
     }
 
+    function isValidPromptTemplate(data) {
+      return data.userId == request.auth.uid;
+    }
+
     function isValidSnapshot(data) {
         return data.userId == request.auth.uid;
     }
@@ -137,6 +141,13 @@ service cloud.firestore {
       allow list: if isOwner(resource.data.userId);
       allow create: if isVerified() && isValidId(bookmarkId) && isValidBookmark(incoming());
       allow delete: if isOwner(existing().userId);
+    }
+
+    match /prompts/{promptId} {
+      allow get: if isSignedIn() && existing().userId == request.auth.uid && isValidId(promptId);
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(promptId) && incoming().userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
     match /stock_tracks/{trackId} {

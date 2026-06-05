@@ -129,7 +129,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   // Not throwing to avoid crashing the app entirely, just logging
 }
 
-import type { Report, UserProfile, StockTrack, MacroTrack, UploadedHtmlReport } from './types';
+import type { Report, UserProfile, StockTrack, MacroTrack, UploadedHtmlReport, PromptTemplate } from './types';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -3224,8 +3224,13 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
   const [reports, setReports] = useState<Report[]>([]);
   const [stockTracks, setStockTracks] = useState<StockTrack[]>([]);
   const [macroTracks, setMacroTracks] = useState<MacroTrack[]>([]);
+  const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
+  const [newPromptTitle, setNewPromptTitle] = useState('');
+  const [newPromptContent, setNewPromptContent] = useState('');
+  const [editingPromptId, setEditingPromptId] = useState<string | null>(null);
+
   const [viewingReportFromTrack, setViewingReportFromTrack] = useState<Report | null>(null);
-  const [activeTab, setActiveTab] = useState<'generate' | 'tracks' | 'history' | 'screener' | 'news'>('generate');
+  const [activeTab, setActiveTab] = useState<'generate' | 'tracks' | 'history' | 'screener' | 'news' | 'prompt_vault'>('generate');
   
   // Storage for History Snapshots
   const [savedSnapshots, setSavedSnapshots] = useState<any[]>([]);
@@ -3492,6 +3497,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
   const [thinkingOutput, setThinkingOutput] = useState('');
   const [showThinking, setShowThinking] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>(MODELS.FLASH_35);
 
   useEffect(() => {
@@ -3898,6 +3904,23 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     }, (error) => handleFirestoreError(error, OperationType.GET, 'reports'));
 
     return unsubscribe;
+  }, [user]);
+
+  // Prompts Listener
+  useEffect(() => {
+    if (!user) {
+      setPrompts([]);
+      return;
+    }
+
+    const pq = query(collection(db, 'prompts'), where('userId', '==', user.uid));
+    const unsubscribePrompts = onSnapshot(pq, (snapshot) => {
+      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PromptTemplate));
+      docs.sort((a, b) => getTimestampMs(b.timestamp) - getTimestampMs(a.timestamp));
+      setPrompts(docs);
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'prompts'));
+
+    return () => unsubscribePrompts();
   }, [user]);
 
   // Watchlist Firestore Sync Listener
@@ -4538,6 +4561,12 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
     setTimeout(() => setCopySuccess(false), 2000);
   };
 
+  const handleCopyPrompt = async (text: string, id: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopiedPromptId(id);
+    setTimeout(() => setCopiedPromptId(null), 2500);
+  };
+
   const handleViewReportFromTrack = (reportId?: string) => {
     if (!reportId) {
       alert("No linked research report found for this entry.");
@@ -4551,8 +4580,52 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
     }
   };
 
+  const handleSavePrompt = async () => {
+    if (!user || !newPromptTitle.trim() || !newPromptContent.trim()) return;
+    try {
+      if (editingPromptId) {
+        await updateDoc(doc(db, 'prompts', editingPromptId), {
+          title: newPromptTitle,
+          content: newPromptContent,
+          timestamp: serverTimestamp()
+        });
+        setEditingPromptId(null);
+      } else {
+        await addDoc(collection(db, 'prompts'), {
+          userId: user.uid,
+          title: newPromptTitle,
+          content: newPromptContent,
+          timestamp: serverTimestamp()
+        });
+      }
+      setNewPromptTitle('');
+      setNewPromptContent('');
+    } catch (error) {
+      handleFirestoreError(error, editingPromptId ? OperationType.UPDATE : OperationType.CREATE, 'prompts');
+    }
+  };
+
+  const handleDeletePrompt = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'prompts', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `prompts/${id}`);
+    }
+  };
+
+  const handleEditPrompt = (prompt: PromptTemplate) => {
+    setNewPromptTitle(prompt.title);
+    setNewPromptContent(prompt.content);
+    setEditingPromptId(prompt.id || null);
+  };
+
+  const handleCancelEditPrompt = () => {
+    setNewPromptTitle('');
+    setNewPromptContent('');
+    setEditingPromptId(null);
+  };
+
   const handleDeleteReport = async (id: string, force = false) => {
-    console.log(`[Archive] Delete requested for ${id}, force=${force}`);
     
     // Warn or notice, but bypass blocking reference check so they can delete directly
     if (!force) {
@@ -6800,6 +6873,16 @@ ${stationInput}
                     <History className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">Snapshot History</span>
                   </button>
+                  <button 
+                    onClick={() => setActiveTab('prompt_vault')}
+                    className={cn(
+                      "text-[10px] font-bold px-4 py-2 rounded-lg transition-all uppercase tracking-widest flex items-center gap-2",
+                      activeTab === 'prompt_vault' ? "bg-indigo-600 text-white shadow-lg" : "text-bento-muted hover:text-bento-foreground"
+                    )}
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Prompt Vault</span>
+                  </button>
                 </div>
 
                 {activeTab === 'generate' && (
@@ -6850,7 +6933,7 @@ ${stationInput}
             </div>
 
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto custom-scrollbar pr-2 pb-10">
-              {activeTab === 'generate' && (
+              {activeTab === 'generate' && !rawOutput && !generating && (
                 <>
                   {/* === PRIMARY INPUTS === */}
                   {analysisType === 'stock' && (
@@ -9024,75 +9107,179 @@ ${stationInput}
                   </div>
                 </div>
               )}
+
+              {activeTab === 'prompt_vault' && (
+                <div className="space-y-6 flex-1 flex flex-col h-full animate-in fade-in duration-500 overflow-hidden">
+                  <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-6 border-b border-[#243056]/50 pb-6 shrink-0">
+                    <div className="flex flex-col gap-1">
+                      <h3 className="text-xl font-display font-black uppercase tracking-tighter text-indigo-400 flex items-center gap-2">
+                        <Database className="w-5 h-5" />
+                        Prompt Vault
+                      </h3>
+                      <p className="text-[10px] text-bento-muted font-mono tracking-widest uppercase">Store and reuse your best prompts</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-6">
+                    {/* Prompt Form */}
+                    <div className="bg-[#0b1020] border border-[#243056] rounded-xl p-4 shadow-xl">
+                      <h4 className="text-[10px] uppercase font-bold text-[#cfd8ff] mb-3 tracking-wider">
+                        {editingPromptId ? "Edit Prompt Template" : "Add New Prompt Template"}
+                      </h4>
+                      <input 
+                        type="text" 
+                        value={newPromptTitle}
+                        onChange={(e) => setNewPromptTitle(e.target.value)}
+                        placeholder="Prompt Title (e.g. Deep Earnings Analysis)"
+                        className="w-full bg-[#070b19] border border-[#243056] rounded-lg p-2.5 text-xs text-white font-bold mb-3 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none transition-all placeholder:text-gray-600"
+                      />
+                      <textarea
+                        value={newPromptContent}
+                        onChange={(e) => setNewPromptContent(e.target.value)}
+                        placeholder="Enter the prompt content here..."
+                        className="w-full bg-[#070b19] border border-[#243056] rounded-lg p-3 text-xs text-white h-24 resize-none mb-3 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none transition-all custom-scrollbar placeholder:text-gray-600"
+                      />
+                      <div className="flex justify-end gap-2">
+                        {editingPromptId && (
+                          <button
+                            onClick={handleCancelEditPrompt}
+                            className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border border-red-500/20 cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        <button
+                          onClick={handleSavePrompt}
+                          disabled={!newPromptTitle.trim() || !newPromptContent.trim()}
+                          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white px-5 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all shadow-lg flex items-center gap-1.5 cursor-pointer border border-indigo-400/30 font-display"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          {editingPromptId ? "Update Prompt" : "Save Prompt"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Prompt List */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {prompts.map(p => (
+                        <div key={p.id} className="bg-[#0b1020] border border-[#243056] hover:border-indigo-500/40 rounded-xl p-4 flex flex-col relative transition-all duration-200 shadow-md">
+                          <div className="flex justify-between items-start mb-2.5">
+                            <h5 className="text-[11px] font-bold text-white uppercase tracking-wider truncate pr-28 select-all">{p.title}</h5>
+                            <div className="flex items-center gap-1.5 bg-black/60 border border-white/10 p-1 rounded-lg shadow-md absolute right-4 top-3.5 z-10">
+                              <button
+                                onClick={() => p.id && handleCopyPrompt(p.content, p.id)}
+                                className={`p-1.5 rounded transition-all cursor-pointer ${
+                                  copiedPromptId === p.id 
+                                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" 
+                                    : "bg-[#0b1020] text-gray-400 hover:text-emerald-400 border border-[#243056]"
+                                }`}
+                                title="Copy Prompt Text"
+                              >
+                                {copiedPromptId === p.id ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                              <button
+                                onClick={() => handleEditPrompt(p)}
+                                className="p-1.5 bg-[#0b1020] rounded text-gray-400 hover:text-indigo-400 hover:bg-indigo-500/10 transition-all border border-[#243056] cursor-pointer"
+                                title="Edit Prompt"
+                              >
+                                <Settings className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => p.id && handleDeletePrompt(p.id)}
+                                className="p-1.5 bg-[#0b1020] rounded text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all border border-[#243056] cursor-pointer"
+                                title="Delete Prompt"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="text-[10px] font-mono text-bento-muted/80 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar break-words border-t border-[#243056]/40 pt-2.5">
+                            {p.content}
+                          </div>
+                        </div>
+                      ))}
+                      {prompts.length === 0 && (
+                        <div className="col-span-1 md:col-span-2 text-center p-8 border border-dashed border-[#243056]/60 rounded-xl text-bento-muted font-mono text-[10px] uppercase">
+                          No prompts safely vaulted yet.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
 
 
           {/* Stats Bento */}
-          <div className="col-span-12 md:col-span-4 lg:col-span-3 bg-bento-card border border-bento-border rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
-            <div>
-              <p className="text-[10px] text-bento-muted uppercase tracking-widest font-bold mb-4">Last Sync State</p>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-bento-muted italic">Timestamp</span>
-                  <span className="text-xs font-mono">{format(new Date(), 'MMM dd, yyyy')}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-bento-muted italic">Storage Status</span>
-                  <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 rounded border border-emerald-500/20">Cloud Synchronized</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-bento-muted italic">Identity</span>
-                  <span className="text-[10px] px-2 py-0.5 bg-indigo-500/10 text-indigo-400 rounded border border-indigo-500/20">
-                    {user ? 'Verified' : 'Anonymous'}
-                  </span>
+          {!(activeTab === 'generate' && (rawOutput || generating)) && activeTab !== 'prompt_vault' && (
+            <div className="col-span-12 md:col-span-4 lg:col-span-3 bg-bento-card border border-bento-border rounded-2xl p-4 sm:p-5 flex flex-col justify-between">
+              <div>
+                <p className="text-[10px] text-bento-muted uppercase tracking-widest font-bold mb-4">Last Sync State</p>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-bento-muted italic">Timestamp</span>
+                    <span className="text-xs font-mono">{format(new Date(), 'MMM dd, yyyy')}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-bento-muted italic">Storage Status</span>
+                    <span className="text-[10px] px-2 py-0.5 bg-emerald-500/10 text-emerald-500 rounded border border-emerald-500/20">Cloud Synchronized</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-bento-muted italic">Identity</span>
+                    <span className="text-[10px] px-2 py-0.5 bg-indigo-500/10 text-indigo-400 rounded border border-indigo-500/20">
+                      {user ? 'Verified' : 'Anonymous'}
+                    </span>
+                  </div>
                 </div>
               </div>
+              <div className="mt-6 pt-4 border-t border-bento-border">
+                 <button 
+                   onClick={() => setRawOutput('')}
+                   className="w-full py-2 bg-bento-bg rounded-lg text-[10px] text-bento-muted uppercase tracking-widest font-bold hover:text-red-400 transition-colors"
+                  >
+                  Clear Current View
+                 </button>
+              </div>
             </div>
-            <div className="mt-6 pt-4 border-t border-bento-border">
-               <button 
-                 onClick={() => setRawOutput('')}
-                 className="w-full py-2 bg-bento-bg rounded-lg text-[10px] text-bento-muted uppercase tracking-widest font-bold hover:text-red-400 transition-colors"
-                >
-                Clear Current View
-               </button>
-            </div>
-          </div>
+          )}
 
           {/* AI Banner Bento */}
-          <div className="col-span-12 md:col-span-8 lg:col-span-5 bg-bento-card border border-bento-accent/20 rounded-2xl p-4 sm:p-6 text-indigo-100 relative overflow-hidden shadow-2xl flex flex-col justify-between min-h-[200px] group transition-all duration-500 hover:border-bento-accent/40">
-            <div className="relative z-10">
-              <div className="flex items-center gap-3 mb-3">
-                 <div className="p-1.5 bg-bento-accent/10 border border-bento-accent/20 rounded flex items-center justify-center">
-                   <Cpu className="w-4 h-4 text-bento-accent" />
-                 </div>
-                 <h3 className="text-sm font-display font-bold uppercase tracking-[0.2em] text-white">Neural Synthesis Engine</h3>
+          {!(activeTab === 'generate' && (rawOutput || generating)) && activeTab !== 'prompt_vault' && (
+            <div className="col-span-12 md:col-span-8 lg:col-span-5 bg-bento-card border border-bento-accent/20 rounded-2xl p-4 sm:p-6 text-indigo-100 relative overflow-hidden shadow-2xl flex flex-col justify-between min-h-[200px] group transition-all duration-500 hover:border-bento-accent/40">
+              <div className="relative z-10">
+                <div className="flex items-center gap-3 mb-3">
+                   <div className="p-1.5 bg-bento-accent/10 border border-bento-accent/20 rounded flex items-center justify-center">
+                     <Cpu className="w-4 h-4 text-bento-accent" />
+                   </div>
+                   <h3 className="text-sm font-display font-bold uppercase tracking-[0.2em] text-white">Neural Synthesis Engine</h3>
+                </div>
+                <p className="text-bento-muted text-[10px] leading-relaxed max-w-[280px] font-serif italic tracking-wide">High-concurrency predictive modeling running on institutional-grade neural infrastructure.</p>
               </div>
-              <p className="text-bento-muted text-[10px] leading-relaxed max-w-[280px] font-serif italic tracking-wide">High-concurrency predictive modeling running on institutional-grade neural infrastructure.</p>
-            </div>
-            <div className="relative z-10 flex gap-10">
-              <div>
-                <p className="text-[10px] uppercase font-bold tracking-[0.1em] text-bento-muted mb-1">Response Latency</p>
-                <div className="flex items-baseline gap-1">
-                  <p className="text-2xl font-mono font-bold text-white tracking-tighter">1.4</p>
-                  <span className="text-[10px] font-mono text-bento-muted uppercase tracking-widest">ms/tok</span>
+              <div className="relative z-10 flex gap-10">
+                <div>
+                  <p className="text-[10px] uppercase font-bold tracking-[0.1em] text-bento-muted mb-1">Response Latency</p>
+                  <div className="flex items-baseline gap-1">
+                    <p className="text-2xl font-mono font-bold text-white tracking-tighter">1.4</p>
+                    <span className="text-[10px] font-mono text-bento-muted uppercase tracking-widest">ms/tok</span>
+                  </div>
+                </div>
+                <div className="h-10 w-[1px] bg-bento-border"></div>
+                <div>
+                  <p className="text-[10px] uppercase font-bold tracking-[0.1em] text-bento-muted mb-1">Architecture</p>
+                  <p className="text-2xl font-mono font-bold text-bento-accent tracking-tighter">PRO 3.1</p>
                 </div>
               </div>
-              <div className="h-10 w-[1px] bg-bento-border"></div>
-              <div>
-                <p className="text-[10px] uppercase font-bold tracking-[0.1em] text-bento-muted mb-1">Architecture</p>
-                <p className="text-2xl font-mono font-bold text-bento-accent tracking-tighter">PRO 3.1</p>
+              {/* Minimalist Background Element */}
+              <div className="absolute top-0 right-0 w-full h-full opacity-5 pointer-events-none overflow-hidden">
+                 <TrendingUp className="absolute -bottom-10 -right-10 w-64 h-64 text-bento-accent" />
               </div>
             </div>
-            {/* Minimalist Background Element */}
-            <div className="absolute top-0 right-0 w-full h-full opacity-5 pointer-events-none overflow-hidden">
-               <TrendingUp className="absolute -bottom-10 -right-10 w-64 h-64 text-bento-accent" />
-            </div>
-          </div>
+          )}
 
           {/* Report Viewer Bento */}
-          <div className="col-span-12">
+          <div className={cn("col-span-12 transition-all duration-500", (rawOutput || generating) && activeTab === 'generate' ? "order-first mb-4" : "")}>
             <AnimatePresence mode="wait">
               {!generating && rawOutput ? (
                 <motion.div 
@@ -9159,10 +9346,14 @@ ${stationInput}
                          {copySuccess ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                       </button>
                       <button 
-                        onClick={() => setRawOutput('')}
-                        className="p-2 bg-bento-bg border border-bento-border rounded-lg text-bento-muted hover:text-red-400 transition-all"
+                        onClick={() => {
+                          setRawOutput('');
+                          setTicker('');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] font-bold uppercase tracking-wider text-red-400 hover:bg-red-500/20 transition-all"
                       >
-                         <Trash2 className="w-4 h-4" />
+                         <Trash2 className="w-3.5 h-3.5" />
+                         Close Report
                       </button>
                     </div>
                   </div>

@@ -576,6 +576,15 @@ export function MarketNews() {
 
   const [isImmersiveReaderOpen, setIsImmersiveReaderOpen] = useState(false);
 
+  const scrollToPreview = () => {
+    setTimeout(() => {
+      const element = document.getElementById('news-preview-canvas');
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 150);
+  };
+
   // Listen for user sign-in state shifts
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -1362,6 +1371,7 @@ export function MarketNews() {
                       onClick={() => {
                         setActiveLogView(log);
                         setViewMode('reader');
+                        scrollToPreview();
                       }}
                       className={cn(
                         "flex items-center gap-1.5 text-[10px] uppercase font-black px-3 py-1.5 rounded-lg border transition-all cursor-pointer",
@@ -1393,10 +1403,13 @@ export function MarketNews() {
       {/* Interactive Document View Canvas (High Fidelity iframe template render) */}
       {(() => {
         const previewCanvas = (
-          <section className={cn(
-            "bg-[#121935] p-5 rounded-3xl border border-[#243056] flex flex-col space-y-4 relative transition-all duration-300",
-            isImmersiveReaderOpen ? "fixed inset-0 z-[100] bg-[#070b19] p-4 sm:p-6 rounded-none border-0 flex flex-col space-y-4 h-screen w-screen overflow-hidden" : ""
-          )}>
+          <section 
+            id="news-preview-canvas"
+            className={cn(
+              "bg-[#121935] p-5 rounded-3xl border border-[#243056] flex flex-col space-y-4 relative transition-all duration-300",
+              isImmersiveReaderOpen ? "fixed inset-0 z-[100] bg-[#070b19] p-4 sm:p-6 rounded-none border-0 flex flex-col space-y-4 h-screen w-screen overflow-hidden" : ""
+            )}
+          >
 
         {/* Dynamic Fullscreen Exit & Context Bar */}
         {isImmersiveReaderOpen && (activePreviewReport || activeLogView) && (
@@ -1483,7 +1496,10 @@ export function MarketNews() {
               </div>
               <button 
                 type="button"
-                onClick={() => setIsImmersiveReaderOpen(true)}
+                onClick={() => {
+                  setIsImmersiveReaderOpen(true);
+                  scrollToPreview();
+                }}
                 className="bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-[9px] uppercase px-3 py-1.5 rounded-xl transition-all cursor-pointer whitespace-nowrap active:scale-95 shrink-0"
               >
                 Enter Reader
@@ -1515,6 +1531,7 @@ export function MarketNews() {
                       if (selected) {
                         setActivePreviewReport(selected);
                         setActiveLogView(null);
+                        scrollToPreview();
                       }
                     }}
                     className="bg-transparent border-0 text-xs text-white font-bold font-mono outline-none focus:ring-0 cursor-pointer pr-1"
@@ -1549,7 +1566,10 @@ export function MarketNews() {
                 <>
                   <button
                     type="button"
-                    onClick={() => setIsImmersiveReaderOpen(true)}
+                    onClick={() => {
+                      setIsImmersiveReaderOpen(true);
+                      scrollToPreview();
+                    }}
                     className="flex items-center gap-1.5 text-[10px] uppercase font-black bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-400/30 px-3.5 py-1.5 rounded-lg hover:scale-105 active:scale-95 transition-all shadow-md shadow-indigo-950/40 cursor-pointer"
                     title="Enter Immersive Distraction-Free Fullscreen Mode"
                   >
@@ -1590,6 +1610,18 @@ export function MarketNews() {
                     )}
                   >
                     🌐 HTML Iframe
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsImmersiveReaderOpen(true);
+                      scrollToPreview();
+                    }}
+                    className="flex items-center gap-1.5 text-[10px] uppercase font-black bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-400/30 px-3 py-1.5 rounded-lg hover:scale-105 active:scale-95 transition-all shadow-md shadow-indigo-950/40 cursor-pointer ml-1"
+                    title="Enter Immersive Distraction-Free Fullscreen Mode"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-amber-300" />
+                    <span className="hidden sm:inline">Fullscreen reading desk</span>
                   </button>
                 </div>
               )}

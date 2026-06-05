@@ -60,6 +60,14 @@ export interface UploadedHtmlReport {
   generatedUtc?: string;
 }
 
+export interface PromptTemplate {
+  id?: string;
+  userId: string;
+  title: string;
+  content: string;
+  timestamp: any;
+}
+
 export interface DailyNewsLog {
   id?: string;
   userId: string;

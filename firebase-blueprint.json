@@ -93,9 +93,25 @@
         "timestamp": { "type": "string", "format": "date-time", "description": "Exact creation/upload server timestamp." }
       },
       "required": ["userId", "reportDate", "title", "timestamp"]
+    },
+    "PromptTemplate": {
+      "title": "PromptTemplate",
+      "description": "User stored prompt templates.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "content", "timestamp"]
     }
   },
   "firestore": {
+    "/prompts/{promptId}": {
+      "schema": "PromptTemplate",
+      "description": "Collection of saved prompts."
+    },
     "/reports/{reportId}": {
       "schema": "Report",
       "description": "Collection of research reports."
