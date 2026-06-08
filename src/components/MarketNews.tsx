@@ -575,6 +575,29 @@ export function MarketNews() {
   } | null>(null);
 
   const [isImmersiveReaderOpen, setIsImmersiveReaderOpen] = useState(false);
+  const [isAiChatOpen, setIsAiChatOpen] = useState(false);
+
+  useEffect(() => {
+    (window as any).isImmersiveReaderOpen = isImmersiveReaderOpen;
+    window.dispatchEvent(new CustomEvent('immersiveReaderStatus', { detail: isImmersiveReaderOpen }));
+    return () => {
+      (window as any).isImmersiveReaderOpen = false;
+      window.dispatchEvent(new CustomEvent('immersiveReaderStatus', { detail: false }));
+    };
+  }, [isImmersiveReaderOpen]);
+
+  useEffect(() => {
+    const handleChatStatus = (e: any) => {
+      setIsAiChatOpen(!!e.detail);
+    };
+    window.addEventListener('universalChatStatus', handleChatStatus);
+    if ((window as any).isUniversalChatOpen) {
+      setIsAiChatOpen(true);
+    }
+    return () => {
+      window.removeEventListener('universalChatStatus', handleChatStatus);
+    };
+  }, []);
 
   const scrollToPreview = () => {
     setTimeout(() => {
@@ -1115,9 +1138,9 @@ export function MarketNews() {
   const chatSectionRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const triggerInstantAiInquiry = async (customPrompt: string) => {
+  const triggerInstantAiInquiry = async (customPrompt: string, element?: HTMLElement) => {
     if (typeof (window as any).triggerUniversalAiInquiry === 'function') {
-      (window as any).triggerUniversalAiInquiry(customPrompt);
+      (window as any).triggerUniversalAiInquiry(customPrompt, element);
       return;
     }
   };
@@ -1149,7 +1172,14 @@ export function MarketNews() {
         const selection = iframeDoc.getSelection();
         const selectedText = selection?.toString().trim();
         if (selectedText && selectedText.length > 5 && selectedText.length < 500) {
-          triggerInstantAiInquiry(`Analyze and explain this selected reference from the report: "${selectedText}"`);
+          const anchorNode = selection.anchorNode;
+          const parentElement = anchorNode ? (anchorNode.parentElement as HTMLElement) : undefined;
+          triggerInstantAiInquiry(`Analyze and explain this selected reference from the report: "${selectedText}"`, parentElement);
+          if (parentElement) {
+            setTimeout(() => {
+              parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 50);
+          }
         }
       });
 
@@ -1167,7 +1197,10 @@ export function MarketNews() {
         if (text.length > 8 && text.length < 400) {
           const reportDate = activePreviewReport ? activePreviewReport.reportDate : "active date";
           const reportType = activePreviewReport ? (activePreviewReport.reportType === "current" ? "Daily News" : "Scoreboard") : "report";
-          triggerInstantAiInquiry(`Analyze this specific detail from the ${reportType} report dated ${reportDate}: "${text}"`);
+          triggerInstantAiInquiry(`Analyze this specific detail from the ${reportType} report dated ${reportDate}: "${text}"`, target);
+          setTimeout(() => {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 50);
         }
       });
     } catch (err) {
@@ -1407,7 +1440,7 @@ export function MarketNews() {
             id="news-preview-canvas"
             className={cn(
               "bg-[#121935] p-5 rounded-3xl border border-[#243056] flex flex-col space-y-4 relative transition-all duration-300",
-              isImmersiveReaderOpen ? "fixed inset-0 z-[100] bg-[#070b19] p-4 sm:p-6 rounded-none border-0 flex flex-col space-y-4 h-screen w-screen overflow-hidden" : ""
+              isImmersiveReaderOpen ? cn("fixed inset-0 z-[100] bg-[#070b19] p-4 sm:p-6 rounded-none border-0 flex flex-col space-y-4 h-screen w-screen overflow-hidden", isAiChatOpen ? "sm:pr-[510px] md:pr-[610px] lg:pr-[750px]" : "") : ""
             )}
           >
 
@@ -1680,7 +1713,7 @@ export function MarketNews() {
         {activeLogView ? (
           /* GLORIOUS BENTO INDICATORS TRACKING FEED */
           <div className={cn(
-            "bg-[#0b1020] border border-[#243056] rounded-2xl p-6 space-y-6 text-left select-text animate-fade-in shadow-2xl",
+            "bg-[#0b1020] border border-[#243056] rounded-2xl p-6 space-y-6 text-left select-text animate-fade-in shadow-2xl ai-triggerable",
             isImmersiveReaderOpen 
               ? "flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 pb-20" 
               : ""
@@ -1861,6 +1894,93 @@ export function MarketNews() {
                 </div>
               )}
             </div>
+
+            {/* Section 4: ⚡ Granular news implications matrix */}
+            {activeLogView.newsDetailedAnalyses && activeLogView.newsDetailedAnalyses.length > 0 && (
+              <div className="bg-black/20 border border-[#243056] p-4 rounded-xl space-y-4 pt-4">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                  <span>⚡</span> IV. GRANULAR HEADLINE IMPLICATIONS
+                </h4>
+                
+                <div className="space-y-4">
+                  {activeLogView.newsDetailedAnalyses.map((item: any, idx: number) => (
+                    <div key={idx} className="bg-black/45 border border-[#243056]/60 rounded-xl p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#243056]/30 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[8px] font-mono uppercase bg-[#121935] border border-[#243056] px-2 py-0.5 rounded text-indigo-300">
+                            {item.source || "Feed"}
+                          </span>
+                          <span className="text-[8px] font-bold text-[#ecc94b] bg-amber-950/40 px-2 py-0.5 rounded border border-amber-900/20 uppercase tracking-wide">
+                            {item.subject || "Macro"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <h5 className="text-[11px] font-bold text-white leading-snug">
+                        {item.title}
+                      </h5>
+
+                      {item.implicationLine && (
+                        <p className="bg-[#121935]/40 border-l-2 border-indigo-500 p-2.5 rounded text-[10px] text-gray-300 leading-relaxed font-normal">
+                          <span className="font-bold text-white mr-1 flex-shrink-0">Implication:</span>
+                          {item.implicationLine}
+                        </p>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                        <div className="bg-black/30 border border-[#243056]/40 p-2.5 rounded-lg">
+                          <span className="text-[8px] font-bold text-indigo-400 font-mono uppercase block mb-0.5">Level 1 Direct</span>
+                          <p className="text-[9px] text-[#cfd8ff]/85 leading-normal">{item.level1Implication}</p>
+                        </div>
+                        <div className="bg-black/30 border border-[#243056]/40 p-2.5 rounded-lg">
+                          <span className="text-[8px] font-bold text-[#ecc94b] font-mono uppercase block mb-0.5">Level 2 Indirect</span>
+                          <p className="text-[9px] text-[#cfd8ff]/85 leading-normal">{item.level2Implication}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div className="bg-green-950/10 border border-green-900/20 p-2.5 rounded-lg space-y-1.5">
+                          <span className="text-[8px] font-bold text-green-400 tracking-wider uppercase font-mono block">Beneficiaries</span>
+                          {item.beneficiaryTickers && item.beneficiaryTickers.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {item.beneficiaryTickers.map((t: any, tIdx: number) => (
+                                <div key={tIdx} className="text-[9px] leading-normal">
+                                  <span className="bg-green-950 text-green-400 border border-green-800 text-[8px] font-bold px-1 py-0.2 rounded font-mono uppercase leading-none mr-1.5">
+                                    {t.ticker}
+                                  </span>
+                                  <span className="text-white/80 font-semibold">{t.rationale}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[8px] text-green-500/50 italic">None mapped</p>
+                          )}
+                        </div>
+
+                        <div className="bg-red-950/10 border border-red-900/10 p-2.5 rounded-lg space-y-1.5">
+                          <span className="text-[8px] font-bold text-red-400 tracking-wider uppercase font-mono block">Opposites / Detrimentals</span>
+                          {item.detrimentalTickers && item.detrimentalTickers.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {item.detrimentalTickers.map((t: any, tIdx: number) => (
+                                <div key={tIdx} className="text-[9px] leading-normal">
+                                  <span className="bg-red-950 text-red-400 border border-red-800 text-[8px] font-bold px-1 py-0.2 rounded font-mono uppercase leading-none mr-1.5">
+                                    {t.ticker}
+                                  </span>
+                                  <span className="text-white/80 font-semibold">{t.rationale}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[8px] text-red-500/50 italic">None mapped</p>
+                          )}
+                        </div>
+                      </div>
+
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
           </div>
         ) : activePreviewReport ? (

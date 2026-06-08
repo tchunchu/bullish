@@ -846,6 +846,11 @@ async function startServer() {
         base += Math.min(20, (acc_ratio - 1.2) * 25);
         if (fund_pass) base += 10;
         return Math.min(99, Math.round(base));
+    } else if (signal === "COILED_SPRING") {
+        let base = 65;
+        base += Math.min(25, (acc_ratio - 1.2) * 25);
+        if (fund_pass) base += 10;
+        return Math.min(99, Math.round(base));
     } else if (signal === "DROP_BREAKDOWN") {
         return Math.max(10, Math.round(39 - Math.min(29, (dist_ratio - 1.2) * 20)));
     } else if (signal === "COLD_UP_TRAP") {
@@ -987,6 +992,27 @@ async function startServer() {
          // Fallback to true
       }
 
+      let targetMeanPrice = current_price * 1.15;
+      let revGrowth = 0.05;
+      try {
+        const qSummary = await yahooFinance.quoteSummary(ticker, { modules: ['financialData'] }, { validateResult: false });
+        if (qSummary && qSummary.financialData) {
+          const fd = qSummary.financialData;
+          if (fd.targetMeanPrice && typeof fd.targetMeanPrice.raw === 'number') {
+            targetMeanPrice = fd.targetMeanPrice.raw;
+          } else if (fd.targetMeanPrice && typeof fd.targetMeanPrice === 'number') {
+            targetMeanPrice = fd.targetMeanPrice;
+          }
+          if (fd.revenueGrowth && typeof fd.revenueGrowth.raw === 'number') {
+            revGrowth = fd.revenueGrowth.raw;
+          } else if (fd.revenueGrowth && typeof fd.revenueGrowth === 'number') {
+            revGrowth = fd.revenueGrowth;
+          }
+        }
+      } catch (err) {
+        // use fallback
+      }
+
       let signal = "NONE";
       if (atr_failed) {
           signal = "NONE";
@@ -998,6 +1024,8 @@ async function startServer() {
           signal = "COLD_UP_TRAP";
       } else if (below_low && !distributed) {
           signal = "COLD_DOWN_TRAP";
+      } else if (is_neutral && accumulated && fund_pass) {
+          signal = "COILED_SPRING";
       }
 
       const score = calculateNeuralScore(signal, acc_ratio, dist_ratio, fund_pass);
@@ -1005,6 +1033,7 @@ async function startServer() {
       let state = "NEUTRAL";
       if (signal === "HOT_BREAKOUT") state = "🔥 HOT BREAKOUT";
       else if (signal === "DROP_BREAKDOWN") state = "🩸 DROP BREAKDOWN";
+      else if (signal === "COILED_SPRING") state = "⚡ COILED SPRING SQUEEZE";
       else if (signal.includes("COLD")) state = "🧊 RETAIL TRAP";
       else if (atr_failed) state = "⏳ VOLATILE / NO COIL";
       else if (is_neutral) state = "😴 NEUTRAL / NO BREAKOUT";
@@ -1019,6 +1048,11 @@ async function startServer() {
           n_exit = `$${(box_high * 0.99).toFixed(2)}`;
           n_tp1 = `$${(box_high + box_spread).toFixed(2)}`;
           n_tp2 = `$${(box_high + box_spread * 1.618).toFixed(2)}`;
+      } else if (signal === "COILED_SPRING") {
+          n_entry = `$${current_price.toFixed(2)}`;
+          n_exit = `$${(box_low * 0.99).toFixed(2)}`;
+          n_tp1 = `$${(box_high + box_spread).toFixed(2)}`;
+          n_tp2 = `$${(box_high + box_spread * 1.618).toFixed(2)}`;
       } else if (signal === "DROP_BREAKDOWN") {
           n_entry = `$${current_price.toFixed(2)}`;
           n_exit = `$${(box_low * 1.01).toFixed(2)}`;
@@ -1026,12 +1060,31 @@ async function startServer() {
           n_tp2 = `$${(box_low - box_spread * 1.618).toFixed(2)}`;
       }
 
+      // Calculate dynamic R:R and extra properties matching the reference report
+      const calculatedUpside = ((targetMeanPrice / current_price) - 1) * 100;
+      let dynamic_rr = "1.5x";
+      if (box_low < current_price && targetMeanPrice > current_price) {
+        const risk = current_price - box_low;
+        const reward = targetMeanPrice - current_price;
+        if (risk > 0) {
+          dynamic_rr = (reward / risk).toFixed(1) + "x";
+        }
+      }
+      
+      const cs_setup = (signal === "HOT_BREAKOUT" || signal === "COILED_SPRING") ? "🔥 COILED SPRING" : "WATCHING";
+      const tags: string[] = [];
+      if (revGrowth > 0.15) tags.push("🤖 AI Tailwind");
+      if (fund_pass) tags.push("🤫 M&A/Rumor");
+      if (signal === "HOT_BREAKOUT" || breakout_vol > full_avg_vol * 1.1) tags.push("🏛️ Gov Contract");
+      const noise_signals = tags.join(" | ") || "😴 Neutral Flow";
+
       return {
           ticker,
           close: Math.round(current_price * 100) / 100,
           price: Math.round(current_price * 100) / 100,
           signal,
           state,
+          setup: cs_setup,
           bull_score: score,
           neural_score: score, // ensure this is included
           strength: score > 80 ? 5 : score > 50 ? 3 : 1,
@@ -1048,7 +1101,12 @@ async function startServer() {
           n_entry,
           n_exit,
           n_tp1,
-          n_tp2
+          n_tp2,
+          revenue_growth_pct: Math.round(revGrowth * 1000) / 10,
+          upside_pct: Math.round(calculatedUpside * 10) / 10,
+          dynamic_rr,
+          analyst_target: Math.round(targetMeanPrice * 100) / 100,
+          noise_signals
       };
     } catch(err) {
       console.error(`Coiled Spring error for ${ticker}:`, err);
@@ -1079,7 +1137,7 @@ async function startServer() {
       const coiled_tp1 = (coiled?.n_tp1 && coiled.n_tp1 !== "N/A") ? parseFloat(coiled.n_tp1.replace('$', '').replace(',', '')) : null;
       const coiled_tp2 = (coiled?.n_tp2 && coiled.n_tp2 !== "N/A") ? parseFloat(coiled.n_tp2.replace('$', '').replace(',', '')) : null;
 
-      if (coiled?.signal === "HOT_BREAKOUT" && coiled_entry && coiled_exit && coiled_tp1 && coiled_tp2 && coiled_exit < coiled_entry && coiled_tp1 > coiled_entry) {
+      if ((coiled?.signal === "HOT_BREAKOUT" || coiled?.signal === "COILED_SPRING") && coiled_entry && coiled_exit && coiled_tp1 && coiled_tp2 && coiled_exit < coiled_entry && coiled_tp1 > coiled_entry) {
         entry = coiled_entry;
         exit = coiled_exit;
         tp1 = coiled_tp1;
@@ -1244,6 +1302,12 @@ async function startServer() {
       rr: rrVal,
       cs_signal: r.cs_signal || r.signal || "NONE",
       
+      setup: r.setup || (r.signal === "HOT_BREAKOUT" ? "🔥 COILED SPRING" : "WATCHING"),
+      revenue_growth_pct: parseNumeric(r.revenue_growth_pct || r.rev_growth_pct || r.revGrowth || 0),
+      dynamic_rr: r.dynamic_rr || "1.5x",
+      analyst_target: parseNumeric(r.analyst_target || r.targetMeanPrice || 0),
+      noise_signals: r.noise_signals || "—",
+
       g1: r.g1 || "—",
       g2: r.g2 || "—",
       g3: r.g3 || "—",
@@ -1323,6 +1387,8 @@ async function startServer() {
     let rev_state = vcs.state || "UNKNOWN";
     if (coiled.signal === "HOT_BREAKOUT") {
       rev_state = "HOT BREAKOUT 🔥";
+    } else if (coiled.signal === "COILED_SPRING") {
+      rev_state = "COILED SPRING ⚡";
     } else if (vcs.trend === "UP" && (vcs.vcs_delta ?? 0) > 10) {
       rev_state = "EARLY STEAM 🚀";
     } else if (vcs.squeeze === "YES") {
@@ -1334,7 +1400,7 @@ async function startServer() {
     }
 
     // ── 2. Bucket classification ────────────────────────────────────────────
-    const isCSHot = coiled.signal === "HOT_BREAKOUT";
+    const isCSHot = coiled.signal === "HOT_BREAKOUT" || coiled.signal === "COILED_SPRING";
     const isGate = gateOk && (
       gate.signal === "BUY" ||
       gate.signal === "STRONG BUY" ||
@@ -1344,6 +1410,7 @@ async function startServer() {
                   rev_state.includes("BOTTOM") ||
                   rev_state.includes("ACCUMULATION") ||
                   rev_state.includes("BREAKOUT") ||
+                  rev_state.includes("COILED") ||
                   rev_state.includes("SQUEEZE");
 
     let bucket = "NONE";
@@ -1745,17 +1812,19 @@ async function startServer() {
 
   // ROBUST decoupled analysis endpoint running on demand with error fallback to handle rate limits elegantly
   app.post("/api/analyze-story", express.json(), async (req, res) => {
-    const { title, link } = req.body;
+    const { title, link, watchlist } = req.body;
     if (!title) return res.status(400).json({ error: "Missing title in request body." });
 
     const gSearchPrompt = `You are an elite hedge fund analyst. Deeply evaluate and research this macro/market breaking headline:
 Headline: "${title}"
 Source Link: "${link || ''}"
+${watchlist ? `User's Watchlist Stocks to Evaluate Impact: ${watchlist}` : ''}
 
 Perform deep mental reasoning. Trace the impact multiple levels deep:
 1. Direct Winners (Beneficiaries) & Direct Victims (Losers/Decline)
 2. Indirect Level 1 Ecosystem: Direct suppliers, partners, raw material inputs, or closest competitors.
 3. Indirect Level 2 Macro: Broad industry themes, secondary supply chain shifts, downstream consumer/enterprise demand shifts, or macro sector tailwinds/headwinds.
+${watchlist ? `4. Watchlist Impact Analysis: Carefully evaluate if this news has any direct/indirect impact, tailwind, or headwind for any of the listed watchlist stocks (${watchlist}). Include any impacted stocks from the watchlist inside the 'tickers' output array with appropriate scores, and discuss them in your final take.` : ''}
 
 Generate a highly-polished, institutional-grade quantitative and qualitative assessment, returning the result EXACTLY as a JSON object:
 {
@@ -1878,14 +1947,14 @@ Output EXACTLY as a JSON object:
   ]
 }`;
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithRetry({
         model: MODELS.FLASH,
         contents: synthesizePrompt,
         config: {
           temperature: 0.2,
           responseMimeType: "application/json"
         }
-      });
+      }, 3, 2000);
 
       if (response.text) {
         const parsed = JSON.parse(response.text.trim());
@@ -1899,6 +1968,397 @@ Output EXACTLY as a JSON object:
     }
   });
 
+  // STAGED HARVEST COMPILATION PIPELINE
+  app.get("/api/harvest-staged-data", async (req, res) => {
+    try {
+      console.log("[Node Harvest Engine] Executing multi-source news and indices stage...");
+      
+      const feeds = [
+        { name: "Yahoo Finance", url: "https://finance.yahoo.com/news/rss" },
+        { name: "WSJ Markets", url: "https://feeds.a.dj.com/rss/RSSMarketsMain.xml" },
+        { name: "WSJ Business", url: "https://feeds.a.dj.com/rss/WSJandBusiness.xml" },
+        { name: "CNBC Finance", url: "https://www.cnbc.com/id/10000664/device/rss/rss.html" },
+        { name: "CNBC Markets", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
+        { name: "MarketWatch", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
+        { name: "Reuters", url: "https://news.google.com/rss/search?q=site:reuters.com+finance+OR+markets+when:1d&hl=en-US&gl=US&ceid=US:en" },
+        { name: "Bloomberg", url: "https://news.google.com/rss/search?q=site:bloomberg.com+finance+when:1d&hl=en-US&gl=US&ceid=US:en" },
+        { name: "Financial Times", url: "https://news.google.com/rss/search?q=site:ft.com+markets+when:1d&hl=en-US&gl=US&ceid=US:en" }
+      ];
+
+      const newsArticles: any[] = [];
+      await Promise.all(feeds.map(async (feed) => {
+        try {
+          const parsedFeed = await parser.parseURL(feed.url);
+          const feedItems = parsedFeed.items || [];
+          feedItems.slice(0, 10).forEach((item) => {
+            if (item.title && item.link) {
+              newsArticles.push({
+                title: item.title,
+                link: item.link,
+                pubDate: item.pubDate || item.isoDate || new Date().toISOString(),
+                contentSnippet: (item.contentSnippet || item.content || "").replace(/<[^>]+>/g, "").slice(0, 300),
+                source: feed.name
+              });
+            }
+          });
+        } catch (feedErr: any) {
+          console.warn(`[Node Harvest Engine] Gracefully bypassed feed error for ${feed.name}:`, feedErr.message);
+        }
+      }));
+
+      // Sort news articles descending by publication date
+      newsArticles.sort((a, b) => {
+        const timeA = a.pubDate ? new Date(a.pubDate).getTime() : 0;
+        const timeB = b.pubDate ? new Date(b.pubDate).getTime() : 0;
+        return timeB - timeA;
+      });
+
+      // Limit to 45 articles top total
+      const slicedArticles = newsArticles.slice(0, 45);
+
+      // Sourcing index benchmarks & comprehensive macro nodes (Yields, Volatility, Commodities, Forex)
+      const marketTickers = [
+        "^GSPC", "^IXIC", "^DJI", "^RUT", // Equities
+        "^TNX", "^TYX", "^VIX",           // US Treasury Yields & Volatility
+        "GC=F", "CL=F", "HG=F",            // Commodities (Gold, Crude Oil, Copper)
+        "EURUSD=X", "JPY=X", "GBPUSD=X"    // Forex Pairs
+      ];
+      const marketNames: Record<string, string> = {
+        "^GSPC": "S&P 500",
+        "^IXIC": "NASDAQ Composite",
+        "^DJI": "Dow Jones Industrials",
+        "^RUT": "Russell 2000",
+        "^TNX": "U.S. 10-Year Bond Yield",
+        "^TYX": "U.S. 30-Year Treasury Yield",
+        "^VIX": "CBOE Volatility Index (VIX)",
+        "GC=F": "Gold Futures",
+        "CL=F": "Crude Oil Futures",
+        "HG=F": "Copper Futures",
+        "EURUSD=X": "EUR/USD Forex",
+        "JPY=X": "USD/JPY Forex",
+        "GBPUSD=X": "GBP/USD Forex"
+      };
+
+      const marketData = await Promise.all(marketTickers.map(async (ticker) => {
+        try {
+          const q = await yahooFinance.quote(ticker, { validateResult: false });
+          return {
+            ticker,
+            name: marketNames[ticker] || ticker,
+            price: q.regularMarketPrice ?? null,
+            change: q.regularMarketChange ?? null,
+            changePercent: q.regularMarketChangePercent ?? null,
+            high: q.regularMarketDayHigh ?? null,
+            low: q.regularMarketDayLow ?? null,
+            volume: q.regularMarketVolume ?? null
+          };
+        } catch (quoteErr: any) {
+          console.warn(`[Node Harvest Engine] Bypassed quote error for index ${ticker}:`, quoteErr.message);
+          return {
+            ticker,
+            name: marketNames[ticker] || ticker,
+            price: null,
+            change: null,
+            changePercent: null,
+            high: null,
+            low: null,
+            volume: null
+          };
+        }
+      }));
+
+      res.json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        marketData,
+        newsArticles: slicedArticles
+      });
+
+    } catch (err: any) {
+      console.error("/api/harvest-staged-data general error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to harvest multi-source macro inputs" });
+    }
+  });
+
+  // STAGED RATING AND RANKING PIPELINE 
+  app.post("/api/rate-rank-headlines", express.json(), async (req, res) => {
+    try {
+      const { newsArticles } = req.body;
+      if (!newsArticles || !Array.isArray(newsArticles) || newsArticles.length === 0) {
+        return res.json({ success: true, ratedArticles: [] });
+      }
+
+      // Format simple subset to avoid model token overages
+      const simplified = newsArticles.map((art, idx) => ({
+        index: idx,
+        title: art.title,
+        source: art.source || "Unknown",
+        contentSnippet: (art.contentSnippet || "").slice(0, 150)
+      }));
+
+      const prompt = `You are a premier institutional macro sentiment scoring model.
+We have harvested a live feed of news headlines from WSJ, Reuters, Bloomberg, CNBC, Financial Times, and Yahoo Finance. 
+Your task is to analyze and rank these articles by assigning each an impact score (integer 1-10) reflecting its power to shape equity prices, bond indices, commodity values, and sector capital flows.
+
+HARVESTED LIVE FEED INTAKE:
+${JSON.stringify(simplified)}
+
+Scoring Guidelines:
+- Score 9-10: System-critical catalysts (e.g., unexpected FOMC pivot, sovereign debt crisis, massive inflation surprise, major currency shifts, war).
+- Score 7-8: High sector shockwaves (e.g., massive semiconductor supply bottlenecks, key corporate earnings misses, major antitrust rules, key employment reports).
+- Score 4-6: Balanced medium-level news (e.g., standard M&A actions, target level estimates, minor price targets, executive changes).
+- Score 1-3: Inside corporate noise or generic market columns.
+
+Your response MUST match the JSON response schema perfectly. Evaluate each provided article item and return its corresponding score, classified subject, a punchy two-word assessment, and a clear one-line justification.`;
+
+      const response = await generateContentWithRetry({
+        model: MODELS.FLASH,
+        contents: prompt,
+        config: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              ratedArticles: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    index: { type: "INTEGER" },
+                    score: { type: "INTEGER" },
+                    subject: { type: "STRING" }, // e.g. "Monetary Policy", "AI Hardware", "Sovereign Debt"
+                    twoWordAssessment: { type: "STRING" }, // e.g., "Bullish Breakthrough", "Inflation Fire", "Rate Pressure"
+                    oneLineJustification: { type: "STRING" } // Concise institutional explanation
+                  },
+                  required: ["index", "score", "subject", "twoWordAssessment", "oneLineJustification"]
+                }
+              }
+            },
+            required: ["ratedArticles"]
+          }
+        }
+      }, 3, 2000);
+
+      if (response.text) {
+        const parsed = JSON.parse(response.text.trim());
+        const ratingsMap = new Map();
+        parsed.ratedArticles.forEach((item: any) => {
+          ratingsMap.set(item.index, item);
+        });
+
+        const completed = newsArticles.map((original, idx) => {
+          const rating = ratingsMap.get(idx) || {
+            score: 5,
+            subject: "Markets",
+            twoWordAssessment: "Standard Flow",
+            oneLineJustification: "System catalogued as default sentinel market baseline flow."
+          };
+          return {
+            ...original,
+            score: rating.score,
+            subject: rating.subject,
+            twoWordAssessment: rating.twoWordAssessment,
+            oneLineJustification: rating.oneLineJustification
+          };
+        });
+
+        // Sort descending by score out-of-the-box
+        completed.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+        res.json({ success: true, ratedArticles: completed });
+      } else {
+        throw new Error("No sentiment output compiled by Gemini engine");
+      }
+    } catch (err: any) {
+      console.error("/api/rate-rank-headlines error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to compile headline rating" });
+    }
+  });
+
+  // Inference stage of harvested news reports (supports Level 1/Level 2 details, beneficial vs detrimental tickers)
+  app.post("/api/generate-staged-report", express.json(), async (req, res) => {
+    try {
+      const { selectedArticles, marketData, userIntent } = req.body;
+
+      if (!selectedArticles || selectedArticles.length === 0) {
+        return res.status(400).json({ success: false, error: "Please select at least one curated article to generate the intelligence report." });
+      }
+
+      const articlesList = (selectedArticles || []).map((art: any, index: number) => 
+        `Article #${index + 1}: ${art.title}\nPublisher: ${art.source || "Macro Channel"}\nAI Score: ${art.score || "Unknown"}\nSubject: ${art.subject || "Markets"}\nCore snippet: ${art.contentSnippet}`
+      ).join("\n\n");
+
+      const marketStatsList = (marketData || []).map((m: any) => 
+        `${m.name} (${m.ticker}): Price: ${m.price}, Change: ${m.change} (${m.changePercent || 0}%)`
+      ).join("\n");
+
+      const currentDateStr = new Date().toISOString().split("T")[0];
+
+      const prompt = `You are a senior macro partner at a multi-billion quantitative global macro hedge fund.
+Create an elite, institutional-grade end-of-day market news intelligence report. 
+
+You must deeply analyze these selected high-impact headlines:
+${articlesList}
+
+GROUNDING MARKET DATA (Equities, VIX Volatility, U.S. Bond Yields, Key Commodities, and Forex):
+${marketStatsList}
+
+CURRENT DATE OF REPORTING: ${currentDateStr}
+For the "reportDate" field in the output, you MUST return exactly "${currentDateStr}".
+
+${userIntent ? `PORTFOLIO MANAGER INSTRUCTIONS & FOCUS BIAS: "${userIntent}"` : ""}
+
+Task Instructions:
+1. Diagnose the Macro Regime (e.g. "HAWKISH RE-PRICING", "DOVISH REBOUND", "RISK-ON MOMENTUM", "FLIGHT TO SAFETY", "STAGFLATIONARY SQUEEZE"). Heavily incorporate the live market data (VIX level, Treasury yields, Crude/Gold movements, and Forex pairs) to justify this classification.
+2. Write a comprehensive macro front-page lede summarizing the overall message, specifically connecting how treasury yields, commodities, and volatility levels corroborate the headline narratives.
+3. FOR EACH and every news item in the provided list, construct a thorough "Detailed Impact Analysis block" that conforms exactly to the Schema. This must contain:
+   a. "implicationLine": a single, clear, punchy executive bottom-line of what this headline means for general investors.
+   b. "level1Implication": explicit direct, immediate 1st order consequence (how the news directly affects cash flows, sales, yields, or margins).
+   c. "level2Implication": derivative, systemic, or structural 2nd order consequence (wider sector effects, regulatory follow-up, central bank reactions, cascading actions, or supply-chain repercussions).
+   d. "beneficiaryTickers": 1 to 2 real public companies, ETFs, or index tickers that BENEFIT from this development. State the ticker symbol, name, and a precise 1-sentence narrative/thesis.
+   e. "detrimentalTickers": 1 to 2 real public companies, ETFs, or index tickers that suffer a NEGATIVE impact or act as short candidates. State the ticker, name, and a precise 1-sentence narrative thesis.
+4. Supply standard overview elements: Key macro events timeline, general macro bullet shifts, and synthetic corporate insider activities matching the prevailing regime.
+
+Ensure your entire output matches the custom JSON schema layout exactly.`;
+
+      const response = await generateContentWithRetry({
+        model: MODELS.FLASH,
+        contents: prompt,
+        config: {
+          temperature: 0.15,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              title: { type: "STRING" },
+              reportDate: { type: "STRING" },
+              macroRegime: { type: "STRING" },
+              macroLede: { type: "STRING" },
+              
+              // NEW granular news-by-news detailed systemic analysis
+              newsDetailedAnalyses: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    title: { type: "STRING" },
+                    source: { type: "STRING" },
+                    subject: { type: "STRING" },
+                    implicationLine: { type: "STRING" },
+                    level1Implication: { type: "STRING" },
+                    level2Implication: { type: "STRING" },
+                    beneficiaryTickers: {
+                      type: "ARRAY",
+                      items: {
+                        type: "OBJECT",
+                        properties: {
+                          ticker: { type: "STRING" },
+                          name: { type: "STRING" },
+                          rationale: { type: "STRING" }
+                        },
+                        required: ["ticker", "name", "rationale"]
+                      }
+                    },
+                    detrimentalTickers: {
+                      type: "ARRAY",
+                      items: {
+                        type: "OBJECT",
+                        properties: {
+                          ticker: { type: "STRING" },
+                          name: { type: "STRING" },
+                          rationale: { type: "STRING" }
+                        },
+                        required: ["ticker", "name", "rationale"]
+                      }
+                    }
+                  },
+                  required: ["title", "source", "subject", "implicationLine", "level1Implication", "level2Implication", "beneficiaryTickers", "detrimentalTickers"]
+                }
+              },
+              
+              macroEvents: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    time: { type: "STRING" },
+                    title: { type: "STRING" },
+                    impact: { type: "STRING" },
+                    text: { type: "STRING" }
+                  },
+                  required: ["time", "title", "impact", "text"]
+                }
+              },
+              macroTextLines: {
+                type: "ARRAY",
+                items: { type: "STRING" }
+              },
+              actionSummary: {
+                type: "OBJECT",
+                properties: {
+                  title: { type: "STRING" },
+                  cols: {
+                    type: "ARRAY",
+                    items: {
+                      type: "OBJECT",
+                      properties: {
+                        title: { type: "STRING" },
+                        isWin: { type: "BOOLEAN" },
+                        isLose: { type: "BOOLEAN" },
+                        items: {
+                          type: "ARRAY",
+                          items: { type: "STRING" }
+                        }
+                      },
+                      required: ["title", "isWin", "isLose", "items"]
+                    }
+                  }
+                },
+                required: ["title", "cols"]
+              },
+              insiderStats: {
+                type: "ARRAY",
+                items: { type: "STRING" }
+              },
+              insiderTables: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    ticker: { type: "STRING" },
+                    insider: { type: "STRING" },
+                    relationship: { type: "STRING" },
+                    price: { type: "NUMBER" },
+                    shares: { type: "NUMBER" },
+                    value: { type: "NUMBER" },
+                    type: { type: "STRING" }
+                  },
+                  required: ["ticker", "insider", "relationship", "price", "shares", "value", "type"]
+                }
+              }
+            },
+            required: [
+              "title", "reportDate", "macroRegime", "macroLede", 
+              "newsDetailedAnalyses", "macroEvents", "macroTextLines", 
+              "actionSummary", "insiderStats", "insiderTables"
+            ]
+          }
+        }
+      }, 3, 2000);
+
+      if (response.text) {
+        const parsed = JSON.parse(response.text.trim());
+        res.json({ success: true, report: parsed });
+      } else {
+        throw new Error("No response text returned from Gemini engine");
+      }
+    } catch (err: any) {
+      console.error("/api/generate-staged-report error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to generate multi-stage report" });
+    }
+  });
+
   // Keep compatibility endpoint with simple message
   app.get("/api/market-news", async (req, res) => {
     res.json({ message: "Legacy endpoint deprecated. Please utilize decoupled feeds /api/market-news-list instead." });
@@ -1908,13 +2368,13 @@ Output EXACTLY as a JSON object:
     try {
       const { prompt } = req.body;
       
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithRetry({
         model: MODELS.FLASH,
         contents: prompt || '',
         config: {
           temperature: 0.2
         }
-      });
+      }, 3, 2000);
 
       res.json({ result: response.text });
     } catch (err: any) {
@@ -2035,7 +2495,8 @@ Output EXACTLY as a JSON object:
       })
       .sort((a, b) => b.sort_score - a.sort_score);
 
-    const resultsLimit = isCustom ? 1000 : topN;
+    const isRussell = indexName.toLowerCase().startsWith('russell');
+    const resultsLimit = isRussell ? 3500 : (isCustom ? 1000 : topN);
     const sorted = sortedFull.slice(0, resultsLimit).map(r => parseScreenerTickerRecord(r)); 
 
     const indexLabels: Record<string, string> = {

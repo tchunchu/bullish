@@ -22,7 +22,7 @@ export function BeautifulNewsReader({ report, triggerInstantAiInquiry, styleClas
   if (!parsed) {
     // Elegant Text fallback reader
     return (
-      <div className={cn("p-6 bg-[#080d1a] hover:bg-[#0b1020] border border-[#243056] rounded-2xl space-y-4 text-left shadow-lg overflow-auto max-h-[700px]", styleClass)}>
+      <div className={cn("p-6 bg-[#080d1a] hover:bg-[#0b1020] border border-[#243056] rounded-2xl space-y-4 text-left shadow-lg overflow-auto max-h-[700px] ai-triggerable", styleClass)}>
         <h4 className="text-white text-md font-bold uppercase tracking-wider border-b border-bento-border pb-2">
           {report.title}
         </h4>
@@ -34,7 +34,7 @@ export function BeautifulNewsReader({ report, triggerInstantAiInquiry, styleClas
   }
 
   return (
-    <div className={cn("w-full bg-[#080d1a] border border-[#243056] rounded-2xl p-4 md:p-6 text-left space-y-6 select-text max-h-[750px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 shadow-lg", styleClass)}>
+    <div className={cn("w-full bg-[#080d1a] border border-[#243056] rounded-2xl p-4 md:p-6 text-left space-y-6 select-text max-h-[750px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 shadow-lg ai-triggerable", styleClass)}>
       {/* Header Banner */}
       <div className="border-b border-[#243056] pb-4">
         <h2 className="text-lg md:text-xl font-black text-white leading-tight font-display tracking-tight">

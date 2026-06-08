@@ -90,6 +90,24 @@ export interface DailyNewsLog {
   } | null;
   insiderStats?: string[];
   insiderTables?: any[];
+  newsDetailedAnalyses?: {
+    title: string;
+    source: string;
+    subject: string;
+    implicationLine: string;
+    level1Implication: string;
+    level2Implication: string;
+    beneficiaryTickers: {
+      ticker: string;
+      name: string;
+      rationale: string;
+    }[];
+    detrimentalTickers: {
+      ticker: string;
+      name: string;
+      rationale: string;
+    }[];
+  }[];
   timestamp: any;
   reportTimestamp?: string;
   generatedUtc?: string;

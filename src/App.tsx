@@ -52,7 +52,10 @@ import {
   Database,
   X,
   Sun,
-  Newspaper
+  Newspaper,
+  Workflow,
+  BookOpen,
+  ArrowLeft
 } from 'lucide-react';
 import { format } from 'date-fns';
 import Markdown from 'react-markdown';
@@ -60,6 +63,7 @@ import remarkGfm from 'remark-gfm';
 
 import { auth, db, signIn, signOut } from './lib/firebase';
 import { MarketNews } from './components/MarketNews';
+import { StagedWorkflow } from './components/StagedWorkflow';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
   collection, 
@@ -2071,9 +2075,14 @@ Respond in professional, clean, scannable markdown formatting. Keep your answer 
                     </a>
                   </div>
                   {(r.currentPrice || r.price) && (
-                    <span className="font-mono text-base font-black text-emerald-400 bg-emerald-500/5 border border-emerald-500/15 px-2.5 py-0.5 rounded-lg shadow-sm">
+                    <a
+                      href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-base font-black text-emerald-400 bg-emerald-500/5 border border-emerald-500/15 px-2.5 py-0.5 rounded-lg shadow-sm hover:underline hover:bg-emerald-500/10 transition-all"
+                    >
                       {String(r.currentPrice || r.price).startsWith('$') ? '' : '$'}{r.currentPrice || r.price}
-                    </span>
+                    </a>
                   )}
                   <span className={cn(
                     "px-2.5 py-1 rounded text-[9px] font-bold tracking-wider uppercase border",
@@ -2509,10 +2518,19 @@ Respond in professional, clean, scannable markdown formatting. Keep your answer 
 
     try {
       // 1. Context of stored News Archive Reports
-      const newsContext = uploadedReports
+      let newsContext = uploadedReports
         .slice(0, 8)
         .map(r => `[REPORT TYPE: ${r.reportType.toUpperCase()} | DATE: ${r.reportDate} | TITLE: ${r.title}]\n${r.plainText}`)
         .join("\n\n");
+
+      if (activeNewsArchiveReport) {
+        newsContext = `### ACTIVE SELECTED NEWS REPORT CURRENTLY BEING VIEWED BY USER:
+[REPORT TYPE: ${activeNewsArchiveReport.reportType.toUpperCase()} | DATE: ${activeNewsArchiveReport.reportDate} | TITLE: ${activeNewsArchiveReport.title}]
+${activeNewsArchiveReport.plainText}
+
+=========================================
+` + newsContext;
+      }
 
       // 2. Active Screener snapshot Context
       const isScreenerActive = (activeTab === 'screener' && !isScreening && screenerResults.length > 0) || (activeTab === 'history' && historySubTab === 'screener' && activeSnapshot);
@@ -2639,7 +2657,7 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
     else if (viewingReportFromTrack) activeTicker = viewingReportFromTrack.ticker;
 
     return (
-      <div className="fixed bottom-6 right-6 z-[95] font-sans">
+      <div className={cn("fixed bottom-6 right-6 font-sans", (isReportFullscreen || isSnapshotFullscreen || isImmersiveNewsFullscreen || isUniversalChatOpen) ? "z-[260]" : "z-[95]")}>
         <AnimatePresence>
           {isUniversalChatOpen && (
             <motion.div
@@ -2865,9 +2883,14 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                     </span>
                   )}
                 </div>
-                <div className="font-mono text-xs font-bold text-white">
+                <a 
+                  href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-xs font-bold text-emerald-400 hover:underline hover:text-emerald-300 transition-colors"
+                >
                   ${typeof priceVal === 'number' ? priceVal.toFixed(2) : priceVal}
-                </div>
+                </a>
               </div>
 
               {isUnified ? (
@@ -2934,6 +2957,64 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                     </div>
                   </div>
                 </div>
+              ) : r.setup !== undefined ? (
+                <div className="space-y-2.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className={cn(
+                      "px-1.5 py-0.5 rounded text-[8px] font-bold border",
+                      r.signal === 'HOT_BREAKOUT' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                      r.signal === 'DROP_BREAKDOWN' ? "bg-red-500/10 text-red-400 border-red-500/20" :
+                      "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                    )}>
+                      Signal: {r.state || r.signal || 'NEUTRAL'}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">
+                      Setup: {r.setup || 'WATCHING'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs bg-black/40 p-2.5 rounded-lg border border-white/5">
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Neural Score</span>
+                      <span className="text-emerald-400 font-mono font-bold">{r.neural_score || r.bull_score || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Dynamic R:R</span>
+                      <span className="font-mono text-white font-semibold">{r.dynamic_rr || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Acc / Dist Ratio</span>
+                      <span className="font-mono text-white/95">{r.acc_ratio || '1.0'}x / {r.dist_ratio || '1.0'}x</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold">Box Spread</span>
+                      <span className="font-mono text-gray-400 text-[10px]">${r.box_spread || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-sky-300">Revenue Growth</span>
+                      <span className="text-sky-400 font-mono font-bold">{r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct || 0}%</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold text-emerald-300">Upside (FV)</span>
+                      <span className="text-emerald-400 font-mono font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct || 0}%</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Stop Loss</span>
+                      <span className="text-red-400 font-mono font-bold">{r.n_exit || r.algoExit || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Take Profit 1</span>
+                      <span className="text-blue-400 font-mono font-bold">{r.n_tp1 || r.algoTP1 || '—'}</span>
+                    </div>
+                  </div>
+
+                  {r.noise_signals && (
+                    <div className="pt-2 border-t border-white/5">
+                      <span className="block text-[7px] text-bento-muted uppercase font-bold mb-0.5">Noise Signals</span>
+                      <div className="text-[9px] text-[#ecc94b] font-mono leading-tight whitespace-pre-wrap">{r.noise_signals}</div>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2.5 text-xs bg-black/40 p-2.5 rounded-lg border border-white/5">
                   <div>
@@ -2948,7 +3029,14 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                   </div>
                   <div>
                     <span className="block text-[8px] text-bento-muted uppercase font-bold">Algo Entry</span>
-                    <span className="font-mono text-purple-400 font-bold">${r.algoEntry || r.close || '—'}</span>
+                    <a
+                      href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-purple-400 font-bold hover:underline"
+                    >
+                      ${r.algoEntry || r.close || '—'}
+                    </a>
                   </div>
                   <div>
                     <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Algo TP1 / TP2</span>
@@ -3031,9 +3119,14 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                     </div>
                     <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold">Screener Price</span>
-                      <span className="text-white font-mono font-bold block">
+                      <a
+                        href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-white font-mono font-bold block hover:underline"
+                      >
                         ${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2) || '—'}
-                      </span>
+                      </a>
                     </div>
                     <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold text-amber-400">Est Upside</span>
@@ -3230,7 +3323,7 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
   const [editingPromptId, setEditingPromptId] = useState<string | null>(null);
 
   const [viewingReportFromTrack, setViewingReportFromTrack] = useState<Report | null>(null);
-  const [activeTab, setActiveTab] = useState<'generate' | 'tracks' | 'history' | 'screener' | 'news' | 'prompt_vault'>('generate');
+  const [activeTab, setActiveTab] = useState<'generate' | 'tracks' | 'history' | 'screener' | 'news' | 'prompt_vault' | 'staged_workflow'>('generate');
   
   // Storage for History Snapshots
   const [savedSnapshots, setSavedSnapshots] = useState<any[]>([]);
@@ -3241,9 +3334,58 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
   const [uploadedReports, setUploadedReports] = useState<UploadedHtmlReport[]>([]);
   const [activeNewsArchiveReport, setActiveNewsArchiveReport] = useState<UploadedHtmlReport | null>(null);
 
+  // Fullscreen Immersive Reading View Hooks
+  const [isReportFullscreen, setIsReportFullscreen] = useState(false);
+  const [isSnapshotFullscreen, setIsSnapshotFullscreen] = useState(false);
+  const [activeUnionSelect, setActiveUnionSelect] = useState(false);
+
+  useEffect(() => {
+    if (isReportFullscreen) {
+      setTimeout(() => {
+        const el = document.getElementById("report-fullscreen-scroll-container");
+        if (el) el.scrollTop = 0;
+      }, 50);
+    }
+  }, [isReportFullscreen]);
+
+  useEffect(() => {
+    if (isSnapshotFullscreen) {
+      setTimeout(() => {
+        const el = document.getElementById("snapshot-fullscreen-scroll-container");
+        if (el) el.scrollTop = 0;
+      }, 50);
+    }
+  }, [isSnapshotFullscreen]);
+
   // Universal AI Terminal Companion States
   const universalChatBottomRef = useRef<HTMLDivElement>(null);
+  const lastActiveElementRef = useRef<HTMLElement | null>(null);
   const [isUniversalChatOpen, setIsUniversalChatOpen] = useState(false);
+  const [isImmersiveNewsFullscreen, setIsImmersiveNewsFullscreen] = useState(false);
+
+  // Synchronize dynamic fullscreen & chat events for seamless overlays
+  useEffect(() => {
+    const handleImmersiveStatus = (e: any) => {
+      setIsImmersiveNewsFullscreen(!!e.detail);
+    };
+    window.addEventListener('immersiveReaderStatus', handleImmersiveStatus);
+    if ((window as any).isImmersiveReaderOpen) {
+      setIsImmersiveNewsFullscreen(true);
+    }
+    return () => {
+      window.removeEventListener('immersiveReaderStatus', handleImmersiveStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    (window as any).isUniversalChatOpen = isUniversalChatOpen;
+    window.dispatchEvent(new CustomEvent('universalChatStatus', { detail: isUniversalChatOpen }));
+    return () => {
+      (window as any).isUniversalChatOpen = false;
+      window.dispatchEvent(new CustomEvent('universalChatStatus', { detail: false }));
+    };
+  }, [isUniversalChatOpen]);
+  const [fullscreenScrollPos, setFullscreenScrollPos] = useState<number | null>(null);
   const [universalChatMessages, setUniversalChatMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
   const [universalChatInput, setUniversalChatInput] = useState('');
   const [isUniversalChatLoading, setIsUniversalChatLoading] = useState(false);
@@ -3284,7 +3426,7 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
   const [maxScreenerCount, setMaxScreenerCount] = useState<number>(30);
   const [screenerPreset, setScreenerPreset] = useState<'full' | 'phase1' | 'phase2'>('full');
   const [rawScreenerCount, setRawScreenerCount] = useState<number>(30);
-  const [screenerMode, setScreenerMode] = useState<'classic' | 'unified_v2'>('unified_v2');
+  const [screenerMode, setScreenerMode] = useState<'classic' | 'unified_v2' | 'coiled'>('unified_v2');
 
   const displayedScreenerResults = useMemo(() => {
     let filtered = [...screenerResults];
@@ -3381,7 +3523,10 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
   }, [savedSnapshots, selectedSnapshotId]);
 
   useEffect(() => {
-    (window as any).triggerUniversalAiInquiry = (promptText: string) => {
+    (window as any).triggerUniversalAiInquiry = (promptText: string, element?: HTMLElement) => {
+      if (element) {
+        lastActiveElementRef.current = element;
+      }
       triggerUniversalAiInquiry(promptText);
     };
     return () => {
@@ -3398,7 +3543,16 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     }
   }, [universalChatMessages, isUniversalChatLoading, isUniversalChatOpen]);
 
-  // Global mouseup event listener to capture text selections and double clicks for AI inquiry
+  // Auto scroll/center active reading node in fullscreen when universal chat panel state changes
+  useEffect(() => {
+    if (lastActiveElementRef.current) {
+      setTimeout(() => {
+        lastActiveElementRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 350); // wait for width transitions to complete smoothly
+    }
+  }, [isUniversalChatOpen]);
+
+  // Global event listeners to capture text selections and double clicks for AI inquiry
   useEffect(() => {
     const handleGlobalMouseUp = () => {
       setTimeout(() => {
@@ -3408,36 +3562,77 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
         let anchorNode = selection.anchorNode;
         if (!anchorNode) return;
-        let parentElement = anchorNode.parentElement;
+        let parentElement = anchorNode.parentElement as HTMLElement;
         if (!parentElement) return;
 
-        // Verify that selection originates from within a report context or screener table
-        const isTriggerable = 
-          parentElement.closest('.markdown-body') || 
-          parentElement.closest('table') || 
-          parentElement.closest('.screener-results-container') ||
-          parentElement.closest('.stock-report-container') ||
-          parentElement.closest('.ai-triggerable');
-
-        // Prevent unwanted triggers inside chat box, text inputs, search boxes
+        // Prevent unwanted triggers inside chat box, text input boxes, headers, lists, buttons, etc.
         const isInsideChatOrInput = 
           parentElement.closest('#universal-chat-panel') || 
-          parentElement.closest('.bg-\\[\\#0b0c16\\]') || 
+          parentElement.closest('#headline-intelligence-board') || 
           parentElement.closest('input') || 
-          parentElement.closest('textarea');
+          parentElement.closest('textarea') ||
+          parentElement.closest('button') ||
+          parentElement.closest('a');
 
-        if (isTriggerable && !isInsideChatOrInput) {
+        if (!isInsideChatOrInput) {
+          lastActiveElementRef.current = parentElement;
           triggerUniversalAiInquiry(`Analyze and explain this selected reference from the terminal active screen: "${selectedText}"`);
+          setTimeout(() => {
+            parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 50);
           selection.removeAllRanges();
         }
       }, 50);
     };
 
-    document.addEventListener("mouseup", handleGlobalMouseUp);
-    return () => {
-      document.removeEventListener("mouseup", handleGlobalMouseUp);
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+      const isInsideChatOrControls = 
+        target.closest('#universal-chat-panel') || 
+        target.closest('#headline-intelligence-board') ||
+        target.closest('.fixed.bottom-6.right-6') || 
+        target.closest('input') || 
+        target.closest('textarea');
+
+      if (!isInsideChatOrControls) {
+        lastActiveElementRef.current = target;
+      }
     };
-  }, [uploadedReports, screenerResults, activeReport, activeSnapshot, watchlistTickers]);
+
+    const handleGlobalDblClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+
+      const isInsideChatOrInput = 
+        target.closest('#universal-chat-panel') || 
+        target.closest('#headline-intelligence-board') || 
+        target.closest('input') || 
+        target.closest('textarea') || 
+        target.closest('button') || 
+        target.closest('a');
+
+      if (isInsideChatOrInput) return;
+
+      const text = target.textContent?.trim() || "";
+      if (text.length > 8 && text.length < 800) {
+        lastActiveElementRef.current = target;
+        triggerUniversalAiInquiry(`Analyze this specific section in depth and explain its macro/market implications: "${text}"`);
+        setTimeout(() => {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
+      }
+    };
+
+    document.addEventListener("click", handleGlobalClick);
+    document.addEventListener("mouseup", handleGlobalMouseUp);
+    document.addEventListener("dblclick", handleGlobalDblClick);
+    return () => {
+      document.removeEventListener("click", handleGlobalClick);
+      document.removeEventListener("mouseup", handleGlobalMouseUp);
+      document.removeEventListener("dblclick", handleGlobalDblClick);
+    };
+  }, [uploadedReports, screenerResults, activeReport, activeSnapshot, watchlistTickers, isReportFullscreen, fullscreenScrollPos, isUniversalChatOpen]);
 
   const [savedIntelligence, setSavedIntelligence] = useState<any[]>([]);
 
@@ -4056,6 +4251,18 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
       docs.sort((a, b) => getTimestampMs(b.timestamp) - getTimestampMs(a.timestamp));
       setSavedSnapshots(docs);
+      
+      setActiveSnapshot((prev: any) => {
+        if (prev) {
+          const fresh = docs.find(d => d.id === prev.id);
+          return fresh || prev;
+        }
+        const newest = docs[0];
+        if (newest && newest.index?.startsWith('🔗 Combined Snapshot:') && (Date.now() - getTimestampMs(newest.timestamp) < 5000)) {
+          return newest;
+        }
+        return prev;
+      });
     }, (error) => handleFirestoreError(error, OperationType.GET, 'snapshots'));
 
     const unsubscribeIntel = onSnapshot(iq, (snapshot) => {
@@ -4120,21 +4327,20 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       tickers: screenIndex === 'watchlist' ? watchlistTickers : (screenIndex === 'custom' ? screenTickers : ""),
       index: screenIndex,
       screenerType: screenerMode,
-      topN: (screenIndex === 'watchlist' || screenIndex === 'custom' ? "200" : "150") // fetch more to allow client-side raw limit
+      topN: (screenIndex === 'watchlist' || screenIndex === 'custom' ? "200" : (screenIndex.toLowerCase().startsWith('russell') ? "3500" : "150")) // fetch more to allow client-side raw limit
     });
 
     const ev = new EventSource(`/api/vcs-run?${queryParams.toString()}`);
 
     ev.onmessage = async (event) => {
       const data = JSON.parse(event.data);
-      
       if (data.msg === "FINAL_REPORT") {
         setTerminal(prev => [...prev, "--- ANALYSIS COMPLETE ---"]);
         let results = data.results || [];
         
         // Filter out tickers with comp score < 50 and limit to specific rev states
         // UNLESS the user is actively screening their own custom watchlist or ad-hoc custom tickers
-        if (screenIndex !== 'watchlist' && screenIndex !== 'custom') {
+        if (screenIndex !== 'watchlist' && screenIndex !== 'custom' && screenerMode !== 'coiled') {
           results = results.filter((r: any) => {
             const compScore = parseFloat(r.composite || "0") || 0;
             const steamScore = parseFloat(r.steam || "0") || 0;
@@ -4143,41 +4349,49 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
           });
         }
 
-        // Custom bucket sorting: Gate Signal grouped with Rev State
-        results.sort((a: any, b: any) => {
-          const getBucket = (gateSig: string, revState: string) => {
-            const sig = (gateSig || "").toUpperCase();
-            const rev = (revState || "").toUpperCase();
-            
-            let sigRank = 4;
-            if (sig === "STRONG BUY") sigRank = 1;
-            else if (sig === "BUY") sigRank = 2;
-            else if (sig === "WATCH") sigRank = 3;
-            
-            const isHotBreakout = rev.includes("HOT BREAKOUT");
-            const isBreakout = rev.includes("BREAKOUT") && !isHotBreakout;
-            const isEarlySteam = rev.includes("EARLY STEAM");
-            const isGroupA = isHotBreakout || isBreakout || isEarlySteam;
-            
-            if (isGroupA) return sigRank;
-            return sigRank + 3; // Group B and others
-          };
+        // Custom sorting depending on mode
+        if (screenerMode === 'coiled') {
+          results.sort((a: any, b: any) => {
+            const scoreA = parseFloat(a.neural_score || a.bull_score || "0") || 0;
+            const scoreB = parseFloat(b.neural_score || b.bull_score || "0") || 0;
+            return scoreB - scoreA;
+          });
+        } else {
+          results.sort((a: any, b: any) => {
+            const getBucket = (gateSig: string, revState: string) => {
+              const sig = (gateSig || "").toUpperCase();
+              const rev = (revState || "").toUpperCase();
+              
+              let sigRank = 4;
+              if (sig === "STRONG BUY") sigRank = 1;
+              else if (sig === "BUY") sigRank = 2;
+              else if (sig === "WATCH") sigRank = 3;
+              
+              const isHotBreakout = rev.includes("HOT BREAKOUT");
+              const isBreakout = rev.includes("BREAKOUT") && !isHotBreakout;
+              const isEarlySteam = rev.includes("EARLY STEAM");
+              const isGroupA = isHotBreakout || isBreakout || isEarlySteam;
+              
+              if (isGroupA) return sigRank;
+              return sigRank + 3; // Group B and others
+            };
 
-          const bucketA = getBucket(a.gate_sig, a.rev_state);
-          const bucketB = getBucket(b.gate_sig, b.rev_state);
-          
-          if (bucketA !== bucketB) return bucketA - bucketB;
+            const bucketA = getBucket(a.gate_sig, a.rev_state);
+            const bucketB = getBucket(b.gate_sig, b.rev_state);
+            
+            if (bucketA !== bucketB) return bucketA - bucketB;
 
-          // Sort by steam score descending
-          const steamA = parseFloat(a.steam || "0") || 0;
-          const steamB = parseFloat(b.steam || "0") || 0;
-          if (steamA !== steamB) return steamB - steamA;
-          
-          // Sort by composite score descending
-          const compA = parseFloat(a.composite || "0") || 0;
-          const compB = parseFloat(b.composite || "0") || 0;
-          return compB - compA;
-        });
+            // Sort by steam score descending
+            const steamA = parseFloat(a.steam || "0") || 0;
+            const steamB = parseFloat(b.steam || "0") || 0;
+            if (steamA !== steamB) return steamB - steamA;
+            
+            // Sort by composite score descending
+            const compA = parseFloat(a.composite || "0") || 0;
+            const compB = parseFloat(b.composite || "0") || 0;
+            return compB - compA;
+          });
+        }
 
         setScreenerResults(results);
         setIsScreened(true);
@@ -4196,7 +4410,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
           };
           const mdLabels: Record<string, string> = {
             'classic': 'Classic Screener (VCS)',
-            'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
+            'unified_v2': 'Unified Alpha (Reversal-First v3.0)',
+            'coiled': 'Coiled Spring Momentum'
           };
           const hzLabels: Record<string, string> = {
             'weeks': 'Swing (Weeks)',
@@ -4204,14 +4419,26 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             'days': 'Day/Momentum (Days)'
           };
           
+          const isRussellScan = screenIndex.toLowerCase().startsWith('russell');
           let presetLabel = "Full";
-          if (screenerPreset === "phase1") presetLabel = "Phase 1";
-          if (screenerPreset === "phase2") presetLabel = "Phase 2";
+          if (isRussellScan) {
+            presetLabel = "Phase 1 Filtered";
+          } else if (screenerPreset === "phase1") {
+            presetLabel = "Phase 1";
+          } else if (screenerPreset === "phase2") {
+            presetLabel = "Phase 2";
+          }
           
           const snapTitle = (idxLabels[screenIndex] || "Custom/Colab") + ` (Auto-Save - ${presetLabel})`;
           
           let filtered = [...finalResults];
-          if (screenerPreset !== 'full') {
+          if (isRussellScan) {
+            // For Russell indices, ALWAYS enforce dynamic Phase 1 filter to sharply restrict document sizes
+            filtered = filtered.filter((r: any) => {
+              const rev = (r.rev_state || "").toUpperCase();
+              return rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
+            });
+          } else if (screenerPreset !== 'full') {
             filtered = filtered.filter((r: any) => {
               const rev = (r.rev_state || "").toUpperCase();
               if (screenerPreset === 'phase1') {
@@ -4228,34 +4455,51 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             filtered = filtered.slice(0, 250);
           }
           
+          // Split into multiple reports of max 250 tickers per document to respect firestore bounds
+          const CHUNK_SIZE = 250;
+          const chunks: any[][] = [];
+          if (filtered.length === 0) {
+            chunks.push([]);
+          } else {
+            for (let i = 0; i < filtered.length; i += CHUNK_SIZE) {
+              chunks.push(filtered.slice(i, i + CHUNK_SIZE));
+            }
+          }
+
           try {
-            if (user) {
-              await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
-                timestamp: new Date().toISOString(),
-                source: "screener",
-                index: snapTitle,
-                screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
-                horizon: hzLabels[screenHorizon] || screenHorizon,
-                rawResults: filtered,
-                aiResults: [],
-                tickerCount: filtered.length,
-                userId: user.uid
-              }));
-            } else {
-              setSavedSnapshots(prev => {
-                const newSnapshot = {
-                  id: Date.now().toString(),
+            for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+              const chunk = chunks[chunkIdx];
+              const partSuffix = chunks.length > 1 ? ` - Part ${chunkIdx + 1} (Tickers ${chunkIdx * CHUNK_SIZE + 1}-${Math.min((chunkIdx + 1) * CHUNK_SIZE, filtered.length)})` : "";
+              const chunkTitle = snapTitle + partSuffix;
+
+              if (user) {
+                await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
                   timestamp: new Date().toISOString(),
                   source: "screener",
-                  index: snapTitle,
+                  index: chunkTitle,
                   screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
                   horizon: hzLabels[screenHorizon] || screenHorizon,
-                  rawResults: filtered,
+                  rawResults: chunk,
                   aiResults: [],
-                  tickerCount: filtered.length
-                };
-                return [newSnapshot, ...prev];
-              });
+                  tickerCount: chunk.length,
+                  userId: user.uid
+                }));
+              } else {
+                setSavedSnapshots(prev => {
+                  const newSnapshot = {
+                    id: (Date.now() + chunkIdx).toString(),
+                    timestamp: new Date().toISOString(),
+                    source: "screener",
+                    index: chunkTitle,
+                    screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                    horizon: hzLabels[screenHorizon] || screenHorizon,
+                    rawResults: chunk,
+                    aiResults: [],
+                    tickerCount: chunk.length
+                  };
+                  return [newSnapshot, ...prev];
+                });
+              }
             }
           } catch (err) {
             console.error("Auto-save snapshot failed", err);
@@ -4286,6 +4530,87 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     setScreenerResults(prev => prev.filter(r => r.ticker !== tickerToRemove));
   };
 
+  const handleUnionSnapshots = async (otherSnap: any) => {
+    if (!activeSnapshot || !otherSnap) return;
+    
+    const resultsMap = new Map<string, any>();
+    
+    // Process active snapshot results
+    const activeResults = Array.isArray(activeSnapshot.rawResults) ? activeSnapshot.rawResults : [];
+    activeResults.forEach((item: any) => {
+      resultsMap.set(item.ticker, { ...item, sourceSnapTitle: activeSnapshot.index });
+    });
+    
+    // Process other snapshot results
+    const otherResults = Array.isArray(otherSnap.rawResults) ? otherSnap.rawResults : [];
+    otherResults.forEach((item: any) => {
+      if (resultsMap.has(item.ticker)) {
+        // Ticker appears in BOTH! Double criteria match, highlight!
+        const existing = resultsMap.get(item.ticker);
+        resultsMap.set(item.ticker, {
+          ...existing,
+          isSharedSetup: true,
+          bucket: "✨ SHARED OVERLAP 🎯",
+          setup: "✨ COILED OVERLAP 🎯",
+          noise_signals: "✨ SHARED SETUP | " + (existing.noise_signals || item.noise_signals || "Matching overlap criteria across both screen models.")
+        });
+      } else {
+        resultsMap.set(item.ticker, { ...item, sourceSnapTitle: otherSnap.index });
+      }
+    });
+    
+    const unionResults = Array.from(resultsMap.values());
+    
+    // Sort: shared setups always top-priority
+    unionResults.sort((a, b) => {
+      if (a.isSharedSetup && !b.isSharedSetup) return -1;
+      if (!a.isSharedSetup && b.isSharedSetup) return 1;
+      
+      // Fallback: search/index rank
+      const scoreA = parseFloat(a.sort_score || a.composite || "0") || 0;
+      const scoreB = parseFloat(b.sort_score || b.composite || "0") || 0;
+      return scoreB - scoreA;
+    });
+
+    const unionTitle = `🔗 Combined Snapshot: ${activeSnapshot.index} ∪ ${otherSnap.index}`;
+    
+    try {
+      if (user) {
+        const docRef = await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
+          timestamp: new Date().toISOString(),
+          source: "screener",
+          index: unionTitle,
+          screenerMode: `Union (${activeSnapshot.screenerMode} + ${otherSnap.screenerMode})`,
+          horizon: activeSnapshot.horizon || "weeks",
+          rawResults: unionResults,
+          aiResults: [],
+          tickerCount: unionResults.length,
+          userId: user.uid
+        }));
+        // The listener will automatically sync Firestore and update savedSnapshots,
+        // but we'll also select it when it arrives.
+      } else {
+        const newSnapshot = {
+          id: Date.now().toString(),
+          timestamp: new Date().toISOString(),
+          source: "screener",
+          index: unionTitle,
+          screenerMode: `Union (${activeSnapshot.screenerMode} + ${otherSnap.screenerMode})`,
+          horizon: activeSnapshot.horizon || "weeks",
+          rawResults: unionResults,
+          aiResults: [],
+          tickerCount: unionResults.length
+        };
+        setSavedSnapshots(prev => [newSnapshot, ...prev]);
+        setActiveSnapshot(newSnapshot);
+      }
+      setActiveUnionSelect(false);
+      setTerminal(prev => [...prev, `[SYSTEM] Union built! Generated combined dataset with ${unionResults.length} tickers.`]);
+    } catch (err) {
+      console.error("Union creation failed:", err);
+    }
+  };
+
   const handleRunNeuralSynthesis = async () => {
     if (!displayedScreenerResults.length) return;
     setIsNeuralLoading(true);
@@ -4306,7 +4631,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       };
       const modeLabels: Record<string, string> = {
         'classic': 'Classic Screener (VCS)',
-        'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
+        'unified_v2': 'Unified Alpha (Reversal-First v3.0)',
+        'coiled': 'Coiled Spring Deep Scanner'
       };
       const horizonLabels: Record<string, string> = {
         'weeks': 'Swing (Weeks)',
@@ -6864,6 +7190,16 @@ ${stationInput}
                     <span className="hidden sm:inline">News</span>
                   </button>
                   <button 
+                    onClick={() => setActiveTab('staged_workflow')}
+                    className={cn(
+                      "text-[10px] font-bold px-4 py-2 rounded-lg transition-all uppercase tracking-widest flex items-center gap-2",
+                      activeTab === 'staged_workflow' ? "bg-indigo-600 text-white shadow-lg" : "text-bento-muted hover:text-bento-foreground"
+                    )}
+                  >
+                    <Workflow className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Staged Workflow</span>
+                  </button>
+                  <button 
                     onClick={() => setActiveTab('history')}
                     className={cn(
                       "text-[10px] font-bold px-4 py-2 rounded-lg transition-all uppercase tracking-widest flex items-center gap-2",
@@ -7308,9 +7644,60 @@ ${stationInput}
                             >
                               ← Back to Snapshots
                             </button>
-                            <div className="flex items-center justify-between mb-4 gap-2">
+                            <div className="flex items-center justify-between mb-4 gap-2 flex-wrap sm:flex-nowrap">
                               <h4 className="text-white text-lg font-black uppercase tracking-tight">Saved Configuration</h4>
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <button
+                                  onClick={() => setIsSnapshotFullscreen(true)}
+                                  className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 border border-emerald-400/30 rounded-lg text-[9px] font-black uppercase tracking-widest text-white transition-all hover:scale-105 active:scale-95 shadow-md shrink-0 cursor-pointer animate-fade-in"
+                                  title="Enter Fullscreen Reader View"
+                                >
+                                  <BookOpen className="w-3.5 h-3.5 text-amber-300" />
+                                  <span>Fullscreen reader</span>
+                                </button>
+                                
+                                <div className="relative">
+                                  <button
+                                    onClick={() => setActiveUnionSelect(!activeUnionSelect)}
+                                    className="flex items-center gap-1.5 px-3 py-1 bg-white/5 border border-[#ecc94b]/30 hover:border-[#ecc94b]/60 rounded-lg text-[9px] font-black uppercase tracking-widest text-[#ecc94b] transition-all hover:bg-[#ecc94b]/10 shrink-0 cursor-pointer"
+                                    title="Union / Combine results with another snapshot"
+                                  >
+                                    <Layers className="w-3.5 h-3.5 text-[#ecc94b]" />
+                                    <span>Union Snapshots</span>
+                                  </button>
+                                  
+                                  {activeUnionSelect && (
+                                    <div className="absolute right-0 mt-2 w-72 bg-[#090e21] border border-[#ecc94b]/30 p-3 rounded-xl shadow-2xl z-[150] text-left">
+                                      <div className="flex justify-between items-center mb-2 border-b border-white/5 pb-1.5">
+                                        <span className="text-[9px] text-[#ecc94b] font-black uppercase tracking-widest">Select target to Combine</span>
+                                        <button onClick={() => setActiveUnionSelect(false)} className="text-gray-400 hover:text-white"><X className="w-3" /></button>
+                                      </div>
+                                      <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1">
+                                        {savedSnapshots.filter((s: any) => s.id !== activeSnapshot.id).length === 0 ? (
+                                          <div className="text-[10px] text-bento-muted italic p-2 text-center">No other snapshots saved. Save another scan first to combine!</div>
+                                        ) : (
+                                          savedSnapshots.filter((s: any) => s.id !== activeSnapshot.id).map((s: any) => {
+                                            const sDate = s.date || s.timestamp || s.id;
+                                            const displayDate = typeof sDate === 'string' && isNaN(Number(sDate)) 
+                                              ? new Date(sDate).toLocaleDateString() 
+                                              : new Date(Number(sDate)).toLocaleDateString();
+                                            return (
+                                              <button
+                                                key={s.id}
+                                                onClick={() => handleUnionSnapshots(s)}
+                                                className="w-full text-left p-2 hover:bg-white/5 rounded-lg border border-transparent hover:border-white/15 transition-all text-xs font-mono group"
+                                              >
+                                                <div className="text-white font-bold truncate group-hover:text-[#ecc94b]">{s.index}</div>
+                                                <div className="text-[9px] text-bento-muted mt-0.5">{displayDate} • {s.screenerMode || 'N/A'} • {s.tickerCount || s.rawResults?.length || 0} Tickers</div>
+                                              </button>
+                                            );
+                                          })
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
                                 <div className="flex bg-white/5 border border-white/10 rounded-lg p-0.5">
                                   <button
                                     onClick={() => setViewMode('tiles')}
@@ -7431,7 +7818,16 @@ ${stationInput}
                                                 <td className="p-2 font-bold text-blue-400">
                                                   <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
                                                 </td>
-                                                <td className="p-2">${r.price?.toFixed(2) || r.close?.toFixed(2)}</td>
+                                                <td className="p-2">
+                                                  <a
+                                                    href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="hover:underline text-[rgba(255,255,255,0.95)] font-bold transition-all"
+                                                  >
+                                                    ${r.price?.toFixed(2) || r.close?.toFixed(2)}
+                                                  </a>
+                                                </td>
                                                 <td className="p-2" style={{color: r.gate_sig === "STRONG BUY" || r.gate_sig === "BUY" ? "#00ff66" : r.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{r.gate_sig}</td>
                                                 <td className="p-2" style={{color: r.rev_state?.includes("STEAM") ? "#ff4400" : r.rev_state?.includes("BOTTOM") ? "#aaffaa" : r.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{r.rev_state}</td>
                                                 <td className="p-2 text-emerald-400">{r.composite}</td>
@@ -7445,6 +7841,60 @@ ${stationInput}
                                                 <td className="p-2 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
                                                 <td className="p-2" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
                                                 <td className="p-2 text-yellow-400">{r.vol_surge}</td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      ) : (activeSnapshot.screenerMode?.toLowerCase().includes('coiled') || activeSnapshot.screenerMode?.toLowerCase().includes('spring')) ? (
+                                        <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
+                                          <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-semibold text-[9px]">
+                                            <tr>
+                                              <th className="p-2">TICKER</th>
+                                              <th className="p-2">PRICE</th>
+                                              <th className="p-2">STATE</th>
+                                              <th className="p-2">SETUP</th>
+                                              <th className="p-2">NEURAL SCORE</th>
+                                              <th className="p-2">ACC RATIO</th>
+                                              <th className="p-2">DIST RATIO</th>
+                                              <th className="p-2">BOX SPREAD</th>
+                                              <th className="p-2 text-sky-300">REV GROWTH</th>
+                                              <th className="p-2 text-emerald-400">UPSIDE (FV)</th>
+                                              <th className="p-2">ANALYST TARGET</th>
+                                              <th className="p-2">DYNAMIC R:R</th>
+                                              <th className="p-2">NOISE SIGNALS</th>
+                                              <th className="p-2">STOP</th>
+                                              <th className="p-2">TARGET</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {activeSnapshot.rawResults.map((r: any, i: number) => (
+                                              <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                                <td className="p-2 font-bold text-blue-400">
+                                                  <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
+                                                </td>
+                                                <td className="p-2">
+                                                  <a
+                                                    href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="hover:underline text-[rgba(255,255,255,0.95)] font-bold transition-all"
+                                                  >
+                                                    ${(r.price || r.close)?.toFixed(2)}
+                                                  </a>
+                                                </td>
+                                                <td className="p-2 font-bold" style={{color: r.signal === "HOT_BREAKOUT" ? "#00ff66" : r.signal === "DROP_BREAKDOWN" ? "#ff4444" : r.signal?.includes("COLD") ? "#60a5fa" : "#fbbf24"}}>{r.state || r.signal}</td>
+                                                <td className="p-2 font-bold text-yellow-400">{r.setup || "WATCHING"}</td>
+                                                <td className="p-2 text-emerald-400 font-bold">{r.neural_score || r.bull_score || "—"}</td>
+                                                <td className="p-2">{r.acc_ratio || r.vol_ratio || "1.00"}x</td>
+                                                <td className="p-2">{r.dist_ratio || "1.00"}x</td>
+                                                <td className="p-2 text-gray-400">${r.box_spread?.toFixed(2)} (${r.box_low?.toFixed(2)} - ${r.box_high?.toFixed(2)})</td>
+                                                <td className="p-2 text-sky-400 font-bold">{r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct}%</td>
+                                                <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
+                                                <td className="p-2 text-indigo-400">${r.analyst_target?.toFixed(2)}</td>
+                                                <td className="p-2 font-bold" style={{color: parseFloat(r.dynamic_rr) >= 2.0 ? "#00ff66" : "#fbbf24"}}>{r.dynamic_rr || "1.5x"}</td>
+                                                <td className="p-2 text-gray-300 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.noise_signals}>{r.noise_signals}</td>
+                                                <td className="p-2 text-red-400 font-bold">${(r.n_exit || r.algoExit || r.stop)}</td>
+                                                <td className="p-2 text-blue-400 font-bold">${(r.n_tp1 || r.algoTP1 || r.target)}</td>
                                               </tr>
                                             ))}
                                           </tbody>
@@ -7472,7 +7922,16 @@ ${stationInput}
                                               </td>
                                               <td className="p-3 text-emerald-400">{typeof (r.sort_score || r.bull_score || r.neural_score) === 'number' ? (r.sort_score || r.bull_score || r.neural_score).toFixed(1) : (r.sort_score || r.bull_score || r.neural_score)}</td>
                                               <td className="p-3">{r.rev_state || r.state || r.cs_signal || r.signal}</td>
-                                              <td className="p-3">${r.algoEntry || r.n_entry || r.close}</td>
+                                              <td className="p-3">
+                                                <a
+                                                  href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                  className="hover:underline text-[rgba(255,255,255,0.95)]"
+                                                >
+                                                  ${r.algoEntry || r.n_entry || r.close}
+                                                </a>
+                                              </td>
                                               <td className="p-3">${r.algoExit || r.n_exit}</td>
                                               <td className="p-3 text-purple-400">${r.algoTP1 || r.n_tp1}</td>
                                               <td className="p-3 text-purple-500">${r.algoTP2 || r.n_tp2}</td>
@@ -7564,7 +8023,16 @@ ${stationInput}
                                                   </td>
                                                   <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                                   <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
-                                                  <td className="p-3 font-mono">${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}</td>
+                                                  <td className="p-3 font-mono">
+                                                    <a
+                                                      href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                                      target="_blank"
+                                                      rel="noreferrer"
+                                                      className="hover:underline text-[rgba(255,255,255,0.95)]"
+                                                    >
+                                                      ${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}
+                                                    </a>
+                                                  </td>
                                                   <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}%` : rawMatch.upside_pct ? `${rawMatch.upside_pct}%` : '—'}</td>
                                                   <td className="p-3 font-mono text-emerald-400 font-bold">{tp1Up}</td>
                                                   <td className="p-3 font-mono text-teal-400 font-bold">{tp2Up}</td>
@@ -7655,7 +8123,15 @@ ${stationInput}
                                   })() : 'LIVE'} • Author: {user?.email}
                                 </span>
                               </div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <button
+                                  onClick={() => setIsReportFullscreen(true)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 border border-indigo-400/30 rounded-lg text-[10px] font-black uppercase tracking-widest text-white transition-all hover:scale-105 active:scale-95 shadow-md cursor-pointer animate-fade-in"
+                                  title="Enter Fullscreen Reader View"
+                                >
+                                  <BookOpen className="w-3.5 h-3.5 text-amber-300" />
+                                  <span>Fullscreen reader</span>
+                                </button>
                                 <button
                                   onClick={() => {
                                     setRawOutput(activeReport.output);
@@ -7752,6 +8228,12 @@ ${stationInput}
                 </div>
               )}
 
+              {activeTab === 'staged_workflow' && (
+                <div className="flex-1 flex flex-col h-full space-y-6">
+                  <StagedWorkflow />
+                </div>
+              )}
+
               {activeTab === 'screener' && (
                 <div className="space-y-6 flex-1 flex flex-col h-full">
                   <div className="flex flex-col gap-2">
@@ -7799,7 +8281,8 @@ ${stationInput}
                         className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none"
                       >
                         <option value="unified_v2">Unified Alpha (Reversal-First v3.0)</option>
-                        <option value="classic">Classic</option>
+                        <option value="coiled">Coiled Spring Momentum</option>
+                        <option value="classic">Classic (VCS Only)</option>
                       </select>
                     </div>
                     
@@ -8151,7 +8634,8 @@ ${stationInput}
                               };
                               const modeLabels: Record<string, string> = {
                                 'classic': 'Classic Screener (VCS)',
-                                'unified_v2': 'Unified Alpha (Reversal-First v3.0)'
+                                'unified_v2': 'Unified Alpha (Reversal-First v3.0)',
+                                'coiled': 'Coiled Spring Deep Scanner'
                               };
                               const horizonLabels: Record<string, string> = {
                                 'weeks': 'Swing (Weeks)',
@@ -8225,7 +8709,16 @@ ${stationInput}
                                       <td className="p-2 font-bold text-blue-400">
                                         <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
                                       </td>
-                                      <td className="p-2">${r.price?.toFixed(2) || r.close?.toFixed(2)}</td>
+                                      <td className="p-2">
+                                        <a
+                                          href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="hover:underline text-[rgba(255,255,255,0.95)] font-bold transition-all"
+                                        >
+                                          ${r.price?.toFixed(2) || r.close?.toFixed(2)}
+                                        </a>
+                                      </td>
                                       <td className="p-2" style={{color: r.gate_sig === "STRONG BUY" || r.gate_sig === "BUY" ? "#00ff66" : r.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{r.gate_sig}</td>
                                       <td className="p-2" style={{color: r.rev_state?.includes("STEAM") ? "#ff4400" : r.rev_state?.includes("BOTTOM") ? "#aaffaa" : r.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{r.rev_state}</td>
                                       <td className="p-2 text-emerald-400">{r.composite}</td>
@@ -8243,6 +8736,64 @@ ${stationInput}
                                   ))}
                                 </tbody>
                               </table>
+                            ) : screenerMode === 'coiled' ? (
+                            <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
+                              <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-semibold text-[9px]">
+                                <tr>
+                                  <th className="p-2 text-center">X</th>
+                                  <th className="p-2">TICKER</th>
+                                  <th className="p-2 col-span-1">PRICE</th>
+                                  <th className="p-2">STATE</th>
+                                  <th className="p-2">SETUP</th>
+                                  <th className="p-2">NEURAL SCORE</th>
+                                  <th className="p-2">ACC RATIO</th>
+                                  <th className="p-2">DIST RATIO</th>
+                                  <th className="p-2">BOX SPREAD</th>
+                                  <th className="p-2 text-sky-300">REV GROWTH</th>
+                                  <th className="p-2 text-emerald-400">UPSIDE (FV)</th>
+                                  <th className="p-2">ANALYST TARGET</th>
+                                  <th className="p-2">DYNAMIC R:R</th>
+                                  <th className="p-2">NOISE SIGNALS</th>
+                                  <th className="p-2">STOP</th>
+                                  <th className="p-2">TARGET</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {displayedScreenerResults.map((r, i) => (
+                                  <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                    <td className="p-2 text-center">
+                                      <button onClick={() => handleDismissTicker(r.ticker)} className="text-red-500/50 hover:text-red-400 font-bold px-1" title="Dismiss">×</button>
+                                    </td>
+                                    <td className="p-2 font-bold text-blue-400">
+                                      <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
+                                    </td>
+                                    <td className="p-2">
+                                      <a
+                                        href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="hover:underline text-[rgba(255,255,255,0.95)] font-bold transition-all"
+                                      >
+                                        ${(r.price || r.close)?.toFixed(2)}
+                                      </a>
+                                    </td>
+                                    <td className="p-2 font-bold" style={{color: r.signal === "HOT_BREAKOUT" ? "#00ff66" : r.signal === "DROP_BREAKDOWN" ? "#ff4444" : r.signal?.includes("COLD") ? "#60a5fa" : "#fbbf24"}}>{r.state || r.signal}</td>
+                                    <td className="p-2 font-bold text-yellow-400">{r.setup || "WATCHING"}</td>
+                                    <td className="p-2 text-emerald-400 font-bold">{r.neural_score || r.bull_score || "—"}</td>
+                                    <td className="p-2">{r.acc_ratio || r.vol_ratio || "1.00"}x</td>
+                                    <td className="p-2">{r.dist_ratio || "1.00"}x</td>
+                                    <td className="p-2 text-gray-400">${r.box_spread?.toFixed(2)} (${r.box_low?.toFixed(2)} - ${r.box_high?.toFixed(2)})</td>
+                                    <td className="p-2 text-sky-400 font-bold">{r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct}%</td>
+                                    <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
+                                    <td className="p-2 text-indigo-400">${r.analyst_target?.toFixed(2)}</td>
+                                    <td className="p-2 font-bold" style={{color: parseFloat(r.dynamic_rr) >= 2.0 ? "#00ff66" : "#fbbf24"}}>{r.dynamic_rr || "1.5x"}</td>
+                                    <td className="p-2 text-gray-300 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.noise_signals}>{r.noise_signals}</td>
+                                    <td className="p-2 text-red-400 font-bold">${(r.n_exit || r.algoExit || r.stop)}</td>
+                                    <td className="p-2 text-blue-400 font-bold">${(r.n_tp1 || r.algoTP1 || r.target)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
                             ) : (
                             <table className="w-full text-left text-sm text-white border-collapse">
                               <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-bento-muted">
@@ -8270,7 +8821,16 @@ ${stationInput}
                                     </td>
                                     <td className="p-3 text-emerald-400">{typeof r.sort_score === 'number' ? r.sort_score.toFixed(1) : r.sort_score || r.bull_score}</td>
                                     <td className="p-3">{r.state}</td>
-                                    <td className="p-3">${r.algoEntry || r.close}</td>
+                                    <td className="p-3">
+                                      <a
+                                        href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="hover:underline text-[rgba(255,255,255,0.95)]"
+                                      >
+                                        ${r.algoEntry || r.close}
+                                      </a>
+                                    </td>
                                     <td className="p-3">${r.algoExit}</td>
                                     <td className="p-3 text-purple-400">${r.algoTP1}</td>
                                     <td className="p-3 text-purple-500">${r.algoTP2}</td>
@@ -8367,7 +8927,16 @@ ${stationInput}
                                               </td>
                                               <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
                                               <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
-                                              <td className="p-3 font-mono">${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}</td>
+                                              <td className="p-3 font-mono">
+                                                <a
+                                                  href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                  className="hover:underline text-[rgba(255,255,255,0.95)]"
+                                                >
+                                                  ${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}
+                                                </a>
+                                              </td>
                                               <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}%` : rawMatch.upside_pct ? `${rawMatch.upside_pct}%` : '—'}</td>
                                               <td className="p-3 font-mono text-emerald-400 font-bold">{tp1Up}</td>
                                               <td className="p-3 font-mono text-teal-400 font-bold">{tp2Up}</td>
@@ -9766,6 +10335,487 @@ ${stationInput}
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 1. SNAPSHOT FULLSCREEN OVERLAY */}
+      {isSnapshotFullscreen && activeSnapshot && (
+        <div 
+          className={cn(
+            "fixed inset-0 z-[250] bg-[#070b19] p-4 sm:p-6 flex flex-col space-y-4 h-screen w-screen overflow-hidden text-white transition-all duration-300",
+            isUniversalChatOpen ? "sm:pr-[510px] md:pr-[610px] lg:pr-[750px]" : ""
+          )}
+        >
+          {/* Header context bar */}
+          <div className="bg-[#121935]/90 border border-[#243056] p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xl shrink-0 backdrop-blur-md">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsSnapshotFullscreen(false)}
+                className="flex items-center gap-2 text-xs font-black text-white bg-red-500/20 border border-red-500/40 px-3.5 py-2 rounded-xl hover:bg-gradient-to-r hover:from-red-600 hover:to-red-500 hover:text-white transition-all cursor-pointer active:scale-95"
+              >
+                <ArrowLeft className="w-4 h-4 text-red-400 font-bold" />
+                <span>Go Back (Exit Fullscreen)</span>
+              </button>
+              <div className="text-left">
+                <span className="text-[9px] uppercase font-bold text-gray-400 block font-mono">Snapshot Mode</span>
+                <span className="text-xs font-black text-[#ecc94b] font-mono">{activeSnapshot.screenerMode || 'N/A'}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col text-center hidden md:flex">
+              <h4 className="text-[9px] font-black uppercase text-[#cfd8ff]/70 font-mono tracking-widest">⚡ IMMERSIVE SCREENER DESK</h4>
+              <p className="text-xs font-black text-white mt-0.5">
+                {(activeSnapshot.index || 'MARKET')?.toUpperCase()} INDEX • {activeSnapshot.tickerCount || activeSnapshot.rawResults?.length || 0} TICKERS
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* View Switcher inside Fullscreen */}
+              <div className="flex bg-white/5 border border-white/10 rounded-lg p-0.5">
+                <button
+                  onClick={() => setViewMode('tiles')}
+                  className={cn("px-3 py-1.5 rounded-md text-[9px] uppercase font-black tracking-widest transition-all", viewMode === 'tiles' ? "bg-white/15 text-bento-accent font-extrabold" : "text-white/40 hover:text-white")}
+                >
+                  Tiles
+                </button>
+                <button
+                  onClick={() => setViewMode('table')}
+                  className={cn("px-3 py-1.5 rounded-md text-[9px] uppercase font-black tracking-widest transition-all", viewMode === 'table' ? "bg-white/15 text-bento-accent font-extrabold" : "text-[#9ca3af] hover:text-white")}
+                >
+                  Spreadsheet
+                </button>
+              </div>
+
+              {/* Neural/Raw toggle inside Fullscreen */}
+              {(() => {
+                const hasAi = Array.isArray(activeSnapshot.aiResults) && activeSnapshot.aiResults.length > 0 && activeSnapshot.aiResults[0].neuralScore;
+                if (!hasAi) return null;
+                return (
+                  <div className="flex bg-white/5 border border-white/10 rounded-lg p-0.5">
+                    <button 
+                      onClick={() => setSnapshotSortBy('raw' as any)}
+                      className={cn("px-3 py-1.5 rounded-md text-[9px] uppercase font-black tracking-widest transition-all", snapshotSortBy === 'raw' ? "bg-white/15 text-emerald-400 font-extrabold" : "text-white/40 hover:text-white")}
+                    >
+                      Raw Table
+                    </button>
+                    <button 
+                      onClick={() => setSnapshotSortBy('neural' as any)}
+                      className={cn("px-3 py-1.5 rounded-md text-[9px] uppercase font-black tracking-widest transition-all", snapshotSortBy === 'neural' ? "bg-white/15 text-purple-400 font-extrabold" : "text-white/40 hover:text-white")}
+                    >
+                      Neural Analysis
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Scrolling Content Area (Full screen width & height) */}
+          <div 
+            id="snapshot-fullscreen-scroll-container"
+            className="flex-1 bg-[#0b0a15]/80 border border-white/5 rounded-3xl p-6 overflow-auto custom-scrollbar flex flex-col text-left"
+          >
+            {snapshotSortBy === 'raw' ? (
+              <div className="flex-1 bg-black rounded-xl p-4 overflow-auto custom-scrollbar border border-white/10 h-full mb-6">
+                {Array.isArray(activeSnapshot.rawResults) ? (
+                  <>
+                    <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
+                      {activeSnapshot.screenerMode?.includes('Unified') ? (
+                        <table className="w-full text-left text-[11px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
+                          <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-bold">
+                            <tr>
+                              <th className="p-3 text-[10px]">BUCKET</th>
+                              <th className="p-3 text-[10px]">TICKER</th>
+                              <th className="p-3 text-[10px]">PRICE</th>
+                              <th className="p-3 text-[10px]">GATE SIG</th>
+                              <th className="p-3 text-[10px]">REV STATE</th>
+                              <th className="p-3 text-[10px]">COMP</th>
+                              <th className="p-3 text-[10px]">STEAM</th>
+                              <th className="p-3 text-[10px]">QUALITY</th>
+                              <th className="p-3 text-[10px]">VALUATION</th>
+                              <th className="p-3 text-[10px]">TECHNICAL</th>
+                              <th className="p-3 text-[10px]">RISK/REWARD</th>
+                              <th className="p-3 text-[10px]">UPSIDE (FV)</th>
+                              <th className="p-3 text-[10px]">STOP</th>
+                              <th className="p-3 text-[10px]">TARGET</th>
+                              <th className="p-3 text-[10px]">MA STACK</th>
+                              <th className="p-3 text-[10px]">VOL↑</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeSnapshot.rawResults.map((r: any, i: number) => (
+                              <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                <td className="p-3 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: r.bucket?.includes("3-WAY") ? "#a78bfa" : r.bucket?.includes("STRONG BUY") ? "#00ff66" : r.bucket?.includes("BUY ") ? "#10b981" : r.bucket?.includes("CS+Gate") ? "#f97316" : r.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{r.bucket}</td>
+                                <td className="p-3 font-bold text-blue-400">
+                                  <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
+                                </td>
+                                <td className="p-3">
+                                  <a
+                                    href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="hover:underline text-[rgba(255,255,255,0.95)]"
+                                  >
+                                    ${r.price?.toFixed(2) || r.close?.toFixed(2)}
+                                  </a>
+                                </td>
+                                <td className="p-3" style={{color: r.gate_sig === "STRONG BUY" || r.gate_sig === "BUY" ? "#00ff66" : r.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{r.gate_sig}</td>
+                                <td className="p-3" style={{color: r.rev_state?.includes("STEAM") ? "#ff4400" : r.rev_state?.includes("BOTTOM") ? "#aaffaa" : r.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{r.rev_state}</td>
+                                <td className="p-3 text-emerald-400">{r.composite}</td>
+                                <td className="p-3">{r.steam}/14</td>
+                                <td className="p-3" style={{color: r.g1?.includes('PASS') ? '#00ff44' : r.g1?.includes('WATCH') ? '#fbbf24' : '#ff4444'}}>{r.g1}</td>
+                                <td className="p-3" style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : r.g2?.includes('OVERVALUED') ? '#f87171' : '#9ca3af'}}>{r.g2}</td>
+                                <td className="p-3" style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}}>{r.g3}</td>
+                                <td className="p-3" style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}}>{r.g4} ({r.rr || 'N/A'})</td>
+                                <td className="p-3 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
+                                <td className="p-3 text-red-400">${r.algoExit || r.stop || r.n_exit}</td>
+                                <td className="p-3 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
+                                <td className="p-3" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
+                                <td className="p-3 text-yellow-400">{r.vol_surge}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (activeSnapshot.screenerMode?.toLowerCase().includes('coiled') || activeSnapshot.screenerMode?.toLowerCase().includes('spring')) ? (
+                        <table className="w-full text-left text-[11px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
+                          <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-semibold text-[10px]">
+                            <tr>
+                              <th className="p-3">TICKER</th>
+                              <th className="p-3">PRICE</th>
+                              <th className="p-3">STATE</th>
+                              <th className="p-3">SETUP</th>
+                              <th className="p-3">NEURAL SCORE</th>
+                              <th className="p-3">ACC RATIO</th>
+                              <th className="p-3">DIST RATIO</th>
+                              <th className="p-3">BOX SPREAD</th>
+                              <th className="p-3 text-sky-300">REV GROWTH</th>
+                              <th className="p-3 text-emerald-400">UPSIDE (FV)</th>
+                              <th className="p-3">ANALYST TARGET</th>
+                              <th className="p-3">DYNAMIC R:R</th>
+                              <th className="p-3">NOISE SIGNALS</th>
+                              <th className="p-3">STOP</th>
+                              <th className="p-3">TARGET</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeSnapshot.rawResults.map((r: any, i: number) => (
+                              <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                <td className="p-3 font-bold text-blue-400">
+                                  <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
+                                </td>
+                                <td className="p-3">
+                                  <a
+                                    href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="hover:underline text-[rgba(255,255,255,0.95)] font-mono"
+                                  >
+                                    ${(r.price || r.close)?.toFixed(2)}
+                                  </a>
+                                </td>
+                                <td className="p-3 font-bold" style={{color: r.signal === "HOT_BREAKOUT" ? "#00ff66" : r.signal === "DROP_BREAKDOWN" ? "#ff4444" : r.signal?.includes("COLD") ? "#60a5fa" : "#fbbf24"}}>{r.state || r.signal}</td>
+                                <td className="p-3 font-bold text-yellow-400">{r.setup || "WATCHING"}</td>
+                                <td className="p-3 text-emerald-400 font-bold">{r.neural_score || r.bull_score || "—"}</td>
+                                <td className="p-3">{r.acc_ratio || r.vol_ratio || "1.00"}x</td>
+                                <td className="p-3">{r.dist_ratio || "1.00"}x</td>
+                                <td className="p-3 text-gray-400">${r.box_spread?.toFixed(2)} (${r.box_low?.toFixed(2)} - ${r.box_high?.toFixed(2)})</td>
+                                <td className="p-3 text-sky-400 font-bold">{r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct}%</td>
+                                <td className="p-3 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
+                                <td className="p-3 text-indigo-400">${r.analyst_target?.toFixed(2)}</td>
+                                <td className="p-3 font-bold" style={{color: parseFloat(r.dynamic_rr) >= 2.0 ? "#00ff66" : "#fbbf24"}}>{r.dynamic_rr || "1.5x"}</td>
+                                <td className="p-3 text-gray-300 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.noise_signals}>{r.noise_signals}</td>
+                                <td className="p-3 text-red-400 font-bold">${(r.n_exit || r.algoExit || r.stop)}</td>
+                                <td className="p-3 text-blue-400 font-bold">${(r.n_tp1 || r.algoTP1 || r.target)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <table className="w-full text-left text-sm text-white border-collapse">
+                          <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-[#cfd8ff]/70 font-bold">
+                            <tr>
+                              <th className="p-3">Ticker</th>
+                              <th className="p-3">Score</th>
+                              <th className="p-3">State</th>
+                              <th className="p-3">Algo Entry</th>
+                              <th className="p-3">Algo Exit</th>
+                              <th className="p-3">Algo TP1</th>
+                              <th className="p-3">Algo TP2</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeSnapshot.rawResults.map((r: any, i: number) => (
+                              <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                <td className="p-3">
+                                  <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-bold">
+                                    {r.ticker}
+                                  </a>
+                                </td>
+                                <td className="p-3 text-emerald-400">{typeof (r.sort_score || r.bull_score || r.neural_score) === 'number' ? (r.sort_score || r.bull_score || r.neural_score).toFixed(1) : (r.sort_score || r.bull_score || r.neural_score)}</td>
+                                <td className="p-3">{r.rev_state || r.state || r.cs_signal || r.signal}</td>
+                                <td className="p-3">
+                                  <a
+                                    href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="hover:underline text-[rgba(255,255,255,0.95)]"
+                                  >
+                                    ${r.algoEntry || r.n_entry || r.close}
+                                  </a>
+                                </td>
+                                <td className="p-3">${r.algoExit || r.n_exit}</td>
+                                <td className="p-3 text-purple-400">${r.algoTP1 || r.n_tp1}</td>
+                                <td className="p-3 text-purple-500">${r.algoTP2 || r.n_tp2}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                    {renderRawScreenerMobile(activeSnapshot.rawResults, !!activeSnapshot.screenerMode?.includes('Unified'))}
+                  </>
+                ) : (
+                  <div className="whitespace-pre font-mono text-[11px] text-emerald-500/70">{activeSnapshot.rawOutput}</div>
+                )}
+              </div>
+            ) : (
+              <div className="flex-1 text-sm text-left text-white/80 overflow-auto custom-scrollbar p-4 bg-black border border-white/5 rounded-xl h-full">
+                {Array.isArray(activeSnapshot.aiResults) && activeSnapshot.aiResults.length > 0 && activeSnapshot.aiResults[0].neuralScore ? (
+                  <>
+                    <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
+                      <table className="w-full text-left text-sm text-white border-collapse">
+                        {activeSnapshot.screenerMode?.includes('Unified') ? (
+                          <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-[#cfd8ff]/70 whitespace-nowrap font-bold">
+                            <tr>
+                              <th className="p-3">Bucket</th>
+                              <th className="p-3">Ticker</th>
+                              <th className="p-3">N-Score</th>
+                              <th className="p-3">Rec.</th>
+                              <th className="p-3">Price</th>
+                              <th className="p-3 text-amber-400 font-bold">Est Upside</th>
+                              <th className="p-3 text-emerald-400 font-bold">TP1 Upside</th>
+                              <th className="p-3 text-teal-400 font-bold">TP2 Upside</th>
+                              <th className="p-3">N-Entry</th>
+                              <th className="p-3">N-Exit</th>
+                              <th className="p-3 text-emerald-400">N-TP1</th>
+                              <th className="p-3 text-teal-400 font-bold">N-TP2</th>
+                              <th className="p-3">Gate Sig</th>
+                              <th className="p-3">Rev State</th>
+                              <th className="p-3">Comp</th>
+                              <th className="p-3">Steam</th>
+                              <th className="p-3">MA Stack</th>
+                              <th className="p-3 min-w-[250px]">Technical</th>
+                              <th className="p-3 min-w-[250px]">Fundamentals</th>
+                              <th className="p-3 min-w-[250px]">News</th>
+                              <th className="p-3 min-w-[250px]">Moat</th>
+                              <th className="p-3 min-w-[250px]">Competition</th>
+                              <th className="p-3 min-w-[250px]">Insider</th>
+                              <th className="p-3 min-w-[250px]">Bull Case (🐂 Strings)</th>
+                              <th className="p-3 min-w-[250px]">Bear Case (🐻 Strings)</th>
+                              <th className="p-3 min-w-[250px]">Final Take (Sent Reason)</th>
+                            </tr>
+                          </thead>
+                        ) : (
+                          <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-[#cfd8ff]/70 font-bold">
+                            <tr>
+                              <th className="p-3 min-w-[60px]">Ticker</th>
+                              <th className="p-3 min-w-[70px]">N-Score</th>
+                              <th className="p-3 min-w-[80px]">Rec.</th>
+                              <th className="p-3 min-w-[80px]">Gate Sig</th>
+                              <th className="p-3 min-w-[80px]">Rev State</th>
+                              <th className="p-3 min-w-[80px]">Comp</th>
+                              <th className="p-3 min-w-[80px]">Steam</th>
+                              <th className="p-3 text-amber-400 font-bold">Est Upside</th>
+                              <th className="p-3 text-emerald-400 font-bold">TP1 Upside</th>
+                              <th className="p-3 text-teal-400 font-bold">TP2 Upside</th>
+                              <th className="p-3 min-w-[80px]">N-Entry</th>
+                              <th className="p-3 min-w-[80px]">N-Exit</th>
+                              <th className="p-3 min-w-[80px]">N-TP1</th>
+                              <th className="p-3 min-w-[80px]">N-TP2</th>
+                              <th className="p-3 min-w-[250px]">Bull Case</th>
+                              <th className="p-3 min-w-[250px]">Bear Case</th>
+                              <th className="p-3 min-w-[250px]">Final Take</th>
+                            </tr>
+                          </thead>
+                        )}
+                        <tbody>
+                          {sortNeuralData(activeSnapshot.aiResults).map((r: any, i: number) => {
+                            if (activeSnapshot.screenerMode?.includes('Unified')) {
+                               const rawMatch = activeSnapshot.rawResults?.find((sr: any) => sr.ticker === r.ticker) || {} as any;
+                               const tp1Up = calcUpsidePct(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice);
+                               const tp2Up = calcUpsidePct(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice);
+                               return (
+                                <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors align-top whitespace-nowrap">
+                                  <td className="p-3 font-bold max-w-[80px] overflow-hidden text-ellipsis" style={{color: rawMatch.bucket?.includes("3-WAY") ? "#a78bfa" : rawMatch.bucket?.includes("CS+Gate") ? "#f97316" : rawMatch.bucket?.includes("CS+Rev") ? "#34d399" : "#60a5fa"}}>{rawMatch.bucket || "N/A"}</td>
+                                  <td className="p-3 font-mono">
+                                    <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-bold">
+                                      {r.ticker}
+                                    </a>
+                                  </td>
+                                  <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
+                                  <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
+                                  <td className="p-3 font-mono">
+                                    <a
+                                      href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="hover:underline text-[rgba(255,255,255,0.95)]"
+                                    >
+                                      ${rawMatch.price?.toFixed(2) || rawMatch.close?.toFixed(2)}
+                                    </a>
+                                  </td>
+                                  <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}%` : rawMatch.upside_pct ? `${rawMatch.upside_pct}%` : '—'}</td>
+                                  <td className="p-3 font-mono text-emerald-400 font-bold">{tp1Up}</td>
+                                  <td className="p-3 font-mono text-teal-400 font-bold">{tp2Up}</td>
+                                  <td className="p-3 font-mono">{cleanPrice(rawMatch.algoEntry || rawMatch.n_entry)}</td>
+                                  <td className="p-3 font-mono text-red-400">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit)}</td>
+                                  <td className="p-3 font-mono text-emerald-400">{cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1)}</td>
+                                  <td className="p-3 font-mono text-teal-400">{cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2)}</td>
+                                  <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
+                                  <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
+                                  <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
+                                  <td className="p-3 font-mono">{rawMatch.steam ? `${rawMatch.steam}/14` : '—'}</td>
+                                  <td className="p-3 font-mono" style={{color: rawMatch.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{rawMatch.ma_stack || '—'}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-indigo-400 whitespace-normal min-w-[250px]">{r.technical}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-blue-300 whitespace-normal min-w-[250px]">{r.fundamentals}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-gray-300 whitespace-normal min-w-[250px]">{r.news}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-purple-300 whitespace-normal min-w-[250px]">{r.moat}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-orange-300 whitespace-normal min-w-[250px]">{r.competition}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-teal-300 whitespace-normal min-w-[250px]">{r.insider}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[250px]">{r.bullCase}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[250px]">{r.bearCase}</td>
+                                  <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
+                                </tr>
+                               );
+                            }
+                            const rawMatch = activeSnapshot.rawResults?.find((sr: any) => sr.ticker === r.ticker) || {} as any;
+                            const tp1Up = calcUpsidePct(r.neuralTP1 || r.tp1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close);
+                            const tp2Up = calcUpsidePct(r.neuralTP2 || r.tp2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close);
+                            return (
+                              <tr key={i} className="border-b border-[#243056]/40 hover:bg-white/5 transition-colors align-top">
+                                <td className="p-3 font-mono">
+                                  <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-bold">
+                                    {r.ticker}
+                                  </a>
+                                </td>
+                                <td className="p-3 font-mono text-purple-400">{r.neuralScore}</td>
+                                <td className="p-3 uppercase font-bold tracking-widest text-[10px]">{r.neuralRecommendation}</td>
+                                <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
+                                <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
+                                <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
+                                <td className="p-3 font-mono">{rawMatch.steam ? `${rawMatch.steam}/14` : '—'}</td>
+                                <td className="p-3 font-mono text-amber-400 font-bold">{rawMatch.upside_pct ? `${rawMatch.upside_pct > 0 ? '+' : ''}${rawMatch.upside_pct}%` : '—'}</td>
+                                <td className="p-3 font-mono text-emerald-400 font-bold">{tp1Up}</td>
+                                <td className="p-3 font-mono text-teal-400 font-bold">{tp2Up}</td>
+                                <td className="p-3 font-mono">{cleanPrice(r.neuralEntry)}</td>
+                                <td className="p-3 font-mono">{cleanPrice(r.neuralExit)}</td>
+                                <td className="p-3 font-mono">{cleanPrice(r.neuralTP1)}</td>
+                                <td className="p-3 font-mono">{cleanPrice(r.neuralTP2)}</td>
+                                <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[250px]">{r.bullCase}</td>
+                                <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[250px]">{r.bearCase}</td>
+                                <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
+                              </tr>
+                             );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {renderNeuralScreenerMobile(sortNeuralData(activeSnapshot.aiResults), !!activeSnapshot.screenerMode?.includes('Unified'), activeSnapshot.rawResults)}
+                  </>
+                ) : (
+                  <div className="markdown-body"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{activeSnapshot.neuralOutput || "*No neural analysis saved for this snapshot.*"}</Markdown></div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 2. REPORT FULLSCREEN OVERLAY */}
+      {isReportFullscreen && activeReport && (
+        <div 
+          className={cn(
+            "fixed inset-0 z-[250] bg-[#070b19] p-4 sm:p-6 flex flex-col space-y-4 h-screen w-screen overflow-hidden text-[#cfd8ff] transition-all duration-300",
+            isUniversalChatOpen ? "sm:pr-[510px] md:pr-[610px] lg:pr-[750px]" : ""
+          )}
+        >
+          {/* Header context bar */}
+          <div className="bg-[#121935]/90 border border-[#243056] p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xl shrink-0 backdrop-blur-md">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsReportFullscreen(false)}
+                className="flex items-center gap-2 text-xs font-black text-white bg-red-500/20 border border-red-500/40 px-3.5 py-2 rounded-xl hover:bg-gradient-to-r hover:from-red-600 hover:to-red-500 hover:text-white transition-all cursor-pointer active:scale-95"
+              >
+                <ArrowLeft className="w-4 h-4 text-red-400 font-bold" />
+                <span>Go Back (Exit Fullscreen)</span>
+              </button>
+              <div className="text-left">
+                <span className="text-[9px] uppercase font-bold text-gray-400 block font-mono">Report Subject</span>
+                <span className="text-xs font-black text-amber-500 font-mono">{activeReport.ticker}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col text-center hidden md:flex">
+              <h4 className="text-[9px] font-black uppercase text-[#cfd8ff]/70 font-mono tracking-widest">⚡ IMMERSIVE RESEARCH DESK</h4>
+              <p className="text-xs font-black text-white mt-0.5">
+                {activeReport.analysisType?.toUpperCase()} RESEARCH REPORT ANALYSIS
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={() => {
+                  setRawOutput(activeReport.output);
+                  setGeneratedPrompt(activeReport.prompt);
+                  setAnalysisType(activeReport.analysisType);
+                  if (activeReport.analysisType === 'stock') setTicker(activeReport.ticker);
+                  setLogData(prev => ({ 
+                    ...prev, 
+                    reportId: activeReport.id || '', 
+                    ticker: activeReport.ticker === 'MACRO' ? '' : activeReport.ticker 
+                  }));
+                  setIsReportFullscreen(false);
+                  setActiveTab('generate');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 rounded-lg text-[10px] font-black uppercase tracking-widest text-[#a5b4fc] transition-all hover:scale-105"
+              >
+                Load in Research Hub
+              </button>
+
+              {(() => {
+                const isLogged = activeReport.analysisType === 'stock'
+                  ? stockTracks.some(t => t.reportId === activeReport.id)
+                  : activeReport.analysisType === 'multi_stock'
+                    ? stockTracks.some(t => t.reportId === activeReport.id)
+                    : macroTracks.some(t => t.reportId === activeReport.id);
+                
+                return (
+                  <button
+                    disabled={isLogged}
+                    onClick={() => handleDirectLogToTracker(activeReport.id, activeReport.output, activeReport.analysisType, activeReport.ticker)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                      isLogged 
+                        ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400 cursor-not-allowed" 
+                        : "bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-400 hover:scale-105"
+                    )}
+                  >
+                    {isLogged ? "Logged ✓" : "Log to Tracker"}
+                  </button>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Scrolling Content Area (Full screen width & height) */}
+          <div 
+            id="report-fullscreen-scroll-container"
+            className="flex-1 bg-[#0b0a15]/80 border border-white/5 rounded-3xl p-6 md:p-12 overflow-auto custom-scrollbar text-left w-full h-full"
+          >
+            {renderReportWithFollowUpInBetween(activeReport.output, activeReport.ticker, activeReport.id, activeReport.analysisType)}
+          </div>
+        </div>
+      )}
 
       {renderUniversalAiCompanion()}
     </div>
