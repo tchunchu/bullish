@@ -237,7 +237,7 @@ async function fetchWithRetry(ticker: string, days: number = 120) {
       
       // Patch the last quote with real-time live data to ensure screener uses actual live prices
       try {
-        const liveQuote = await yahooFinance.quote(ticker, { validateResult: false });
+        const liveQuote = await yahooFinance.quote(ticker, {}, { validateResult: false });
         if (liveQuote && liveQuote.regularMarketPrice) {
           const lastQ = quotes[quotes.length - 1];
           lastQ.close = liveQuote.regularMarketPrice;
@@ -298,7 +298,7 @@ async function fetchWithRetry(ticker: string, days: number = 120) {
         quotes.sort((a: any, b: any) => a.date.getTime() - b.date.getTime());
         if (quotes.length >= 30) {
           try {
-            const liveQuote = await yahooFinance.quote(ticker, { validateResult: false });
+            const liveQuote = await yahooFinance.quote(ticker, {}, { validateResult: false });
             if (liveQuote && liveQuote.regularMarketPrice) {
               const lastQ = quotes[quotes.length - 1];
               lastQ.close = liveQuote.regularMarketPrice;
@@ -417,23 +417,115 @@ async function startServer() {
     let pythonPath = 'python3';
     const venvPath1 = path.join(process.cwd(), 'myenv', 'bin', 'python3');
     const venvPath2 = path.join(process.cwd(), 'myenv', 'bin', 'python');
-    if (existsSync(venvPath1)) {
-      pythonPath = venvPath1;
-    } else if (existsSync(venvPath2)) {
-      pythonPath = venvPath2;
-    }
+    const venvExists = existsSync(venvPath1) || existsSync(venvPath2);
     
-    console.log(`[Python Core Check] Validating environment using binary: ${pythonPath}`);
+    if (venvExists) {
+      const candidate = existsSync(venvPath1) ? venvPath1 : venvPath2;
+      try {
+        // Verify venv binary actually works
+        execSync(`"${candidate}" -c "print('Venv python functional')"`, { stdio: 'ignore' });
+        pythonPath = candidate;
+        console.log(`[Python Core Check] Selected functional venv Python path: ${pythonPath}`);
+      } catch (err) {
+        console.warn(`[Python Core Check] Venv python at ${candidate} exists but is not functional. Falling back to system python3.`);
+        pythonPath = 'python3';
+      }
+    } else {
+      console.log(`[Python Core Check] No local venv found. Defaulting to system python3.`);
+      pythonPath = 'python3';
+    }
+
+    let depCheckSuccess = false;
     try {
       execSync(`"${pythonPath}" -c "import yfinance, pandas, numpy, requests"`, { stdio: 'ignore' });
-      console.log("[Python Core Check] All dependencies (yfinance, pandas, numpy, requests) are fully operational!");
+      console.log(`[Python Core Check] All dependencies (yfinance, pandas, numpy, requests) are fully operational on ${pythonPath}!`);
+      depCheckSuccess = true;
     } catch (e) {
-      console.log("[Python Core Check] Some dependencies are missing. Installing them inside our dedicated sandbox...");
-      execSync(`"${pythonPath}" -m pip install yfinance pandas numpy requests`, { stdio: 'inherit' });
-      console.log("[Python Core Check] Auto-repair of sandbox packages succeeded!");
+      console.log(`[Python Core Check] Some dependencies are missing on ${pythonPath}. Attempting dynamic install/repair...`);
+    }
+
+    if (!depCheckSuccess) {
+      // Let's attempt installation!
+      let installSuccess = false;
+
+      // Plan A: Install on selected python path
+      try {
+        console.log(`[Python Core Check] [Plan A] Running pip install on: ${pythonPath}`);
+        execSync(`"${pythonPath}" -m pip install yfinance pandas numpy requests`, { stdio: 'inherit' });
+        installSuccess = true;
+        console.log("[Python Core Check] Plan A installation succeeded!");
+      } catch (errA: any) {
+        console.warn(`[Python Core Check] Plan A installation failed: ${errA.message}`);
+        
+        // Plan B: If path was venv and failed because pip is missing or broken, try bootstrapping pip
+        if (pythonPath !== 'python3') {
+          console.log("[Python Core Check] [Plan B] Attempting to bootstrap pip in the venv first...");
+          const getPipPath = path.join(process.cwd(), 'get-pip.py');
+          if (existsSync(getPipPath)) {
+            try {
+              execSync(`"${pythonPath}" "${getPipPath}"`, { stdio: 'inherit' });
+              console.log("[Python Core Check] Pip bootstrap succeeded! Retrying dependencies install...");
+              execSync(`"${pythonPath}" -m pip install yfinance pandas numpy requests`, { stdio: 'inherit' });
+              installSuccess = true;
+              console.log("[Python Core Check] Dependencies install inside venv succeeded after pip bootstrap!");
+            } catch (errB: any) {
+              console.warn(`[Python Core Check] Plan B venv pip bootstrap/install failed: ${errB.message}`);
+            }
+          } else {
+            console.warn("[Python Core Check] get-pip.py script not found. Skipping Plan B bootstrap.");
+          }
+        }
+      }
+
+      // Plan C: Fallback to global/system python3 with wide range of parameters
+      if (!installSuccess && pythonPath !== 'python3') {
+        const altPython = 'python3';
+        console.log(`[Python Core Check] [Plan C] Sandbox installation failed. Falling back to system ${altPython}...`);
+        
+        // 1. Try checking if system python already has the imports
+        try {
+          execSync(`"${altPython}" -c "import yfinance, pandas, numpy, requests"`, { stdio: 'ignore' });
+          console.log(`[Python Core Check] System ${altPython} already has all required packages! Switch successful.`);
+          pythonPath = altPython;
+          installSuccess = true;
+        } catch (sysCheckErr) {
+          // 2. Try systemic installs with --break-system-packages or --user options
+          const installCommands = [
+            `"${altPython}" -m pip install --user --break-system-packages yfinance pandas numpy requests`,
+            `"${altPython}" -m pip install --break-system-packages yfinance pandas numpy requests`,
+            `"${altPython}" -m pip install --user yfinance pandas numpy requests`,
+            `"${altPython}" -m pip install yfinance pandas numpy requests`
+          ];
+
+          for (const cmd of installCommands) {
+            try {
+              console.log(`[Python Core Check] Attempting: ${cmd}`);
+              execSync(cmd, { stdio: 'inherit' });
+              console.log(`[Python Core Check] System package install succeeded using: ${cmd}`);
+              pythonPath = altPython;
+              installSuccess = true;
+              break;
+            } catch (cmdErr: any) {
+              console.warn(`[Python Core Check] Command failed: ${cmd}. Error: ${cmdErr.message}`);
+            }
+          }
+        }
+      }
+
+      if (installSuccess) {
+        // Final verification check
+        try {
+          execSync(`"${pythonPath}" -c "import yfinance, pandas, numpy, requests"`, { stdio: 'ignore' });
+          console.log(`[Python Core Check] Validation verified! Python environment is ready using binary: ${pythonPath}`);
+        } catch (verifyErr) {
+          console.warn("[Python Core Check] Verification failed after apparent successful installation. Proceeding anyway.");
+        }
+      } else {
+        console.warn("[Python Core Check] WARNING: All automated Python environment repairs were exhausted. Some optional features may operate in degraded fallback modes.");
+      }
     }
   } catch (err: any) {
-    console.error("[Python Core Check] Issue during Python validation:", err.message);
+    console.error("[Python Core Check] Critical catch-all during Python validation:", err.message);
   }
 
   // --- VCS Indicator Helpers (v7.0 Parity) ---
@@ -1975,8 +2067,8 @@ Output EXACTLY as a JSON object:
       
       const feeds = [
         { name: "Yahoo Finance", url: "https://finance.yahoo.com/news/rss" },
-        { name: "WSJ Markets", url: "https://feeds.a.dj.com/rss/RSSMarketsMain.xml" },
-        { name: "WSJ Business", url: "https://feeds.a.dj.com/rss/WSJandBusiness.xml" },
+        { name: "WSJ Markets", url: "https://news.google.com/rss/search?q=site:wsj.com+markets+when:1d&hl=en-US&gl=US&ceid=US:en" },
+        { name: "WSJ Business", url: "https://news.google.com/rss/search?q=site:wsj.com+business+when:1d&hl=en-US&gl=US&ceid=US:en" },
         { name: "CNBC Finance", url: "https://www.cnbc.com/id/10000664/device/rss/rss.html" },
         { name: "CNBC Markets", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
         { name: "MarketWatch", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
@@ -2041,7 +2133,7 @@ Output EXACTLY as a JSON object:
 
       const marketData = await Promise.all(marketTickers.map(async (ticker) => {
         try {
-          const q = await yahooFinance.quote(ticker, { validateResult: false });
+          const q = await yahooFinance.quote(ticker, {}, { validateResult: false });
           return {
             ticker,
             name: marketNames[ticker] || ticker,
