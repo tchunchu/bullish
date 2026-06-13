@@ -3513,6 +3513,17 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
   const [historySubTab, setHistorySubTab] = useState<'screener' | 'reports' | 'news'>('screener');
   const [activeReport, setActiveReport] = useState<Report | null>(null);
   const [uploadedReports, setUploadedReports] = useState<UploadedHtmlReport[]>([]);
+
+  // Offline Analysis / Llama Prompt Saving Hooks
+  const [isGeneratingOffline, setIsGeneratingOffline] = useState(false);
+  const [offlineStage, setOfflineStage] = useState<'idle' | 'resolving_peers' | 'running_python' | 'ready' | 'error'>('idle');
+  const [offlinePayload, setOfflinePayload] = useState('');
+  const [copiedOffline, setCopiedOffline] = useState(false);
+
+  const [pastedReportText, setPastedReportText] = useState('');
+  const [pastedReportTicker, setPastedReportTicker] = useState('');
+  const [isSavingPastedReport, setIsSavingPastedReport] = useState(false);
+  const [pastedSuccess, setPastedSuccess] = useState(false);
   const [activeNewsArchiveReport, setActiveNewsArchiveReport] = useState<UploadedHtmlReport | null>(null);
 
   // Fullscreen Immersive Reading View Hooks
@@ -7353,6 +7364,293 @@ ${instructionsForFooter}
   };
 
 
+  const runOfflineAnalysis = async () => {
+    if (!user) {
+      alert("Join Bullish AI to access offline research tools!");
+      return;
+    }
+
+    const targetTickerClean = ticker.trim().toUpperCase();
+    if (!targetTickerClean) {
+      alert("Please enter a valid target stock ticker.");
+      return;
+    }
+
+    setIsGeneratingOffline(true);
+    setOfflineStage('resolving_peers');
+    setOfflinePayload('');
+    setCopiedOffline(false);
+
+    try {
+      // Step 1: Resolve Peer Group Tickers
+      let peersToUse: string[] = [];
+      let multiPeersMap: Record<string, string[]> = {};
+      let allUniqueSymbols: string[] = [targetTickerClean];
+
+      const userPeers = peers ? peers.split(',').map(s => s.trim().toUpperCase()).filter(Boolean) : [];
+      const isStrictOverride = overrideAiPeers && userPeers.length > 0;
+
+      try {
+        let peerPrompt = '';
+        if (isStrictOverride) {
+          multiPeersMap[targetTickerClean] = userPeers;
+        } else {
+          if (userPeers.length > 0) {
+            peerPrompt = `You are an elite comparative quantitative stock analyst. I have the following list of target ticker stocks: ${targetTickerClean}.
+For EACH target ticker in the list:
+1. Identify exactly 3 closest competitor/peer stock tickers that are highly comparable (meaning they overlap in platform economics, geography, growth profiles, or valuation cohorts).
+2. The user has also provided a pool of manual peer suggestions: [${userPeers.join(', ')}]. Map/route only the highly relevant or comparable tickers from this manual pool to the correct target ticker as "mappedManualPeers". If a manual peer doesn't relate to a target ticker, do not assign it.
+
+Provide your output strictly as a JSON object where keys are the target tickers, and values are objects containing "inferredDefaultPeers" (array of 3 tickers) and "mappedManualPeers" (array of assigned manual tickers).
+Example output:
+{
+  "${targetTickerClean}": {
+    "inferredDefaultPeers": ["MSFT", "GOOG", "META"],
+    "mappedManualPeers": []
+  }
+}
+Do NOT include any extra explanations, do not write markdown fences, literally just output valid raw JSON text.`;
+          } else {
+            peerPrompt = `You are an elite comparative quantitative stock analyst. I have the following list of target ticker stocks: ${targetTickerClean}.
+For EACH target ticker in the list, please identify exactly 3 closest competitor/peer stock tickers that are highly comparable (meaning they overlap in platform economics, geography, growth profiles, or valuation cohorts).
+Provide your output strictly as a JSON object of arrays, mapping each target ticker to its list of competitor symbols.
+Example output:
+{
+  "${targetTickerClean}": ["MSFT", "GOOG", "META"]
+}
+Do NOT include any extra explanations, do not write markdown fences, literally just output valid raw JSON text.`;
+          }
+        }
+
+        if (peerPrompt) {
+          const peerRes = await ai.models.generateContent({
+            model: selectedModel,
+            contents: peerPrompt,
+            config: {
+              responseMimeType: "application/json"
+            }
+          });
+          
+          const textCleaned = (peerRes.text || "").trim();
+          multiPeersMap = JSON.parse(textCleaned);
+        }
+      } catch (e) {
+        console.warn("Dynamic peer group resolution experienced an issue, preparing default fallbacks.", e);
+        multiPeersMap[targetTickerClean] = [];
+      }
+
+      // Finalize lists for each target ticker
+      if (isStrictOverride) {
+        const userMapped = multiPeersMap[targetTickerClean] || userPeers;
+        const uniqueCleaned = Array.from(new Set(
+          (Array.isArray(userMapped) ? userMapped : [])
+            .map(s => s.trim().toUpperCase())
+            .filter(s => s && s.length <= 6 && /^[A-Z\-]+$/.test(s) && s !== targetTickerClean && userPeers.includes(s))
+        ));
+        multiPeersMap[targetTickerClean] = uniqueCleaned;
+      } else {
+        const entry = multiPeersMap[targetTickerClean];
+        let rawAiPeers: string[] = [];
+        let routedManualPeers: string[] = [];
+
+        if (entry && !Array.isArray(entry) && typeof entry === 'object') {
+          rawAiPeers = (entry as any).inferredDefaultPeers || [];
+          routedManualPeers = (entry as any).mappedManualPeers || [];
+        } else if (Array.isArray(entry)) {
+          rawAiPeers = entry;
+          routedManualPeers = userPeers;
+        } else {
+          routedManualPeers = userPeers;
+        }
+        
+        const aiPeersCleaned = Array.from(new Set(
+          rawAiPeers
+            .map(s => s.trim().toUpperCase())
+            .filter(s => s && s.length <= 6 && /^[A-Z\-]+$/.test(s) && s !== targetTickerClean)
+        )).slice(0, 3);
+
+        const extraUserPeers = routedManualPeers
+          .map(s => s.trim().toUpperCase())
+          .filter(s => s && s.length <= 6 && /^[A-Z\-]+$/.test(s) && s !== targetTickerClean && !aiPeersCleaned.includes(s));
+
+        multiPeersMap[targetTickerClean] = [...aiPeersCleaned, ...extraUserPeers];
+      }
+
+      const allSymbolsSet = new Set<string>([targetTickerClean]);
+      if (Array.isArray(multiPeersMap[targetTickerClean])) {
+        multiPeersMap[targetTickerClean].forEach(p => {
+          allSymbolsSet.add(p);
+        });
+      }
+      allUniqueSymbols = Array.from(allSymbolsSet).slice(0, 15);
+      peersToUse = allUniqueSymbols.filter(s => s !== targetTickerClean);
+      setResolvedPeers(peersToUse);
+
+      // Step 2: Running Secure Python Data Collection
+      setOfflineStage('running_python');
+      const pythonCode = `
+import yfinance as yf
+import json
+
+symbols = ${JSON.stringify(allUniqueSymbols)}
+results = {}
+
+for sym in symbols:
+    try:
+        ticker = yf.Ticker(sym)
+        info = ticker.info or {}
+        fast = getattr(ticker, 'fast_info', {}) or {}
+        
+        results[sym] = {
+            "price": info.get("regularMarketPrice") or info.get("currentPrice") or fast.get("last_price") or "N/A",
+            "marketCap": info.get("marketCap") or fast.get("market_cap") or "N/A",
+            "trailingPE": info.get("trailingPE") or "N/A",
+            "forwardPE": info.get("forwardPE") or "N/A",
+            "pegRatio": info.get("pegRatio") or "N/A",
+            "priceToSales": info.get("priceToSalesTrailing12Months") or "N/A",
+            "priceToBook": info.get("priceToBook") or "N/A",
+            "enterpriseToEbitda": info.get("enterpriseToEbitda") or "N/A",
+            "dividendYield": info.get("dividendYield") or "N/A",
+            "revenueGrowth": info.get("revenueGrowth") or "N/A",
+            "grossMargins": info.get("grossMargins") or "N/A",
+            "profitMargins": info.get("profitMargins") or "N/A",
+            "operatingMargins": info.get("operatingMargins") or "N/A",
+            "debtToEquity": info.get("debtToEquity") or "N/A",
+            "currentRatio": info.get("currentRatio") or "N/A",
+            "returnOnEquity": info.get("returnOnEquity") or "N/A",
+            "targetMeanPrice": info.get("targetMeanPrice") or "N/A",
+            "sector": info.get("sector") or "N/A"
+        }
+        try:
+            news_items = ticker.news[:4] if hasattr(ticker, "news") else []
+            results[sym]["headlines"] = [n.get("title") for n in news_items if n.get("title")]
+        except:
+            results[sym]["headlines"] = []
+    except Exception as e:
+        results[sym] = {"error": str(e)}
+
+print(json.dumps(results, indent=2))
+      `.trim();
+
+      let pythonDataContext = "";
+      let rawPythonOut = "";
+
+      const pythonRes = await fetch("/api/run-python", {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ code: pythonCode })
+      });
+      
+      if (pythonRes.ok) {
+        rawPythonOut = await pythonRes.text();
+        setHarvestedRaw(rawPythonOut);
+        if (rawPythonOut && !rawPythonOut.includes("Server Native Environment Failed")) {
+          pythonDataContext = formatPythonStockData(rawPythonOut, targetTickerClean);
+        }
+      }
+
+      // Step 3: Preparing offline prompt package
+      const corePrompt = buildStockPrompt(targetTickerClean, peersToUse);
+      
+      const instructionsForFooter = `
+===
+**REQUIRED AD-HOC SYSTEM DIRECTIVES (RECONCILIATION FOOTER):**
+At the absolute bottom of the report, you MUST include a dedicated footer section titled exactly:
+"### 📊 REPORT METADATA & DATASETS REFERRED"
+
+In this footer section, format and output the following items neatly:
+1. **Model Powered**: Tell the user that the report was generated by the high-intelligence **Offline LLM (Llama / Local)** engine.
+2. **Harvested Datasets (Ground Truth)**: List the exact datasets provided in this prompt context that were fetched outside the AI limits by the native Python subprocess daemon (e.g., yfinance pricing, Trailing/Forward PE, PEG ratio, Price/Sales, EV/EBITDA, Gross margins, Debt-to-Equity, Solvency Ratios, and news headlines).
+3. **Ecosystem Links & Grounded References**: Provide markdown links citing relevant financial sites or lookup pages. For example, for ticker ${targetTickerClean}, print: '- [Yahoo Finance ${targetTickerClean}](https://finance.yahoo.com/quote/${targetTickerClean})'. Also include similar links for target comparable competitors researched today.
+`;
+
+      const blendedOfflinePrompt = `### 🟢 SYSTEM FINANCIAL GROUND-TRUTH:
+The following high-fidelity real-time fundamental, solvency, margins, and news metadata were retrieved outside of the AI limits from yfinance via our secure native sandbox process. Fully utilize, respect, and align your report's sections (PE ratios, growth metrics, target prices, margins) with these numbers:
+
+${pythonDataContext}
+
+---
+
+### 📘 MAIN REPORT SPECIFICATIONS & PROMPT:
+${corePrompt}
+
+${instructionsForFooter}`;
+
+      setOfflinePayload(blendedOfflinePrompt);
+      setOfflineStage('ready');
+    } catch (err: any) {
+      console.error(err);
+      setOfflineStage('error');
+      alert("Error preparing offline package: " + err.message);
+    } finally {
+      setIsGeneratingOffline(false);
+    }
+  };
+
+  const savePastedReport = async () => {
+    if (!user) {
+      alert("Join Bullish AI to save pasted research!");
+      return;
+    }
+    if (!pastedReportText.trim()) {
+      alert("Please paste the markdown text report first.");
+      return;
+    }
+
+    setIsSavingPastedReport(true);
+    setPastedSuccess(false);
+
+    try {
+      const finalTicker = pastedReportTicker.trim().toUpperCase() ||
+                           (pastedReportText.match(/(?:deep dive|ticker|stock):\s*([a-z1-9\-]+)/i)?.[1] || '').toUpperCase() ||
+                           ticker.trim().toUpperCase() ||
+                           'TICKER';
+
+      const promptWithContext = `### [PASTED OFFLINE REPORT] - ${finalTicker}\nThis report was generated using the offline Llama workflow.`;
+
+      const docData = {
+        userId: user.uid,
+        ticker: finalTicker,
+        prompt: promptWithContext,
+        output: pastedReportText,
+        analysisType: 'stock' as const,
+        timestamp: serverTimestamp(),
+        config: { model: 'Offline Llama' }
+      };
+
+      const docRef = await addDoc(collection(db, 'reports'), docData);
+      const finalReportId = docRef.id;
+
+      autoPopulateLogData(pastedReportText, finalReportId, finalTicker);
+
+      // Build report state object to immediately view of history subtab
+      const newReport: Report = {
+        id: finalReportId,
+        userId: user.uid,
+        ticker: finalTicker,
+        prompt: promptWithContext,
+        output: pastedReportText,
+        analysisType: 'stock' as const,
+        timestamp: new Date(),
+        config: { model: 'Offline Llama' }
+      };
+
+      setActiveReport(newReport);
+      setHistorySubTab('reports');
+      setActiveTab('history');
+      setPastedReportText('');
+      setPastedReportTicker('');
+      setPastedSuccess(true);
+      setTimeout(() => setPastedSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+      alert("Failed to save report: " + err.message);
+    } finally {
+      setIsSavingPastedReport(false);
+    }
+  };
+
+
 
   const getSweepTargetInfo = () => {
     let targetTickersArray: string[] = [];
@@ -7836,14 +8134,161 @@ ${stationInput}
                   )}
 
                   {/* === FAST GENERATE ACTION === */}
-                  <div className="flex flex-col pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                     <button 
                       onClick={runAnalysis}
-                      disabled={generating || !generatedPrompt}
+                      disabled={generating || isGeneratingOffline || !generatedPrompt}
                       className="w-full justify-center bg-gradient-to-r from-bento-accent to-[#5eead4] hover:brightness-110 text-black text-xs px-4 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(45,212,191,0.2)]"
                     >
                       {generating ? <Loader2 className="w-4 h-4 animate-spin text-black" /> : <Cpu className="w-4 h-4 text-black" />}
-                      {generating ? "Generating..." : "Generate Analysis"}
+                      {generating ? "Generating..." : "Analyze Live"}
+                    </button>
+
+                    <button 
+                      onClick={runOfflineAnalysis}
+                      disabled={generating || isGeneratingOffline}
+                      className="w-full justify-center bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 hover:brightness-110 text-white text-xs px-4 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(99,102,241,0.2)]"
+                    >
+                      {isGeneratingOffline ? <Loader2 className="w-4 h-4 animate-spin text-white" /> : <Globe className="w-4 h-4 text-white" />}
+                      {isGeneratingOffline ? "Analyzing Offline..." : "Analyze Offline"}
+                    </button>
+                  </div>
+
+                  {/* === OFFLINE STAGE PROGRESS === */}
+                  {isGeneratingOffline && (
+                    <div className="bg-black/40 border border-indigo-500/30 rounded-xl p-4 space-y-3 animate-in fade-in">
+                      <div className="flex items-center gap-3 text-xs text-white font-bold">
+                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                        <span>Running Offline Preparation Workflows...</span>
+                      </div>
+                      <div className="flex flex-col gap-1.5 pl-7 text-[10px] text-bento-muted">
+                        <div className="flex items-center gap-2">
+                          <span className={offlineStage === 'resolving_peers' ? "text-indigo-400 animate-pulse font-bold" : offlineStage !== 'idle' ? "text-emerald-400 font-bold" : ""}>
+                            {offlineStage === 'resolving_peers' ? "🌀" : (offlineStage === 'running_python' || offlineStage === 'ready') ? "✓" : "○"}
+                          </span>
+                          <span>Step 1: AI-Driven Peer Group Extraction &amp; Alignment</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={offlineStage === 'running_python' ? "text-indigo-400 animate-pulse font-bold" : offlineStage === 'ready' ? "text-emerald-400 font-bold" : ""}>
+                            {offlineStage === 'running_python' ? "🐍 [Active]" : offlineStage === 'ready' ? "✓" : "○"}
+                          </span>
+                          <span>Step 2: Harvesting ground-truth financial datasets from Sandbox Python...</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={offlineStage === 'ready' ? "text-[#ecc94b] font-bold" : ""}>
+                            {offlineStage === 'ready' ? "✓" : "○"}
+                          </span>
+                          <span>Step 3: Instantiating blended Llama specification prompt package...</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* === OFFLINE READY PACKAGE === */}
+                  {offlineStage === 'ready' && offlinePayload && (
+                    <div className="bg-gradient-to-br from-indigo-950/40 via-black to-emerald-950/20 border border-indigo-500/30 rounded-xl p-5 space-y-4 animate-in slide-in-from-bottom duration-300">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                          <h4 className="text-xs font-black uppercase text-emerald-400 tracking-wider">
+                            Offline Research Package Ready
+                          </h4>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(offlinePayload);
+                            setCopiedOffline(true);
+                            setTimeout(() => setCopiedOffline(false), 2000);
+                          }}
+                          className={cn(
+                            "text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border transition-all flex items-center gap-1.5",
+                            copiedOffline 
+                              ? "bg-emerald-500/20 border-emerald-400 text-emerald-400" 
+                              : "bg-indigo-600 hover:bg-indigo-500 border-indigo-400/30 text-white hover:scale-105 active:scale-95"
+                          )}
+                        >
+                          {copiedOffline ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-white" />}
+                          {copiedOffline ? "Copied!" : "Copy Llama Prompt"}
+                        </button>
+                      </div>
+
+                      <p className="text-[10px] text-bento-muted font-sans leading-relaxed">
+                        Copy this package and paste it into any external high-intelligence LLM (e.g. Llama 3, DeepSeek, ChatGPT). It has full real-time yfinance ground truth datasets for target stock <span className="text-white font-bold">{ticker.toUpperCase()}</span> and peers plus custom report parameters.
+                      </p>
+
+                      <div className="relative">
+                        <textarea
+                          readOnly
+                          value={offlinePayload}
+                          className="w-full h-32 bg-black border border-bento-border rounded-xl p-3 text-[9px] font-mono text-slate-400 focus:outline-none"
+                        />
+                        <div className="absolute bottom-3 right-3 text-[8px] text-bento-muted font-mono tracking-tighter bg-black/80 px-2 py-1 rounded border border-white/5">
+                          {offlinePayload.length} Chars
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* === MANUAL REPORT PASTING STATION === */}
+                  <div className="border-t border-bento-border/50 pt-6 mt-6 space-y-4">
+                    <div className="flex flex-col gap-1">
+                      <h4 className="text-[10px] text-bento-muted font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                        Offline Llama Report Import Station
+                      </h4>
+                      <p className="text-[9px] text-bento-muted uppercase tracking-wider font-semibold">
+                        Pasted Markdown reports will parse, save to Snapshots, and become instantly trackable
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="md:col-span-1 space-y-1.5">
+                        <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">Import Ticker Override</label>
+                        <input
+                          type="text"
+                          value={pastedReportTicker}
+                          onChange={(e) => setPastedReportTicker(e.target.value.toUpperCase())}
+                          placeholder={ticker || "NVDA"}
+                          className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 focus:border-purple-500 outline-none font-mono text-purple-400 font-bold uppercase transition-all text-xs"
+                        />
+                      </div>
+                      <div className="md:col-span-3 space-y-1.5">
+                        <label className="text-[10px] text-bento-muted uppercase tracking-widest font-bold">Paste Markdown Report Text</label>
+                        <textarea
+                          value={pastedReportText}
+                          onChange={(e) => setPastedReportText(e.target.value)}
+                          placeholder="Paste generated markdown report here (e.g. '# COMPREHENSIVE STOCK DEEP DIVE: TICKER ...')"
+                          className="w-full bg-black/40 border border-bento-border rounded-xl p-3 text-[11px] text-bento-foreground font-mono h-28 focus:outline-none focus:border-purple-500 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={savePastedReport}
+                      disabled={isSavingPastedReport || !pastedReportText.trim()}
+                      className={cn(
+                        "w-full justify-center text-xs px-4 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all flex items-center gap-2 border shadow-lg",
+                        pastedSuccess
+                          ? "bg-emerald-600/20 border-emerald-500/40 text-emerald-400"
+                          : pastedReportText.trim()
+                            ? "bg-purple-600 border-purple-500 hover:bg-purple-500 text-white cursor-pointer shadow-purple-500/10 hover:scale-[1.01]"
+                            : "bg-black/40 border-bento-border text-bento-muted cursor-not-allowed"
+                      )}
+                    >
+                      {isSavingPastedReport ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      ) : pastedSuccess ? (
+                        <Check className="w-4 h-4" />
+                      ) : (
+                        <Cloud className="w-4 h-4" />
+                      )}
+                      {isSavingPastedReport 
+                        ? "Parsing & Securing Snapshot..." 
+                        : pastedSuccess 
+                          ? "Report Snapshotted Successfully!" 
+                          : "Compile & Save Offline Report"}
                     </button>
                   </div>
 
