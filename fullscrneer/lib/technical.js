@@ -325,7 +325,7 @@ export function analyzeTechnical(quotes) {
     heavyVol, matureUp, matureDn,
     nearestBullOB, nearestBearOB,
     priceInDn, rsiWeak, atr14,
-    hi52, lo52,
+    hi52, lo52, lo20: llDon,
     ema10: Math.round(ema10 * 100) / 100,
     ema30: Math.round(ema30 * 100) / 100,
     ema50: Math.round(ema50 * 100) / 100,

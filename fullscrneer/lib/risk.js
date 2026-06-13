@@ -6,7 +6,7 @@ import cfg from '../config.js';
 
 export function computeRisk(close, tech, analyst) {
   const atr14 = tech.atr14 || close * 0.02;
-  const support20 = tech.lo52 ? tech.lo52 * 0.95 : close * 0.92;
+  const support20 = tech.lo20 ? tech.lo20 : (tech.lo52 ? tech.lo52 * 0.95 : close * 0.92);
 
   let stopLevel, obInPlay = false, stopSource = 'struct';
   if (tech.nearestBullOB) {
@@ -18,7 +18,7 @@ export function computeRisk(close, tech, analyst) {
     }
   }
   if (!obInPlay) {
-    stopLevel = Math.min(support20 * (1 - cfg.stop_struct_pct / 100), close * 0.92);
+    stopLevel = Math.max(support20 * (1 - cfg.stop_struct_pct / 100), close * 0.90);
   }
 
   let targetLevel, targetSrc;

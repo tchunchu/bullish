@@ -3025,12 +3025,18 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    async function tryStream(selectedModel: string): Promise<boolean> {
+    async function streamAttempt(selectedModel: string, useTools: boolean): Promise<boolean> {
       try {
+        const activeConfig = { ...config };
+        if (!useTools) {
+          delete activeConfig.tools;
+          delete activeConfig.toolConfig;
+        }
+
         const stream = await ai.models.generateContentStream({
           model: selectedModel,
           contents,
-          config
+          config: activeConfig
         });
         
         for await (const chunk of stream) {
@@ -3047,31 +3053,48 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
                             errMsg.toLowerCase().includes("rate limit") || 
                             errMsg.toLowerCase().includes("quota") ||
                             errMsg.toLowerCase().includes("resource");
-
-        if (isRateLimit && selectedModel !== "gemini-3.1-flash-lite") {
-          console.warn(`[Gemini Stream Proxy] Rate limit hit on ${selectedModel}. Trying fallback to gemini-3.1-flash-lite...`);
-          return false; // Retriable with flash-lite
-        } else if (isRateLimit && config && config.tools) {
-          console.warn(`[Gemini Stream Proxy] Rate limit hit on ${selectedModel} with tools. Stripping tools and retrying...`);
-          delete config.tools;
-          delete config.toolConfig;
-          return false; // Retriable without tools
+        
+        console.warn(`[Gemini Stream Attempt] Model ${selectedModel} (tools: ${useTools}) failed:`, err.message);
+        if (isRateLimit) {
+          return false; // Retriable with next flow path
         }
-        throw err;
+        throw err; // Bubble up other critical non-rate-limit errors
       }
     }
 
     try {
-      let success = await tryStream(targetModel);
+      const hasTools = !!(config && config.tools);
+      let success = false;
+
+      // 1. Try Target Model with Tools
+      if (hasTools) {
+        console.log(`[Gemini Stream Proxy] Attempting Target Model ${targetModel} WITH tools`);
+        success = await streamAttempt(targetModel, true);
+      } else {
+        console.log(`[Gemini Stream Proxy] Attempting Target Model ${targetModel} WITHOUT tools`);
+        success = await streamAttempt(targetModel, false);
+      }
+
+      // 2. Try Target Model without Tools (if tools are present)
+      if (!success && hasTools) {
+        console.log(`[Gemini Stream Proxy] Falling back to Target Model ${targetModel} WITHOUT tools`);
+        success = await streamAttempt(targetModel, false);
+      }
+
+      // 3. Try Lite Model with Tools (if target is not already lite and tools are present)
+      if (!success && targetModel !== "gemini-3.1-flash-lite" && hasTools) {
+        console.log(`[Gemini Stream Proxy] Falling back to Lite Model (gemini-3.1-flash-lite) WITH tools`);
+        success = await streamAttempt("gemini-3.1-flash-lite", true);
+      }
+
+      // 4. Try Lite Model without Tools (if target is not already lite)
+      if (!success && targetModel !== "gemini-3.1-flash-lite") {
+        console.log(`[Gemini Stream Proxy] Falling back to Lite Model (gemini-3.1-flash-lite) WITHOUT tools`);
+        success = await streamAttempt("gemini-3.1-flash-lite", false);
+      }
+
       if (!success) {
-        success = await tryStream("gemini-3.1-flash-lite");
-        if (!success) {
-          // One more try (with tools stripped if it failed due to tools)
-          success = await tryStream("gemini-3.1-flash-lite");
-          if (!success) {
-            throw new Error("Failed to stream using fallback lite model and stripped tools");
-          }
-        }
+        throw new Error("All model streaming fallback pathways failed due to severe rate limit/exhaustion.");
       }
     } catch (err: any) {
       console.error("[GEMINI STREAM ERROR]", err);

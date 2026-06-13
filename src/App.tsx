@@ -673,6 +673,42 @@ export default function App() {
     return '—';
   };
 
+  const calcStopLossAmt = (exitPrice: any, currentPrice: any, amount: number = 5000) => {
+    const p = parseFloat(String(currentPrice).replace(/[^0-9.-]/g, ''));
+    const e = parseFloat(String(exitPrice).replace(/[^0-9.-]/g, ''));
+    if (!isNaN(p) && !isNaN(e) && p > 0) {
+      const pct = (e - p) / p;
+      const amt = Math.round(amount * pct);
+      const pctStr = Math.round(pct * 100);
+      if (amt < 0) {
+        return `-$${Math.abs(amt)} (${pctStr}%)`;
+      } else if (amt > 0) {
+        return `+$${amt} (+${pctStr}%)`;
+      } else {
+        return `$0 (0%)`;
+      }
+    }
+    return '—';
+  };
+
+  const calcTakeProfitAmt = (tpPrice: any, currentPrice: any, amount: number = 5000) => {
+    const p = parseFloat(String(currentPrice).replace(/[^0-9.-]/g, ''));
+    const t = parseFloat(String(tpPrice).replace(/[^0-9.-]/g, ''));
+    if (!isNaN(p) && !isNaN(t) && p > 0) {
+      const pct = (t - p) / p;
+      const amt = Math.round(amount * pct);
+      const pctStr = Math.round(pct * 100);
+      if (amt > 0) {
+        return `+$${amt} (+${pctStr}%)`;
+      } else if (amt < 0) {
+        return `-$${Math.abs(amt)} (${pctStr}%)`;
+      } else {
+        return `$0 (0%)`;
+      }
+    }
+    return '—';
+  };
+
   const sortNeuralData = (neuralData: any[]) => {
     return [...neuralData].sort((a: any, b: any) => {
       const getRecRank = (rec: string) => {
@@ -2929,12 +2965,34 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                       <span className="font-mono text-white font-semibold">{r.rr || '—'}</span>
                     </div>
                     <div>
-                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Take Profit 1</span>
-                      <span className="text-blue-400 font-mono font-bold">{cleanPrice(r.algoTP1 || r.target || r.n_tp1)}</span>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Algo TP1 / TP2</span>
+                      <span className="text-blue-400 font-mono font-bold">
+                        {cleanPrice(r.algoTP1 || r.target || r.n_tp1)} / {cleanPrice(r.algoTP2 || r.n_tp2)}
+                      </span>
                     </div>
                     <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Stop Loss</span>
                       <span className="text-red-400 font-mono font-bold">{cleanPrice(r.algoExit || r.stop || r.n_exit)}</span>
+                    </div>
+                    <div className="col-span-2 border-t border-white/5 pt-1.5 mt-0.5 grid grid-cols-3 gap-1 text-[10px] items-start">
+                      <div>
+                        <span className="block text-[7px] text-red-400 uppercase font-bold leading-tight">$5k Stop Loss</span>
+                        <span className="text-red-400 font-mono font-bold">
+                          {calcStopLossAmt(r.algoExit || r.stop || r.n_exit, priceVal)}
+                        </span>
+                      </div>
+                      <div className="text-center">
+                        <span className="block text-[7px] text-emerald-400 uppercase font-bold leading-tight">$5k TP1 Profit</span>
+                        <span className="text-emerald-400 font-mono font-bold">
+                          {calcTakeProfitAmt(r.algoTP1 || r.target || r.n_tp1, priceVal)}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-[7px] text-teal-400 uppercase font-bold leading-tight">$5k TP2 Profit</span>
+                        <span className="text-teal-400 font-mono font-bold animate-pulse">
+                          {calcTakeProfitAmt(r.algoTP2 || r.n_tp2, priceVal)}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -3007,12 +3065,34 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                       <span className="text-emerald-400 font-mono font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct || 0}%</span>
                     </div>
                     <div>
+                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Algo TP1 / TP2</span>
+                      <span className="text-blue-400 font-mono font-bold">
+                        {cleanPrice(r.n_tp1 || r.algoTP1)} / {cleanPrice(r.n_tp2 || r.algoTP2)}
+                      </span>
+                    </div>
+                    <div>
                       <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Stop Loss</span>
                       <span className="text-red-400 font-mono font-bold">{r.n_exit || r.algoExit || '—'}</span>
                     </div>
-                    <div>
-                      <span className="block text-[8px] text-bento-muted uppercase font-bold font-sans">Take Profit 1</span>
-                      <span className="text-blue-400 font-mono font-bold">{r.n_tp1 || r.algoTP1 || '—'}</span>
+                    <div className="col-span-2 border-t border-white/5 pt-1.5 mt-0.5 grid grid-cols-3 gap-1 text-[10px] items-start">
+                      <div>
+                        <span className="block text-[7px] text-red-400 uppercase font-bold leading-tight">$5k Stop Loss</span>
+                        <span className="text-red-400 font-mono font-bold">
+                          {calcStopLossAmt(r.n_exit || r.algoExit, r.price || r.close)}
+                        </span>
+                      </div>
+                      <div className="text-center">
+                        <span className="block text-[7px] text-emerald-400 uppercase font-bold leading-tight">$5k TP1 Profit</span>
+                        <span className="text-emerald-400 font-mono font-bold">
+                          {calcTakeProfitAmt(r.n_tp1 || r.algoTP1, r.price || r.close)}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-[7px] text-teal-400 uppercase font-bold leading-tight">$5k TP2 Profit</span>
+                        <span className="text-teal-400 font-mono font-bold animate-pulse">
+                          {calcTakeProfitAmt(r.n_tp2 || r.algoTP2, r.price || r.close)}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   
@@ -3205,6 +3285,26 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                         {cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1)} / {cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2)}
                       </span>
                     </div>
+                    <div className="col-span-3 border-t border-white/5 pt-1.5 mt-0.5 grid grid-cols-3 gap-1 text-[10px] items-start">
+                      <div>
+                        <span className="block text-[7px] text-red-400 uppercase font-bold leading-tight">$5k Stop Loss</span>
+                        <span className="text-red-400 font-mono font-bold">
+                          {calcStopLossAmt(rawMatch.algoExit || rawMatch.n_exit || r.neuralExit || r.nExit, rawMatch.price || rawMatch.close || r.currentPrice)}
+                        </span>
+                      </div>
+                      <div className="text-center">
+                        <span className="block text-[7px] text-emerald-400 uppercase font-bold leading-tight">$5k TP1 Profit</span>
+                        <span className="text-emerald-400 font-mono font-bold">
+                          {calcTakeProfitAmt(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice)}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-[7px] text-teal-400 uppercase font-bold leading-tight">$5k TP2 Profit</span>
+                        <span className="text-teal-400 font-mono font-bold animate-pulse">
+                          {calcTakeProfitAmt(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Semantic Gates */}
@@ -3274,63 +3374,115 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                       <span className="block text-[8px] text-bento-muted uppercase font-sans">N-TP2</span>
                       <span className="font-mono text-indigo-400">${r.neuralTP2 || r.tp2 || '—'}</span>
                     </div>
+                    <div className="col-span-4 border-t border-white/5 pt-1.5 mt-0.5 grid grid-cols-3 gap-1 text-[10px] items-start">
+                      <div>
+                        <span className="block text-[7px] text-red-300 uppercase font-black tracking-wider leading-tight">$5k Stop Loss</span>
+                        <span className="text-red-400 font-mono font-black">
+                          {calcStopLossAmt(r.neuralExit || r.nExit || rawMatch.algoExit || rawMatch.n_exit, r.currentPrice || rawMatch.price || rawMatch.close)}
+                        </span>
+                      </div>
+                      <div className="text-center">
+                        <span className="block text-[7px] text-emerald-300 uppercase font-black tracking-wider leading-tight">$5k TP1 Profit</span>
+                        <span className="text-emerald-400 font-mono font-black">
+                          {calcTakeProfitAmt(r.neuralTP1 || r.tp1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close)}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-[7px] text-teal-300 uppercase font-black tracking-wider leading-tight">$5k TP2 Profit</span>
+                        <span className="text-teal-400 font-mono font-black animate-pulse">
+                          {calcTakeProfitAmt(r.neuralTP2 || r.tp2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* Insights Section */}
-              <div className="space-y-3 font-sans">
-                {/* Cases */}
-                <div className="grid grid-cols-1 gap-2.5 text-xs font-sans">
-                  <div className="bg-emerald-500/5 border border-emerald-500/10 p-2.5 rounded-lg font-sans">
-                    <span className="block text-[8px] text-emerald-400 font-black uppercase tracking-wider mb-0.5 font-sans">🟢 Bull Thesis</span>
-                    <p className="text-white/85 leading-relaxed font-sans">{r.bullCase || '—'}</p>
-                  </div>
-                  <div className="bg-red-500/5 border border-red-500/10 p-2.5 rounded-lg font-sans">
-                    <span className="block text-[8px] text-red-400 font-black uppercase tracking-wider mb-0.5 font-sans">🔴 Bear Case</span>
-                    <p className="text-white/85 leading-relaxed font-sans">{r.bearCase || '—'}</p>
-                  </div>
-                </div>
-
-                {isUnified && (
-                  <div className="space-y-2.5 text-xs p-2.5 rounded-xl bg-black/40 border border-white/5 font-sans">
-                    {r.technical && (
-                      <div>
-                        <span className="block text-[8px] text-indigo-400 font-bold uppercase font-sans">Technicals</span>
-                        <p className="text-white/80 mt-0.5 font-sans">{r.technical}</p>
-                      </div>
-                    )}
-                    {r.fundamentals && (
-                      <div>
-                        <span className="block text-[8px] text-blue-400 font-bold uppercase font-sans">Fundamentals</span>
-                        <p className="text-white/80 mt-0.5 font-sans">{r.fundamentals}</p>
-                      </div>
-                    )}
-                    {r.moat && (
-                      <div>
-                        <span className="block text-[8px] text-purple-400 font-bold uppercase font-sans">Moat Strength</span>
-                        <p className="text-white/80 mt-0.5 font-sans">{r.moat}</p>
-                      </div>
-                    )}
-                    {r.competition && (
-                      <div>
-                        <span className="block text-[8px] text-orange-400 font-bold uppercase font-sans">Competition</span>
-                        <p className="text-white/80 mt-0.5 font-sans">{r.competition}</p>
-                      </div>
-                    )}
-                    {r.insider && (
-                      <div>
-                        <span className="block text-[8px] text-teal-400 font-bold uppercase font-sans">Insider / News</span>
-                        <p className="text-white/80 mt-0.5 font-sans">{r.insider}</p>
-                      </div>
-                    )}
+              <div className="space-y-4 font-sans select-text">
+                {/* 1. Quick Valuation / Moat */}
+                {(r.moat || r.fundamentals || r.competition) && (
+                  <div className="space-y-1">
+                    <span className="block text-[8px] text-amber-300 font-black uppercase scroll-tracking-widest font-sans tracking-widest">💎 Quick Valuation / Moat</span>
+                    <div className="bg-gradient-to-b from-[#1a1310]/50 to-black/60 border border-amber-500/10 p-2.5 rounded-lg text-[10px] text-amber-200/90 leading-relaxed font-sans space-y-1.5 shadow-sm">
+                      {r.moat && (
+                        <p><span className="font-extrabold text-amber-400 uppercase text-[8px] tracking-wider block mb-0.5">Economic Moat / Strategy:</span>{r.moat}</p>
+                      )}
+                      {r.fundamentals && (
+                        <p><span className="font-extrabold text-amber-400/80 uppercase text-[8px] tracking-wider block mb-0.5">Economic Viability & Financials:</span>{r.fundamentals}</p>
+                      )}
+                      {r.competition && (
+                        <p><span className="font-extrabold text-[#f97316] uppercase text-[8px] tracking-wider block mb-0.5">Competitive Duopoly / Rivals:</span>{r.competition}</p>
+                      )}
+                    </div>
                   </div>
                 )}
 
+                {/* 2. Risks & Tailwinds */}
+                {(r.bearCase || r.bullCase) && (
+                  <div className="space-y-1">
+                    <span className="block text-[8px] text-cyan-300 font-black uppercase tracking-widest font-sans">⚖️ Risks & Tailwinds</span>
+                    <div className="bg-gradient-to-b from-[#0e1d24]/40 to-black/60 border border-cyan-500/10 p-2.5 rounded-lg text-[10px] text-cyan-200/90 leading-relaxed font-sans space-y-1.5 shadow-sm">
+                      {r.bearCase && (
+                        <p><span className="font-extrabold text-red-400 uppercase text-[8px] tracking-wider block mb-0.5">Risk Factor:</span>{r.bearCase}</p>
+                      )}
+                      {r.bullCase && (
+                        <p><span className="font-extrabold text-emerald-400 uppercase text-[8px] tracking-wider block mb-0.5">Catalyst / Tailwind:</span>{r.bullCase}</p>
+                      )}
+                      {rawMatch.upside_pct !== undefined && (
+                        <p className="text-[8px] text-[#cbd5e1]/45 font-mono pt-1 border-t border-white/5 flex gap-2">
+                          <span>VCS Delta: {rawMatch.vcs_delta || 'N/A'}</span>
+                          <span>|</span>
+                          <span>Confluence: {rawMatch.confluence || 'N/A'}</span>
+                          <span>|</span>
+                          <span>Est Upside: {rawMatch.upside_pct > 0 ? `+${rawMatch.upside_pct}` : rawMatch.upside_pct}%</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Fuel to the Fire (News/Rumors) */}
+                {(r.news || r.insider) && (
+                  <div className="space-y-1">
+                    <span className="block text-[8px] text-orange-300 font-black uppercase tracking-widest font-sans">🔥 Fuel to the Fire (News/Rumors)</span>
+                    <div className="bg-gradient-to-b from-[#24130b]/30 to-black/60 border border-orange-500/15 p-2.5 rounded-lg text-[10px] text-orange-200/90 leading-relaxed font-sans space-y-1.5 shadow-sm">
+                      {r.news && (
+                        <p><span className="font-extrabold text-orange-400 uppercase text-[8px] tracking-wider block mb-0.5">Headline & Event Impact:</span>{r.news}</p>
+                      )}
+                      {r.insider && (
+                        <p><span className="font-extrabold text-amber-500 uppercase text-[8px] tracking-wider block mb-0.5">Insider Buying / Rumor Feed:</span>{r.insider}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. Story Changers */}
                 {r.finalTake && (
-                  <div className="bg-white/5 border border-white/10 p-2.5 rounded-lg text-xs font-sans">
-                    <span className="block text-[8px] text-bento-accent font-black uppercase tracking-wider mb-0.5 font-sans">🎯 Final Verdict</span>
-                    <p className="text-white/90 leading-relaxed font-semibold font-sans">{r.finalTake}</p>
+                  <div className="space-y-1">
+                    <span className="block text-[8px] text-purple-300 font-black uppercase tracking-widest font-sans">⚡ Story Changers</span>
+                    <div className="bg-gradient-to-b from-[#180f24]/40 to-black/60 border border-purple-500/15 p-2.5 rounded-lg text-[10px] text-purple-200 leading-relaxed font-sans shadow-sm">
+                      <p>{r.finalTake}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. Double Verification */}
+                {r.technical && (
+                  <div className="space-y-1">
+                    <span className="block text-[8px] text-emerald-400 font-black tracking-widest font-sans">✅ Double Verification</span>
+                    <div className="bg-gradient-to-b from-[#0f1f14]/40 to-black/60 border border-emerald-500/15 p-2.5 rounded-lg text-[10px] text-[#e2fbf0]/90 leading-relaxed font-sans shadow-sm">
+                      <p><span className="font-extrabold text-emerald-400 uppercase text-[8px] tracking-wider block mb-0.5">Technical & Price Action Alignment:</span>{r.technical}</p>
+                      {rawMatch.composite !== undefined && (
+                        <div className="mt-2 pt-2 border-t border-white/5 text-[8px] font-mono flex flex-wrap gap-x-2 gap-y-0.5 text-bento-muted">
+                          <span>Composite: <strong className="text-white font-bold">{rawMatch.composite}</strong></span>
+                          <span>•</span>
+                          <span>MA Stack: <strong className="text-white font-bold">{rawMatch.ma_stack || '—'}</strong></span>
+                          <span>•</span>
+                          <span>G1-G4 Checks: <strong className="text-white font-bold">{rawMatch.g1?.includes('PASS') ? 'PASS️' : rawMatch.g1 || '—'}</strong></span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -3734,7 +3886,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
   const [showThinking, setShowThinking] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string>(MODELS.FLASH_LITE);
+  const [selectedModel, setSelectedModel] = useState<string>(MODELS.FLASH_35);
 
   useEffect(() => {
     setFollowUpMessages([]);
@@ -3755,7 +3907,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       }
     }
   }, [activeSnapshot]);
-  const [selectedScreenerModel, setSelectedScreenerModel] = useState<string>(MODELS.FLASH_LITE);
+  const [selectedScreenerModel, setSelectedScreenerModel] = useState<string>(MODELS.FLASH_35);
   const [disableNeural, setDisableNeural] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isClearingAll, setIsClearingAll] = useState(false);
@@ -8279,6 +8431,9 @@ ${stationInput}
                                             <th className="p-3">Algo Exit</th>
                                             <th className="p-3">Algo TP1</th>
                                             <th className="p-3">Algo TP2</th>
+                                            <th className="p-3 text-red-400 font-bold">$5k SL Loss</th>
+                                            <th className="p-3 text-emerald-400 font-bold">$5k TP1 Profit</th>
+                                            <th className="p-3 text-teal-400 font-bold">$5k TP2 Profit</th>
                                           </tr>
                                         </thead>
                                         <tbody>
@@ -8304,6 +8459,9 @@ ${stationInput}
                                               <td className="p-3">${r.algoExit || r.n_exit}</td>
                                               <td className="p-3 text-purple-400">${r.algoTP1 || r.n_tp1}</td>
                                               <td className="p-3 text-purple-500">${r.algoTP2 || r.n_tp2}</td>
+                                              <td className="p-3 text-red-500 font-bold">{calcStopLossAmt(r.algoExit || r.n_exit, r.price || r.close || r.algoEntry || r.n_entry)}</td>
+                                              <td className="p-3 text-emerald-400 font-bold">{calcTakeProfitAmt(r.algoTP1 || r.n_tp1, r.price || r.close || r.algoEntry || r.n_entry)}</td>
+                                              <td className="p-3 text-teal-400 font-bold">{calcTakeProfitAmt(r.algoTP2 || r.n_tp2, r.price || r.close || r.algoEntry || r.n_entry)}</td>
                                             </tr>
                                           ))}
                                         </tbody>
@@ -8337,6 +8495,9 @@ ${stationInput}
                                               <th className="p-3">N-Exit</th>
                                               <th className="p-3 text-emerald-400">N-TP1</th>
                                               <th className="p-3 text-teal-400 font-bold">N-TP2</th>
+                                              <th className="p-3 text-red-400 font-bold">$5k SL Loss</th>
+                                              <th className="p-3 text-emerald-400 font-bold">$5k TP1 Profit</th>
+                                              <th className="p-3 text-teal-400 font-bold">$5k TP2 Profit</th>
                                               <th className="p-3">Gate Sig</th>
                                               <th className="p-3">Rev State</th>
                                               <th className="p-3">Comp</th>
@@ -8382,6 +8543,9 @@ ${stationInput}
                                               <th className="p-3 min-w-[80px]">N-Exit</th>
                                               <th className="p-3 min-w-[80px]">N-TP1</th>
                                               <th className="p-3 min-w-[80px]">N-TP2</th>
+                                              <th className="p-3 text-red-400 font-bold">$5k SL Loss</th>
+                                              <th className="p-3 text-emerald-400 font-bold">$5k TP1 Profit</th>
+                                              <th className="p-3 text-teal-400 font-bold">$5k TP2 Profit</th>
                                               <th className="p-3 min-w-[150px]">Bull Case</th>
                                               <th className="p-3 min-w-[150px]">Bear Case</th>
                                               <th className="p-3 min-w-[150px]">Final Take</th>
@@ -8421,6 +8585,9 @@ ${stationInput}
                                                   <td className="p-3 font-mono text-red-400">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit)}</td>
                                                   <td className="p-3 font-mono text-emerald-400">{cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1)}</td>
                                                   <td className="p-3 font-mono text-teal-400">{cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2)}</td>
+                                                  <td className="p-3 font-mono text-red-500 font-bold">{calcStopLossAmt(rawMatch.algoExit || rawMatch.n_exit || r.neuralExit || r.nExit, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
+                                                  <td className="p-3 font-mono text-emerald-400 font-bold">{calcTakeProfitAmt(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
+                                                  <td className="p-3 font-mono text-teal-400 font-bold">{calcTakeProfitAmt(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
                                                   <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
                                                   <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
                                                   <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
@@ -8478,6 +8645,9 @@ ${stationInput}
                                                 <td className="p-3 font-mono">{cleanPrice(r.neuralExit)}</td>
                                                 <td className="p-3 font-mono">{cleanPrice(r.neuralTP1)}</td>
                                                 <td className="p-3 font-mono">{cleanPrice(r.neuralTP2)}</td>
+                                                <td className="p-3 font-mono text-red-500 font-bold">{calcStopLossAmt(r.neuralExit || rawMatch.algoExit || rawMatch.n_exit, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
+                                                <td className="p-3 font-mono text-emerald-400 font-bold">{calcTakeProfitAmt(r.neuralTP1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
+                                                <td className="p-3 font-mono text-teal-400 font-bold">{calcTakeProfitAmt(r.neuralTP2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
                                                 <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[200px]">{r.bullCase}</td>
                                                 <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[200px]">{r.bearCase}</td>
                                                 <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
@@ -9224,6 +9394,10 @@ ${stationInput}
                                     <th className="p-2 text-[9px]">UPSIDE (FV)</th>
                                     <th className="p-2 text-[9px]">STOP</th>
                                     <th className="p-2 text-[9px]">TARGET</th>
+                                    <th className="p-2 text-[9px]">TP2</th>
+                                    <th className="p-2 text-[9px] text-red-400 font-bold">$5k SL Loss</th>
+                                    <th className="p-2 text-[9px] text-emerald-400 font-bold">$5k TP1 Profit</th>
+                                    <th className="p-2 text-[9px] text-teal-400 font-bold">$5k TP2 Profit</th>
                                     <th className="p-2 text-[9px]">MA STACK</th>
                                     <th className="p-2 text-[9px]">VOL↑</th>
                                     <th className="p-2 text-[9px] text-[#cfd8ff]/80">RATIONALE / REASON</th>
@@ -9258,8 +9432,12 @@ ${stationInput}
                                       <td className="p-2" style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}}>{r.g3}</td>
                                       <td className="p-2" style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}}>{r.g4} ({r.rr || 'N/A'})</td>
                                       <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
-                                      <td className="p-2 text-red-400">${r.algoExit || r.stop || r.n_exit}</td>
-                                      <td className="p-2 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
+                                      <td className="p-2 text-red-500 font-bold">${r.algoExit || r.stop || r.n_exit}</td>
+                                      <td className="p-2 text-emerald-400 font-bold">${r.algoTP1 || r.target || r.n_tp1}</td>
+                                      <td className="p-2 text-teal-400 font-bold">${r.algoTP2 || r.n_tp2}</td>
+                                      <td className="p-2 text-red-500 font-bold">{calcStopLossAmt(r.algoExit || r.stop || r.n_exit, r.price || r.close)}</td>
+                                      <td className="p-2 text-emerald-400 font-bold">{calcTakeProfitAmt(r.algoTP1 || r.target || r.n_tp1, r.price || r.close)}</td>
+                                      <td className="p-2 text-teal-400 font-bold">{calcTakeProfitAmt(r.algoTP2 || r.n_tp2, r.price || r.close)}</td>
                                       <td className="p-2" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
                                       <td className="p-2 text-yellow-400">{r.vol_surge}</td>
                                       <td className="p-2 text-amber-200 font-sans text-[10px] max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.noise_signals || r.setup || ""}>
@@ -9423,9 +9601,12 @@ ${stationInput}
                                   <th className="p-3">Score</th>
                                   <th className="p-3">State</th>
                                   <th className="p-3">Algo Entry</th>
-                                  <th className="p-3">Algo Exit</th>
-                                  <th className="p-3">Algo TP1</th>
-                                  <th className="p-3">Algo TP2</th>
+                                  <th className="p-3 font-semibold text-red-400">Algo Exit</th>
+                                  <th className="p-3 font-semibold text-emerald-400">Algo TP1</th>
+                                  <th className="p-3 font-semibold text-teal-400">Algo TP2</th>
+                                  <th className="p-3 text-red-400 font-bold">$5k SL Loss</th>
+                                  <th className="p-3 text-emerald-400 font-bold">$5k TP1 Profit</th>
+                                  <th className="p-3 text-teal-400 font-bold">$5k TP2 Profit</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -9451,9 +9632,12 @@ ${stationInput}
                                         ${r.algoEntry || r.close}
                                       </a>
                                     </td>
-                                    <td className="p-3">${r.algoExit}</td>
-                                    <td className="p-3 text-purple-400">${r.algoTP1}</td>
-                                    <td className="p-3 text-purple-500">${r.algoTP2}</td>
+                                    <td className="p-3 text-red-400 font-mono">${r.algoExit || '—'}</td>
+                                    <td className="p-3 text-emerald-400 font-mono">${r.algoTP1 || '—'}</td>
+                                    <td className="p-3 text-teal-400 font-mono">${r.algoTP2 || '—'}</td>
+                                    <td className="p-3 text-red-500 font-bold font-mono">{calcStopLossAmt(r.algoExit, r.price || r.close || r.algoEntry)}</td>
+                                    <td className="p-3 text-emerald-400 font-bold font-mono">{calcTakeProfitAmt(r.algoTP1, r.price || r.close || r.algoEntry)}</td>
+                                    <td className="p-3 text-teal-400 font-bold font-mono">{calcTakeProfitAmt(r.algoTP2, r.price || r.close || r.algoEntry)}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -9630,11 +9814,15 @@ ${stationInput}
                                       <th className="p-3">N-Score</th>
                                       <th className="p-3">Rec.</th>
                                       <th className="p-3">Price</th>
-                                      <th className="p-3 text-amber-400 font-bold">Upside</th>
+                                      <th className="p-3 text-amber-400 font-bold">Est Upside</th>
+                                      <th className="p-3 text-emerald-400 font-bold">TP1 Upside</th>
+                                      <th className="p-3 text-teal-400 font-bold">TP2 Upside</th>
                                       <th className="p-3">N-Entry</th>
                                       <th className="p-3">N-Exit</th>
                                       <th className="p-3 text-emerald-400">N-TP1</th>
                                       <th className="p-3 text-teal-400">N-TP2</th>
+                                       <th className="p-3 text-red-400 font-bold">$5k SL Loss</th>
+                                       <th className="p-3 text-emerald-400 font-bold">$5k TP1 Profit</th>
                                       <th className="p-3">Gate Sig</th>
                                       <th className="p-3">Rev State</th>
                                       <th className="p-3">Comp</th>
@@ -9680,6 +9868,8 @@ ${stationInput}
                                       <th className="p-3 min-w-[80px]">N-Exit</th>
                                       <th className="p-3 min-w-[80px]">N-TP1</th>
                                       <th className="p-3 min-w-[80px]">N-TP2</th>
+                                      <th className="p-3 text-red-400 font-bold">$5k SL Loss</th>
+                                      <th className="p-3 text-emerald-400 font-bold">$5k TP1 Profit</th>
                                       <th className="p-3 min-w-[150px]">Bull Case</th>
                                       <th className="p-3 min-w-[150px]">Bear Case</th>
                                       <th className="p-3 min-w-[150px]">Final Take</th>
@@ -9724,6 +9914,9 @@ ${stationInput}
                                               <td className="p-3 font-mono text-red-400">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit)}</td>
                                               <td className="p-3 font-mono text-emerald-400">{cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1)}</td>
                                               <td className="p-3 font-mono text-teal-400">{cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2)}</td>
+                                              <td className="p-3 font-mono text-red-500 font-bold">{calcStopLossAmt(rawMatch.algoExit || rawMatch.n_exit || r.neuralExit || r.nExit, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
+                                              <td className="p-3 font-mono text-emerald-400 font-bold">{calcTakeProfitAmt(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
+                                              <td className="p-3 font-mono text-teal-400 font-bold">{calcTakeProfitAmt(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
                                               <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
                                               <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
                                               <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
@@ -9780,6 +9973,9 @@ ${stationInput}
                                             <td className="p-3 font-mono">{cleanPrice(r.neuralExit)}</td>
                                             <td className="p-3 font-mono">{cleanPrice(r.neuralTP1)}</td>
                                             <td className="p-3 font-mono">{cleanPrice(r.neuralTP2)}</td>
+                                            <td className="p-3 font-mono text-red-500 font-bold">{calcStopLossAmt(r.neuralExit || rawMatch.algoExit || rawMatch.n_exit, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
+                                            <td className="p-3 font-mono text-emerald-400 font-bold">{calcTakeProfitAmt(r.neuralTP1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
+                                            <td className="p-3 font-mono text-teal-400 font-bold">{calcTakeProfitAmt(r.neuralTP2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
                                             <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[200px]">{r.bullCase}</td>
                                             <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[200px]">{r.bearCase}</td>
                                             <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
@@ -11470,6 +11666,9 @@ ${stationInput}
                               <th className="p-3">N-Exit</th>
                               <th className="p-3 text-emerald-400">N-TP1</th>
                               <th className="p-3 text-teal-400 font-bold">N-TP2</th>
+                              <th className="p-3 text-red-400 font-bold">$5k SL Loss</th>
+                              <th className="p-3 text-emerald-400 font-bold">$5k TP1 Profit</th>
+                              <th className="p-3 text-teal-400 font-bold">$5k TP2 Profit</th>
                               <th className="p-3">Gate Sig</th>
                               <th className="p-3">Rev State</th>
                               <th className="p-3">Comp</th>
@@ -11515,6 +11714,9 @@ ${stationInput}
                               <th className="p-3 min-w-[80px]">N-Exit</th>
                               <th className="p-3 min-w-[80px]">N-TP1</th>
                               <th className="p-3 min-w-[80px]">N-TP2</th>
+                              <th className="p-3 text-red-400 font-bold">$5k SL Loss</th>
+                              <th className="p-3 text-emerald-400 font-bold">$5k TP1 Profit</th>
+                              <th className="p-3 text-teal-400 font-bold">$5k TP2 Profit</th>
                               <th className="p-3 min-w-[250px]">Bull Case</th>
                               <th className="p-3 min-w-[250px]">Bear Case</th>
                               <th className="p-3 min-w-[250px]">Final Take</th>
@@ -11554,6 +11756,9 @@ ${stationInput}
                                   <td className="p-3 font-mono text-red-400">{cleanPrice(rawMatch.algoExit || rawMatch.n_exit)}</td>
                                   <td className="p-3 font-mono text-emerald-400">{cleanPrice(rawMatch.algoTP1 || rawMatch.n_tp1)}</td>
                                   <td className="p-3 font-mono text-teal-400">{cleanPrice(rawMatch.algoTP2 || rawMatch.n_tp2)}</td>
+                                  <td className="p-3 font-mono text-red-500 font-bold">{calcStopLossAmt(rawMatch.algoExit || rawMatch.n_exit || r.neuralExit || r.nExit, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
+                                  <td className="p-3 font-mono text-emerald-400 font-bold">{calcTakeProfitAmt(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
+                                  <td className="p-3 font-mono text-teal-400 font-bold">{calcTakeProfitAmt(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice)}</td>
                                   <td className="p-3 font-mono" style={{color: rawMatch.gate_sig === "STRONG BUY" || rawMatch.gate_sig === "BUY" ? "#00ff66" : rawMatch.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{rawMatch.gate_sig || '—'}</td>
                                   <td className="p-3 font-mono text-[10px]" style={{color: rawMatch.rev_state?.includes("STEAM") ? "#ff4400" : rawMatch.rev_state?.includes("BOTTOM") ? "#aaffaa" : rawMatch.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{rawMatch.rev_state || '—'}</td>
                                   <td className="p-3 font-mono text-emerald-400">{rawMatch.composite || '—'}</td>
@@ -11610,6 +11815,9 @@ ${stationInput}
                                 <td className="p-3 font-mono">{cleanPrice(r.neuralExit)}</td>
                                 <td className="p-3 font-mono">{cleanPrice(r.neuralTP1)}</td>
                                 <td className="p-3 font-mono">{cleanPrice(r.neuralTP2)}</td>
+                                <td className="p-3 font-mono text-red-500 font-bold">{calcStopLossAmt(r.neuralExit || rawMatch.algoExit || rawMatch.n_exit, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
+                                <td className="p-3 font-mono text-emerald-400 font-bold">{calcTakeProfitAmt(r.neuralTP1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
+                                <td className="p-3 font-mono text-teal-400 font-bold">{calcTakeProfitAmt(r.neuralTP2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close)}</td>
                                 <td className="p-3 text-[11px] leading-relaxed text-emerald-300 font-medium bg-emerald-950/20 border-l border-emerald-500/20 whitespace-normal min-w-[250px]">{r.bullCase}</td>
                                 <td className="p-3 text-[11px] leading-relaxed text-red-300 font-medium bg-red-950/20 border-l border-red-500/20 whitespace-normal min-w-[250px]">{r.bearCase}</td>
                                 <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
