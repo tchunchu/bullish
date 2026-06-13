@@ -2956,6 +2956,14 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                       <span style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}} className="block text-[9px] font-mono leading-tight font-extrabold whitespace-pre-wrap">{r.g4 || '—'} {r.rr ? `(${r.rr})` : ''}</span>
                     </div>
                   </div>
+
+                  {/* RATIONALE REASONING BLOCK */}
+                  <div className="pt-2 border-t border-white/5 bg-black/30 p-2 rounded-lg border border-white/5">
+                    <span className="block text-[7px] text-amber-300 uppercase font-black tracking-wider mb-1">RATIONALE / ECONOMIC & TECH IMPACT</span>
+                    <p className="text-[10px] text-amber-200/90 font-sans leading-relaxed whitespace-pre-wrap leading-normal">
+                      {r.noise_signals || r.setup || "No major catalyst or trigger state flagged."}
+                    </p>
+                  </div>
                 </div>
               ) : r.setup !== undefined ? (
                 <div className="space-y-2.5">
@@ -3431,6 +3439,7 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
   const [stationAnalyzeLoading, setStationAnalyzeLoading] = useState(false);
 
   const [screenerResults, setScreenerResults] = useState<any[]>([]);
+  const [screenerMacroResult, setScreenerMacroResult] = useState<any>(null);
   const [rawScreenerText, setRawScreenerText] = useState('');
   const [terminal, setTerminal] = useState<string[]>([]);
   const [neuralScreenerText, setNeuralScreenerText] = useState('');
@@ -3453,6 +3462,17 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
     let filtered = [...screenerResults];
     if (screenerPreset !== 'full' && screenerMode !== 'earnings') {
       filtered = filtered.filter((r: any) => {
+        if (screenerMode === 'super_v5_3') {
+          const b = (r.bucket || "").toUpperCase();
+          if (screenerPreset === 'phase1') {
+            return b.includes("STRONG BUY") || b.includes("BUY ") || b === "BUY" || r.sort_score === 5 || r.sort_score === 4;
+          }
+          if (screenerPreset === 'phase2') {
+            return b.includes("WATCH") || r.sort_score === 3;
+          }
+          return true;
+        }
+
         const rev = (r.rev_state || "").toUpperCase();
         if (screenerPreset === 'phase1') {
           return rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
@@ -3467,7 +3487,7 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
       return filtered;
     }
     return filtered.slice(0, rawScreenerCount);
-  }, [screenerResults, screenerPreset, screenIndex, rawScreenerCount]);
+  }, [screenerResults, screenerPreset, screenerMode, rawScreenerCount]);
 
   const [isScreening, setIsScreening] = useState(false);
   const [isScreened, setIsScreened] = useState(false);
@@ -4339,6 +4359,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     setIsScreening(true);
     setIsScreened(false);
     setScreenerResults([]);
+    setScreenerMacroResult(null);
     setTerminal(["[SYSTEM] Establishing Neural Link..."]);
     setRawScreenerText("");
     setNeuralScreenerText("");
@@ -4417,6 +4438,11 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         }
 
         setScreenerResults(results);
+        if (data.macro) {
+          setScreenerMacroResult(data.macro);
+        } else {
+          setScreenerMacroResult(null);
+        }
         setIsScreened(true);
 
         // Auto-save Snapshot
@@ -4612,6 +4638,11 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             }
 
             setScreenerResults(results);
+            if (data.macro) {
+              setScreenerMacroResult(data.macro);
+            } else {
+              setScreenerMacroResult(null);
+            }
             setIsScreened(true);
 
             // Auto-save Snapshot
@@ -9050,6 +9081,129 @@ ${stationInput}
                       <div className="flex-1 overflow-y-auto custom-scrollbar border border-bento-border rounded-2xl bg-black/40 p-4">
                         {snapshotSortBy === 'raw' && (
                           <>
+                            {/* FRED Macro Economic Indicator Pulse Panel */}
+                            {screenerMacroResult && (screenerMode === 'super_v5_3' || screenerMode === 'unified_v2') && (
+                              <div className="mb-4 bg-gradient-to-r from-[#11111e] via-[#0e0e16] to-[#11111e] border border-violet-500/20 p-4 rounded-xl shadow-lg">
+                                <div className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-white/5 pb-2.5 mb-3 gap-2">
+                                  <div className="flex items-center gap-2.5">
+                                    <span className="flex h-2.5 w-2.5 relative">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                                    </span>
+                                    <h4 className="text-[11px] font-black uppercase tracking-widest text-[#cfd8ff]">
+                                      FRED Macro Regime Indicators (Economic Pulse)
+                                    </h4>
+                                    <span className="text-[9px] font-mono bg-white/5 border border-white/10 px-1.5 py-0.5 rounded text-bento-muted">
+                                      as of {screenerMacroResult.asOf || 'Live'}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-3 text-[10px]">
+                                    <div className="font-semibold text-[#8b5cf6]">
+                                      REGIME: <span className="font-extrabold text-white text-xs bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 rounded ml-1">{screenerMacroResult.label}</span>
+                                    </div>
+                                    <div className="font-semibold text-emerald-400">
+                                      MACRO SCORE: <span className="font-extrabold text-white text-xs bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded ml-1">{(screenerMacroResult.score || 50).toFixed(1)}/100</span>
+                                    </div>
+                                    <div className="font-semibold text-cyan-400">
+                                      TARGET EQUITY ALLOC: <span className="font-extrabold text-white text-xs bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 rounded ml-1">{screenerMacroResult.equityAlloc}%</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                  {/* Pillar 1: Yield Curve */}
+                                  <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                    <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Yield Curve (10Y-2Y)</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold font-mono text-white">
+                                        {screenerMacroResult.pillars?.curve?.val !== undefined ? `${screenerMacroResult.pillars.curve.val > 0 ? '+' : ''}${screenerMacroResult.pillars.curve.val.toFixed(2)} pp` : '—'}
+                                      </span>
+                                      <span className={cn(
+                                        "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                                        (screenerMacroResult.pillars?.curve?.score || 0) < 0 ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"
+                                      )}>
+                                        SCORE: {((screenerMacroResult.pillars?.curve?.score || 0) * 100).toFixed(0)}
+                                      </span>
+                                    </div>
+                                    <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                      {screenerMacroResult.pillars?.curve?.state || 'no data'}
+                                    </span>
+                                  </div>
+
+                                  {/* Pillar 2: Labor Market */}
+                                  <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                    <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Labor Market (UNRATE/SAHM)</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold font-mono text-white">
+                                        Sahm Gap: {screenerMacroResult.pillars?.labor?.sahmGap !== undefined ? `${screenerMacroResult.pillars.labor.sahmGap.toFixed(2)}%` : '—'}
+                                      </span>
+                                      <span className={cn(
+                                        "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                                        (screenerMacroResult.pillars?.labor?.score || 0) < 0.5 ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"
+                                      )}>
+                                        SCORE: {((screenerMacroResult.pillars?.labor?.score || 0) * 100).toFixed(0)}
+                                      </span>
+                                    </div>
+                                    <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                      {screenerMacroResult.pillars?.labor?.state || 'no data'}
+                                    </span>
+                                  </div>
+
+                                  {/* Pillar 3: Monetary Policy (Fed Funds) */}
+                                  <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                    <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Fed Funds Interest Rate</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold font-mono text-white">
+                                        6M Change: {screenerMacroResult.pillars?.fed?.ffChg6m !== undefined ? `${screenerMacroResult.pillars.fed.ffChg6m > 0 ? '+' : ''}${screenerMacroResult.pillars.fed.ffChg6m.toFixed(2)}%` : '—'}
+                                      </span>
+                                      <span className={cn(
+                                        "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                                        (screenerMacroResult.pillars?.fed?.score || 0) < 0.5 ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"
+                                      )}>
+                                        SCORE: {((screenerMacroResult.pillars?.fed?.score || 0) * 100).toFixed(0)}
+                                      </span>
+                                    </div>
+                                    <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                      {screenerMacroResult.pillars?.fed?.state || 'no data'}
+                                    </span>
+                                  </div>
+
+                                  {/* Pillar 4: Housing Permits */}
+                                  <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                    <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Housing Starts (HOUST)</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold font-mono text-white">
+                                        YoY Change: {screenerMacroResult.pillars?.housing?.houstYoy !== undefined ? `${screenerMacroResult.pillars.housing.houstYoy > 0 ? '+' : ''}${screenerMacroResult.pillars.housing.houstYoy.toFixed(1)}%` : '—'}
+                                      </span>
+                                      <span className={cn(
+                                        "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                                        (screenerMacroResult.pillars?.housing?.score || 0) < 0.5 ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400"
+                                      )}>
+                                        SCORE: {((screenerMacroResult.pillars?.housing?.score || 0) * 100).toFixed(0)}
+                                      </span>
+                                    </div>
+                                    <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                      {screenerMacroResult.pillars?.housing?.state || 'no data'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-[10px] text-gray-300 font-mono bg-black/40 p-2.5 rounded-lg border border-white/5">
+                                  <div>
+                                    <span className="text-emerald-400 font-bold block">Expansions Support Indicators:</span>
+                                    <div className="mt-1 leading-relaxed">{screenerMacroResult.supports || 'No predominant macro supports detected.'}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-red-400 font-bold block">Systemic Drags / Redlines:</span>
+                                    <div className="mt-1 leading-relaxed">{screenerMacroResult.drags || 'No critical macroeconomic drags.'}</div>
+                                  </div>
+                                </div>
+                                <div className="mt-2 text-[10px] text-[#eab308] italic font-mono leading-tight">
+                                  📝 {screenerMacroResult.why || 'Assessment initialized.'}
+                                </div>
+                              </div>
+                            )}
+
                             <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
                               {screenerMode === 'unified_v2' || screenerMode === 'super_v5_3' ? (
                               <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
@@ -9072,6 +9226,7 @@ ${stationInput}
                                     <th className="p-2 text-[9px]">TARGET</th>
                                     <th className="p-2 text-[9px]">MA STACK</th>
                                     <th className="p-2 text-[9px]">VOL↑</th>
+                                    <th className="p-2 text-[9px] text-[#cfd8ff]/80">RATIONALE / REASON</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -9107,6 +9262,9 @@ ${stationInput}
                                       <td className="p-2 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
                                       <td className="p-2" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
                                       <td className="p-2 text-yellow-400">{r.vol_surge}</td>
+                                      <td className="p-2 text-amber-200 font-sans text-[10px] max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.noise_signals || r.setup || ""}>
+                                        {r.noise_signals || r.setup || "No major catalyst"}
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>

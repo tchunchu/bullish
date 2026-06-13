@@ -3349,7 +3349,7 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
       console.error("Failed to write to screener_log.jsonl:", err);
     }
     
-    logToClient("FINAL_REPORT", { results: sorted, rawTable: tableText });
+    logToClient("FINAL_REPORT", { results: sorted, rawTable: tableText, macro: sMacroResult });
     res.end();
   });
 
@@ -3562,7 +3562,7 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
       console.error("Failed to write to screener_log.jsonl:", err);
     }
 
-    res.json({ results: sorted, rawTable: tableText, rawUnfiltered: results });
+    res.json({ results: sorted, rawTable: tableText, rawUnfiltered: results, macro: sMacroResult });
   });
 
   // --- Vite / Production Setup ---
