@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Screener v5 — 2026-06-11</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.55;
+    font-size: 14px;
+  }
+  .container { max-width: 1440px; margin: 0 auto; padding: 28px 24px; }
+
+  /* Typography */
+  h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.3px; }
+  h2 { font-size: 18px; font-weight: 700; margin: 36px 0 14px;
+       border-left: 4px solid #f9ca24; padding-left: 12px; }
+  h3 { font-size: 13px; font-weight: 600; color: #8b949e; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .subtitle { color: #8b949e; font-size: 13px; margin: 6px 0 28px; }
+
+  /* Regime strip */
+  .regime-bar { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 30px; }
+  .regime-card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px 20px; flex: 1; min-width: 220px;
+  }
+  .regime-badge {
+    display: inline-block; padding: 5px 18px; border-radius: 20px;
+    font-weight: 800; font-size: 15px; margin-bottom: 8px;
+  }
+
+  /* Cards */
+  .card {
+    background: #0d1117; border: 1px solid #30363d;
+    border-radius: 12px; padding: 20px; margin-bottom: 26px; overflow-x: auto;
+  }
+  .card-dark { background: #161b22; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    background: #161b22; color: #8b949e;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.07em; padding: 10px 12px; text-align: left;
+    border-bottom: 2px solid #30363d; white-space: nowrap;
+  }
+  td { padding: 13px 12px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  tbody tr:hover td { background: #161b22; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* Footer */
+  .footer {
+    text-align: center; color: #484f58; font-size: 12px;
+    margin-top: 48px; padding: 20px; border-top: 1px solid #21262d;
+  }
+  @media (max-width: 768px) {
+    .regime-bar { flex-direction: column; }
+    .container { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>📊 Equity Screener — v5</h1>
+  <div class="subtitle">
+    Generated: 2026-06-11T02:51:38.246Z
+    &nbsp;|&nbsp; Universe: S&amp;P 500 + Curated
+    &nbsp;|&nbsp; Workflow: <code>SCREENER_MASTER.md</code>
+    &nbsp;|&nbsp; Renderer: <code>render_v5.cjs</code> (deterministic)
+  </div>
+
+  <!-- ── REGIME PANEL ── -->
+  <div class="regime-bar">
+    <div class="regime-card">
+      <h3>Market Regime</h3>
+      <span class="regime-badge" style="background:#00d084;color:#111;">RISK_ON</span>
+      <div style="color:#8b949e;font-size:13px;">Score 70/100 &nbsp;|&nbsp; Size ×1</div>
+    </div>
+    <div class="regime-card">
+      <h3>Regime Signals</h3>
+      <ul style="list-style:none;font-size:13px;"><li style="padding:3px 0;color:#00d084;">+ SPY in uptrend (P&gt;50&gt;200)</li><li style="padding:3px 0;color:#e17055;">− SPY 20d slope down</li><li style="padding:3px 0;color:#e17055;">− VIX elevated (22.2)</li><li style="padding:3px 0;color:#e17055;">− VIX +36% in 10d</li><li style="padding:3px 0;color:#00d084;">+ Credit firm (HYG/IEF)</li><li style="padding:3px 0;color:#00d084;">+ Breadth participating (RSP/SPY)</li><li style="padding:3px 0;color:#00d084;">+ QQQ above 50d</li></ul>
+    </div>
+    <div class="regime-card">
+      <h3>Sector Leadership (RS vs SPY)</h3>
+      <div style="margin-top:4px;"><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#00b894;color:#fff;">
+    XLK +8.85
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#00b894;color:#fff;">
+    XLE +4.8
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#00b894;color:#fff;">
+    XLRE +1.92
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#00b894;color:#fff;">
+    XLV +1.15
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#00b894;color:#fff;">
+    XLP +1.1
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#d63031;color:#fff;">
+    XLF -0.34
+  </span></div>
+    </div>
+  </div>
+
+  <!-- ── CANDIDATES TABLE ── -->
+  <h2>Today's Screener Candidates</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>State</th>
+          <th style="text-align:center;">Conv.</th>
+          <th style="text-align:center;">Hold</th>
+          <th>Entry → Stop → T1</th>
+          <th>Thesis &amp; ⚡ Catalyst</th>
+          <th>Invalidation &amp; Tape</th>
+        </tr>
+      </thead>
+      <tbody>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      INVH
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#00d084;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">9</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $29.71 →
+      <span style="color:#e17055;">$28.67</span> →
+      <span style="color:#00d084;">$32.39</span>
+      <br><small style="color:#b2bec3;">R:R 2.57 &nbsp;|&nbsp; RS 6.55%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Strong institutional accumulation and rising on-balance volume confirm the setup. Price remains tight against the pivot with high relative strength, suggesting a breakout is imminent in a favorable risk-on market environment.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Fails to break the pivot on significant volume or drops below the defined stop level.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.47</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 60.9</span> &nbsp; <span style="color:#b2bec3;">RevGr 9.2%</span> &nbsp; <span style="color:#00d084;">Marg 24.3%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      FOXA
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#f9ca24;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">6</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $68.00 →
+      <span style="color:#e17055;">$64.23</span> →
+      <span style="color:#00d084;">$75.55</span>
+      <br><small style="color:#b2bec3;">R:R 2 &nbsp;|&nbsp; RS 2.74%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Strong institutional backing and high relative strength support the setup. While the on-balance volume slope is slightly negative, the tight volatility contraction makes this a top-tier candidate for an upside pivot break.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Price drops below the stop level or loses institutional relative strength status.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.43</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 60.6</span> &nbsp; <span style="color:#e17055;">RevGr -8.6%</span> &nbsp; <span style="color:#00d084;">Marg 21.4%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      BEN
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#f9ca24;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">6</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $31.14 →
+      <span style="color:#e17055;">$29.71</span> →
+      <span style="color:#00d084;">$36.41</span>
+      <br><small style="color:#b2bec3;">R:R 3.69 &nbsp;|&nbsp; RS 11.24%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Institutional relative strength and high accumulation scores provide a solid foundation. While the close-range performance is weak, the tight base structure indicates sellers are exhausted and buyers are waiting for a clear breakout signal.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Price fails to push through the pivot or breaks support.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.6</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 53.5</span> &nbsp; <span style="color:#b2bec3;">RevGr 8.7%</span> &nbsp; <span style="color:#b2bec3;">Marg 17.2%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      ELV
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">5</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $404.56 →
+      <span style="color:#e17055;">$387.23</span> →
+      <span style="color:#00d084;">$486.84</span>
+      <br><small style="color:#b2bec3;">R:R 4.75 &nbsp;|&nbsp; RS 16.88%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">High volume accumulation signals strength, yet the lack of institutional relative strength and weak close-range buying force a lower conviction rating. Validates as a potential move if volume confirms the pivot breakout.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Failure to breach pivot with conviction or significant reversal from current levels.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 2.1</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 57.7</span> &nbsp; <span style="color:#b2bec3;">RevGr 2.6%</span> &nbsp; <span style="color:#b2bec3;">Marg 5.3%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      TGT
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">5</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $127.98 →
+      <span style="color:#e17055;">$120.77</span> →
+      <span style="color:#00d084;">$142.40</span>
+      <br><small style="color:#b2bec3;">R:R 2 &nbsp;|&nbsp; RS 11.39%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Aggressive late-day buying shows clear intent, but the lack of institutional relative strength and negative volume slope suggest caution. Requires a high-volume breakout to overcome current distribution signals.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Price fails to hold at the close or breaks down through the stop.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.05</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 56.1</span> &nbsp; <span style="color:#b2bec3;">RevGr 6.7%</span> &nbsp; <span style="color:#b2bec3;">Marg 4.5%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      SLB
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $55.51 →
+      <span style="color:#e17055;">$53.68</span> →
+      <span style="color:#00d084;">$63.35</span>
+      <br><small style="color:#b2bec3;">R:R 4.28 &nbsp;|&nbsp; RS 11.67%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.23</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 49.4</span> &nbsp; <span style="color:#b2bec3;">RevGr 2.7%</span> &nbsp; <span style="color:#b2bec3;">Marg 12.3%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      PSX
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $181.72 →
+      <span style="color:#e17055;">$174.34</span> →
+      <span style="color:#00d084;">$209.13</span>
+      <br><small style="color:#b2bec3;">R:R 3.71 &nbsp;|&nbsp; RS 7.65%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.16</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 56.2</span> &nbsp; <span style="color:#b2bec3;">RevGr 6.9%</span> &nbsp; <span style="color:#b2bec3;">Marg 0.6%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      IVZ
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $27.46 →
+      <span style="color:#e17055;">$26.54</span> →
+      <span style="color:#00d084;">$31.44</span>
+      <br><small style="color:#b2bec3;">R:R 4.33 &nbsp;|&nbsp; RS 2.27%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.11</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 52.2</span> &nbsp; <span style="color:#00d084;">RevGr 14.1%</span> &nbsp; <span style="color:#b2bec3;">Marg 19.1%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      INTC
+      
+    </td>
+    <td><span style="background:#636e72;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">NONE</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $107.04 →
+      <span style="color:#e17055;">$98.48</span> →
+      <span style="color:#00d084;">$171.73</span>
+      <br><small style="color:#b2bec3;">R:R 7.55 &nbsp;|&nbsp; RS 58.93%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.39</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 50.4</span> &nbsp; <span style="color:#b2bec3;">RevGr 7.2%</span> &nbsp; <span style="color:#b2bec3;">Marg 6.9%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      HUM
+      
+    </td>
+    <td><span style="background:#636e72;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">NONE</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $364.46 →
+      <span style="color:#e17055;">$341.20</span> →
+      <span style="color:#00d084;">$452.82</span>
+      <br><small style="color:#b2bec3;">R:R 3.8 &nbsp;|&nbsp; RS 56.37%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 3.46</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#e17055;">RSI 83.4</span> &nbsp; <span style="color:#00d084;">RevGr 23.5%</span> &nbsp; <span style="color:#b2bec3;">Marg 4.7%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      CNC
+      
+    </td>
+    <td><span style="background:#636e72;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">NONE</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $65.34 →
+      <span style="color:#e17055;">$60.90</span> →
+      <span style="color:#00d084;">$81.62</span>
+      <br><small style="color:#b2bec3;">R:R 3.67 &nbsp;|&nbsp; RS 44.66%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.92</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#e17055;">RSI 71.9</span> &nbsp; <span style="color:#b2bec3;">RevGr 5.1%</span> &nbsp; <span style="color:#b2bec3;">Marg 5.1%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      RIOT
+      
+    </td>
+    <td><span style="background:#636e72;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">NONE</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $24.08 →
+      <span style="color:#e17055;">$22.20</span> →
+      <span style="color:#00d084;">$35.76</span>
+      <br><small style="color:#b2bec3;">R:R 6.2 &nbsp;|&nbsp; RS 26.02%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.46</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 49.1</span> &nbsp; <span style="color:#b2bec3;">RevGr 3.6%</span> &nbsp; <span style="color:#b2bec3;">Marg -280.5%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      UNH
+      
+    </td>
+    <td><span style="background:#636e72;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">NONE</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $407.46 →
+      <span style="color:#e17055;">$387.41</span> →
+      <span style="color:#00d084;">$468.04</span>
+      <br><small style="color:#b2bec3;">R:R 3.02 &nbsp;|&nbsp; RS 18.57%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.75</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 68.3</span> &nbsp; <span style="color:#b2bec3;">RevGr 2%</span> &nbsp; <span style="color:#b2bec3;">Marg 8%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      WST
+      
+    </td>
+    <td><span style="background:#636e72;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">NONE</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $330.92 →
+      <span style="color:#e17055;">$312.25</span> →
+      <span style="color:#00d084;">$377.95</span>
+      <br><small style="color:#b2bec3;">R:R 2.52 &nbsp;|&nbsp; RS 15.14%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.57</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 65.2</span> &nbsp; <span style="color:#00d084;">RevGr 21%</span> &nbsp; <span style="color:#00d084;">Marg 21.7%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      PFG
+      
+    </td>
+    <td><span style="background:#636e72;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">NONE</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="text-align:center;"><span style="color:#8b949e;">—</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $109.21 →
+      <span style="color:#e17055;">$105.12</span> →
+      <span style="color:#00d084;">$117.40</span>
+      <br><small style="color:#b2bec3;">R:R 2 &nbsp;|&nbsp; RS 14.33%</small>
+    </td>
+    <td style="max-width:360px;"><span style="color:#8b949e;font-style:italic;">Pending LLM analysis</span></td>
+    <td style="max-width:200px;">
+      —
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.48</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#e17055;">RSI 72.2</span> &nbsp; <span style="color:#e17055;">RevGr -4.5%</span> &nbsp; <span style="color:#b2bec3;">Marg 14.8%</span></div>
+    </td>
+  </tr></tbody>
+    </table>
+  </div>
+
+  <!-- ── AUTO PORTFOLIO NOTE ── -->
+  <h2>📋 Portfolio Note — 2026-06-11</h2>
+  <div class="card card-dark">
+    <p style="font-size:14px;color:#cdd9e5;line-height:1.7;">
+      <strong style="color:#e6edf3;">Regime:</strong>
+      RISK_ON ×1 — full allocation eligible.<br>
+
+      <strong style="color:#e6edf3;">TRIGGERED:</strong> None today — set alerts on COILING names below.<br>
+
+      <strong style="color:#e6edf3;">COILING alerts (conv ≥7):</strong> INVH (pivot $30.11) — set pivot alerts at levels shown, check the 3:30–4:00 pm ET close.<br>
+
+      <strong style="color:#f9ca24;">⚠ Sector concentration:</strong> Other: FOXA, ELV, TGT, SLB, INTC, HUM, CNC, RIOT, UNH, PFG (10 names) — cap group weight.<br>
+
+      <strong style="color:#e6edf3;">Chart to watch:</strong> INVH — highest-conviction COILING; alert at pivot $30.11 on ≥1.4× vol.
+    </p></div>
+
+  <!-- ── HISTORICAL LEDGER ── -->
+  <h2>📒 Historical Trigger Ledger</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Ticker</th>
+          <th>State</th>
+          <th>Entry</th>
+          <th>Stop</th>
+          <th>T1</th>
+          <th>R:R</th>
+          <th>RS%</th>
+          <th>Regime</th>
+        </tr>
+      </thead>
+      <tbody>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">ARES</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$128.31</td>
+    <td style="font-family:monospace;color:#e17055;">$120.00</td>
+    <td style="font-family:monospace;color:#00d084;">$148.66</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">FOXA</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$68.00</td>
+    <td style="font-family:monospace;color:#e17055;">$64.23</td>
+    <td style="font-family:monospace;color:#00d084;">$75.55</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">PRU</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$105.17</td>
+    <td style="font-family:monospace;color:#e17055;">$100.83</td>
+    <td style="font-family:monospace;color:#00d084;">$113.86</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">TGT</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$127.98</td>
+    <td style="font-family:monospace;color:#e17055;">$120.77</td>
+    <td style="font-family:monospace;color:#00d084;">$142.40</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">AVB</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$186.59</td>
+    <td style="font-family:monospace;color:#e17055;">$181.25</td>
+    <td style="font-family:monospace;color:#00d084;">$202.63</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">GD</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$341.07</td>
+    <td style="font-family:monospace;color:#e17055;">$334.35</td>
+    <td style="font-family:monospace;color:#00d084;">$384.52</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">IVZ</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$27.46</td>
+    <td style="font-family:monospace;color:#e17055;">$26.54</td>
+    <td style="font-family:monospace;color:#00d084;">$31.44</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">PSX</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$181.72</td>
+    <td style="font-family:monospace;color:#e17055;">$174.34</td>
+    <td style="font-family:monospace;color:#00d084;">$209.13</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">SLB</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$55.51</td>
+    <td style="font-family:monospace;color:#e17055;">$53.68</td>
+    <td style="font-family:monospace;color:#00d084;">$63.35</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">NWS</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$30.90</td>
+    <td style="font-family:monospace;color:#e17055;">$29.47</td>
+    <td style="font-family:monospace;color:#00d084;">$33.80</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">ELV</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$404.56</td>
+    <td style="font-family:monospace;color:#e17055;">$387.23</td>
+    <td style="font-family:monospace;color:#00d084;">$486.84</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">INVH</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$29.71</td>
+    <td style="font-family:monospace;color:#e17055;">$28.67</td>
+    <td style="font-family:monospace;color:#00d084;">$32.39</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">MMM</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$156.85</td>
+    <td style="font-family:monospace;color:#e17055;">$148.74</td>
+    <td style="font-family:monospace;color:#00d084;">$173.08</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">AES</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$14.63</td>
+    <td style="font-family:monospace;color:#e17055;">$14.56</td>
+    <td style="font-family:monospace;color:#00d084;">$14.99</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-11</td>
+    <td style="font-weight:700;">BEN</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$31.14</td>
+    <td style="font-family:monospace;color:#e17055;">$29.71</td>
+    <td style="font-family:monospace;color:#00d084;">$36.41</td>
+    <td>2</td>
+    <td>50.00%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-10</td>
+    <td style="font-weight:700;">EXPD</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$163.44</td>
+    <td style="font-family:monospace;color:#e17055;">$156.29</td>
+    <td style="font-family:monospace;color:#00d084;">$177.74</td>
+    <td>2</td>
+    <td>4.47%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr></tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    Screener v5 &nbsp;|&nbsp; researchshipper/equity · update branch &nbsp;|&nbsp; 2026-06-11<br>
+    All price levels sourced from <code>screener_dump.json</code>. LLM reasoning applied over dump numbers only.
+    Forward returns tracked in <code>screener_log.jsonl</code> via <code>scorecard.cjs</code>.
+  </div>
+
+</div>
+</body>
+</html>

@@ -7,7 +7,12 @@ import yahooFinanceImport from 'yahoo-finance2';
 import { GoogleGenAI } from "@google/genai";
 import Parser from 'rss-parser';
 import { spawn, execSync } from "child_process";
-import { existsSync } from "fs";
+import fs, { existsSync } from "fs";
+
+import { analyzeTechnical } from './fullscrneer/lib/technical.js';
+import { computeRisk } from './fullscrneer/lib/risk.js';
+import { computeRating } from './fullscrneer/lib/rating.js';
+import { computeMacroRegime } from './fullscrneer/lib/macro.js';
 
 dotenv.config();
 
@@ -26,8 +31,10 @@ const parser = new Parser({
 });
 
 const MODELS = {
-  FLASH: "gemini-3.5-flash",
-  PRO: "gemini-3.5-flash",
+  FLASH_35: "gemini-3.5-flash",
+  FLASH_25: "gemini-2.5-flash",
+  FLASH_LITE: "gemini-3.1-flash-lite",
+  PRO: "gemini-3.1-pro-preview",
 };
 
 async function generateContentWithRetry(params: any, maxRetries = 3, initialDelayMs = 2500) {
@@ -45,6 +52,19 @@ async function generateContentWithRetry(params: any, maxRetries = 3, initialDela
                           errMsg.toLowerCase().includes("quota") ||
                           errMsg.toLowerCase().includes("resource");
                           
+      if (isRateLimit) {
+        if (params.model !== "gemini-3.1-flash-lite") {
+          console.warn(`[Gemini API] Quota or Rate limit encountered on ${params.model}. Automatically switching request to gemini-3.1-flash-lite...`);
+          params.model = "gemini-3.1-flash-lite";
+          continue; // Attempt immediately with the lite model
+        } else if (params.config && params.config.tools) {
+          console.warn(`[Gemini API] Quota/Rate limit encountered on lite model with tools. Stripping search grounding tools as fallback...`);
+          delete params.config.tools;
+          delete params.config.toolConfig;
+          continue; // Attempt immediately without tools
+        }
+      }
+
       if (isRateLimit && attempt < maxRetries) {
         const delay = initialDelayMs * Math.pow(2.2, attempt - 1) + Math.random() * 1500;
         console.warn(`[Gemini Engine] Rate limit triggered. Attempt ${attempt}/${maxRetries}. Backing off for ${Math.round(delay)}ms...`);
@@ -202,6 +222,27 @@ async function getTickersForIndex(index: string): Promise<string[]> {
   }
 }
 
+// --- Cached SPY Closes for Relative Strength ---
+let SPY_CL_CACHE: { quotes: any[], closes: number[], expiry: number } | null = null;
+async function getCachedSpyCloses(days: number): Promise<{ quotes: any[], closes: number[] }> {
+  const now = Date.now();
+  if (SPY_CL_CACHE && SPY_CL_CACHE.expiry > now) {
+    return SPY_CL_CACHE;
+  }
+  try {
+    const record = await fetchWithRetry('SPY', days);
+    if (record && record.quotes && record.quotes.length > 0) {
+      const quotes = record.quotes;
+      const closes = quotes.map((q: any) => q.close).filter((v: any) => v != null);
+      SPY_CL_CACHE = { quotes, closes, expiry: now + 1000 * 60 * 15 }; // 15 mins
+      return SPY_CL_CACHE;
+    }
+  } catch (err: any) {
+    console.error("[SPY CACHE] Failed to fetch standard benchmark closes:", err.message);
+  }
+  return { quotes: [], closes: [] };
+}
+
 // --- Data Fetching Fallbacks (v7.0 Logic) ---
 const FETCH_CACHE: { [key: string]: { data: any, expiry: number } } = {};
 
@@ -214,27 +255,41 @@ async function fetchWithRetry(ticker: string, days: number = 120) {
   // 1. Try Yahoo Finance First (faster, closer to real-time daily values)
   try {
     const end = new Date();
-    end.setDate(end.getDate() + 1); // Add 1 day to ensure it includes today's intraday or close
     const start = new Date();
     start.setDate(end.getDate() - (days + 30));
     
-    // @ts-ignore
-    const results = await (yahooFinance as any).historical(ticker, {
-      period1: start.toISOString().split('T')[0],
-      period2: end.toISOString().split('T')[0],
-      interval: '1d'
-    }, { validateResult: false });
+    let quotes: any[] = [];
+    const endTimestamp = Math.floor(end.getTime() / 1000);
+    const startTimestamp = Math.floor(start.getTime() / 1000);
     
-    if (results && results.length >= 30) {
-      const quotes = results.map((r: any) => ({
-        date: r.date,
-        open: r.open,
-        high: r.high,
-        low: r.low,
-        close: r.close,
-        volume: r.volume
-      }));
-      
+    let ch: any = null;
+    let retries = 3;
+    let delay = 150;
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        ch = await (yahooFinance as any).chart(ticker, { period1: startTimestamp, period2: endTimestamp, interval: '1d' });
+        if (ch && ch.quotes && ch.quotes.length >= 30) {
+          break;
+        }
+      } catch (err: any) {
+        if (attempt === retries - 1) {
+          console.warn(`[Yahoo Chart Retry] Failed fetching ${ticker} on attempt ${attempt + 1}: ${err.message}`);
+        } else {
+          await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, attempt)));
+        }
+      }
+    }
+    
+    if (ch && ch.quotes) {
+        quotes = ch.quotes.filter((q: any) => 
+          q.close != null && !isNaN(q.close) &&
+          q.open != null && !isNaN(q.open) &&
+          q.high != null && !isNaN(q.high) &&
+          q.low != null && !isNaN(q.low)
+        );
+    }
+    
+    if (quotes.length >= 30) {
       // Patch the last quote with real-time live data to ensure screener uses actual live prices
       try {
         const liveQuote = await yahooFinance.quote(ticker, {}, { validateResult: false });
@@ -955,117 +1010,478 @@ async function startServer() {
     return 50;
   }
 
+  // --- Institutional Coiling & Setup Math (v5 Parity) ---
+  function cs_getATR(quotes: any[], period: number = 14): number | null {
+    if (!quotes || quotes.length <= period) return null;
+    let trs: number[] = [];
+    for (let i = 1; i < quotes.length; i++) {
+        const h = quotes[i].high, l = quotes[i].low, pc = quotes[i-1].close;
+        trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    }
+    let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < trs.length; i++) {
+        atr = ((atr * (period - 1)) + trs[i]) / period;
+    }
+    return atr;
+  }
+
+  function cs_getRSI(quotes: any[], period: number = 14): number | null {
+    if (!quotes || quotes.length <= period) return null;
+    let gains: number[] = [], losses: number[] = [];
+    for (let i = 1; i < quotes.length; i++) {
+        const diff = quotes[i].close - quotes[i-1].close;
+        gains.push(diff > 0 ? diff : 0);
+        losses.push(diff < 0 ? Math.abs(diff) : 0);
+    }
+    let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    
+    for (let i = period; i < gains.length; i++) {
+        avgGain = ((avgGain * (period - 1)) + gains[i]) / period;
+        avgLoss = ((avgLoss * (period - 1)) + losses[i]) / period;
+    }
+    
+    if (avgLoss === 0) return 100;
+    const rs = avgGain / avgLoss;
+    return 100 - (100 / (1 + rs));
+  }
+
+  function cs_getSMA(data: number[], period: number): number | null {
+    if (!data || data.length < period) return null;
+    const slice = data.slice(-period);
+    return slice.reduce((a, b) => a + b, 0) / period;
+  }
+
+  function cs_getEMA(data: number[], period: number): number | null {
+    if (!data || data.length < period) return null;
+    const k = 2 / (period + 1);
+    let emaVal = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < data.length; i++) {
+        emaVal = (data[i] * k) + (emaVal * (1 - k));
+    }
+    return emaVal;
+  }
+
+  const cs_closesOf = (q: any[]): number[] => q.map(x => x.close).filter(v => v != null);
+
+  function cs_getBollinger(closes: number[], period = 20, mult = 2) {
+    if (!closes || closes.length < period) return null;
+    const s = closes.slice(-period);
+    const mid = s.reduce((a, b) => a + b, 0) / period;
+    const sd = Math.sqrt(s.reduce((a, b) => a + (b - mid) ** 2, 0) / period);
+    return { mid, upper: mid + mult * sd, lower: mid - mult * sd, width: (2 * mult * sd) / mid };
+  }
+
+  function cs_getKeltner(quotes: any[], period = 20, mult = 1.5) {
+    if (!quotes || quotes.length < period + 1) return null;
+    const mid = cs_getEMA(cs_closesOf(quotes), period);
+    const atr = cs_getATR(quotes, period);
+    if (mid == null || atr == null) return null;
+    return { mid, upper: mid + mult * atr, lower: mid - mult * atr };
+  }
+
+  function cs_isSqueezed(quotes: any[]) {
+    const bb = cs_getBollinger(cs_closesOf(quotes));
+    const kc = cs_getKeltner(quotes);
+    if (!bb || !kc) return null;
+    return bb.upper < kc.upper && bb.lower > kc.lower;
+  }
+
+  function cs_percentileRank(series: number[], lookback: number): number | null {
+    if (!series || series.length < 2) return null;
+    const s = series.slice(-lookback);
+    const last = s[s.length - 1];
+    const below = s.filter(v => v < last).length;
+    return +(100 * below / (s.length - 1)).toFixed(1);
+  }
+
+  function cs_bbWidthPercentile(closes: number[], lookback = 126, period = 20): number | null {
+    if (!closes || closes.length < period + 10) return null;
+    const widths: number[] = [];
+    for (let i = period; i <= closes.length; i++) {
+      const bb = cs_getBollinger(closes.slice(0, i), period);
+      if (bb) widths.push(bb.width);
+    }
+    return cs_percentileRank(widths, lookback);
+  }
+
+  function cs_atrPctPercentile(quotes: any[], lookback = 126, period = 14) {
+    if (!quotes || quotes.length < period + 10) return null;
+    const series: number[] = [];
+    for (let i = period + 1; i <= quotes.length; i++) {
+      const a = cs_getATR(quotes.slice(0, i), period);
+      const c = quotes[i - 1].close;
+      if (a != null && c) series.push(a / c);
+    }
+    if (series.length < 2) return null;
+    return { atrPct: +(series[series.length - 1] * 100).toFixed(2), pctile: cs_percentileRank(series, lookback) };
+  }
+
+  function cs_upDownVolRatio(quotes: any[], n = 50): number | null {
+    if (!quotes || quotes.length < n + 1) return null;
+    let up = 0, dn = 0;
+    const s = quotes.slice(-n);
+    for (let i = 1; i < s.length; i++) {
+      if (s[i].close > s[i - 1].close) up += s[i].volume || 0;
+      else if (s[i].close < s[i - 1].close) dn += s[i].volume || 0;
+    }
+    return dn > 0 ? +(up / dn).toFixed(2) : null;
+  }
+
+  // today close position in day range
+  function cs_closingRange(q: any): number | null {
+    if (!q || q.high == null || q.low == null || q.high === q.low) return null;
+    return +((q.close - q.low) / (q.high - q.low)).toFixed(2);
+  }
+
+  function cs_volDryUp(quotes: any[]): number | null {
+    const vols = quotes.map(q => q.volume).filter((v: any) => v != null);
+    const v10 = cs_getSMA(vols, 10), v50 = cs_getSMA(vols, 50);
+    return (v10 != null && v50 && v50 > 0) ? +(v10 / v50).toFixed(2) : null;
+  }
+
+  function cs_contractionSequence(quotes: any[], days = 45) {
+    if (!quotes || quotes.length < days) return null;
+    const s = quotes.slice(-days);
+    const third = Math.floor(days / 3);
+    const rng = (seg: any[]) => {
+      const h = Math.max(...seg.map(q => q.high)), l = Math.min(...seg.map(q => q.low));
+      return (h - l) / l;
+    };
+    const r1 = rng(s.slice(0, third)), r2 = rng(s.slice(third, 2 * third)), r3 = rng(s.slice(2 * third));
+    return { contracting: r3 < r2 && r2 < r1, ranges: [r1, r2, r3].map(r => +(r * 100).toFixed(1)) };
+  }
+
+  function cs_obvSlope(quotes: any[], n = 20): number | null {
+    if (!quotes || quotes.length < n + 1) return null;
+    let obv = 0; const series = [0];
+    for (let i = 1; i < quotes.length; i++) {
+      const d = quotes[i].close - quotes[i - 1].close;
+      obv += d > 0 ? (quotes[i].volume || 0) : d < 0 ? -(quotes[i].volume || 0) : 0;
+      series.push(obv);
+    }
+    const s = series.slice(-n);
+    const avgVol = cs_getSMA(quotes.map(q => q.volume || 0), 50) || 1;
+    return +(((s[s.length - 1] - s[0]) / n) / avgVol).toFixed(3);
+  }
+
+  function cs_relStrength(closes: number[], benchCloses: number[]): number | null {
+    const ret = (c: number[], n: number) => (c.length > n && c[c.length - 1 - n]) ? c[c.length - 1] / c[c.length - 1 - n] - 1 : null;
+    const windows = [[21, 0.5], [63, 0.3], [126, 0.2]];
+    let rs = 0, w = 0;
+    for (const [n, wt] of windows) {
+      const a = ret(closes, n), b = ret(benchCloses, n);
+      if (a != null && b != null) { rs += wt * (a - b); w += wt; }
+    }
+    return w > 0 ? +(100 * rs / w).toFixed(2) : null;
+  }
+
+  function cs_rsLineNearHigh(closes: number[], benchCloses: number[], lookback = 63, tolPct = 2) {
+    const n = Math.min(closes.length, benchCloses.length);
+    if (n < lookback) return false;
+    const line = [];
+    for (let i = n - lookback; i < n; i++) line.push(closes[i] / benchCloses[i]);
+    const hi = Math.max(...line);
+    return ((hi - line[line.length - 1]) / hi) * 100 <= tolPct;
+  }
+
+  function cs_compressionScore(quotes: any[]) {
+    const closes = quotes.map(q => q.close).filter((v: any) => v != null);
+    let score = 0;
+    const parts: any = {};
+
+    const bbp = cs_bbWidthPercentile(closes);
+    if (bbp != null && bbp <= 20) { score += 25; parts.bbTight = bbp; }
+    else if (bbp != null && bbp <= 35) { score += 12; parts.bbTight = bbp; }
+
+    const ap = cs_atrPctPercentile(quotes);
+    if (ap && ap.pctile != null && ap.pctile <= 25) { score += 15; parts.atrPctile = ap.pctile; }
+
+    if (cs_isSqueezed(quotes) === true) { score += 15; parts.ttmSqueeze = true; }
+
+    const dry = cs_volDryUp(quotes);
+    if (dry != null && dry < 0.8) { score += 15; parts.volDryUp = dry; }
+    else if (dry != null && dry < 1.0) { score += 7; parts.volDryUp = dry; }
+
+    const cs = cs_contractionSequence(quotes);
+    if (cs && cs.contracting) { score += 15; parts.vcp = cs.ranges; }
+
+    const udv = cs_upDownVolRatio(quotes);
+    if (udv != null && udv > 1.3) { score += 15; parts.accum = udv; }
+    else if (udv != null && udv > 1.0) { score += 7; parts.accum = udv; }
+
+    return { score: Math.min(100, score), parts };
+  }
+
+  function cs_pivotLevel(quotes: any[], lookback = 60) {
+    if (!quotes || quotes.length < lookback + 1) return null;
+    const prior = quotes.slice(-(lookback + 1), -1);
+    return Math.max(...prior.map(q => q.high));
+  }
+
+  function cs_classifySetup(quotes: any[], opts: any = {}) {
+    const maxStopPct = opts.maxStopPct ?? 0.08;
+    if (!quotes || quotes.length < 70) return { state: 'NO_DATA', score: 0, pivot: 0, entry: 0, stop: 0, t1: 0, t2: 0, rr: 1.5, atr: 1.0, compression: { score: 0 }, detail: 'No data.' };
+
+    const today = quotes[quotes.length - 1];
+    const price = today.close;
+    const atr = cs_getATR(quotes, 14);
+    const vols = quotes.map(q => q.volume).filter((v: any) => v != null);
+    const avgVol55 = cs_getSMA(vols, 50);
+    const avgVol50 = avgVol55 && avgVol55 > 0 ? avgVol55 : 1;
+    const closes = quotes.map(q => q.close);
+    const ma2 = cs_getSMA(closes, 20);
+    const ma20 = ma2 && ma2 > 0 ? ma2 : price;
+    const ma5 = cs_getSMA(closes, 50);
+    const ma50 = ma5 && ma5 > 0 ? ma5 : price;
+    const pivot = cs_pivotLevel(quotes);
+    if (!pivot || !atr || !avgVol50) return { state: 'NO_DATA', score: 0, pivot: 0, entry: price, stop: price * 0.95, t1: price * 1.05, t2: price * 1.10, rr: 1.5, atr: 1.0, compression: { score: 0 }, detail: 'Incomplete indicators.' };
+
+    const comp = cs_compressionScore(quotes.slice(0, -1));
+    const cr = cs_closingRange(today);
+    const volThrust = today.volume != null && today.volume >= 1.4 * avgVol50;
+    const distPastPivot = (price - pivot) / pivot;
+
+    const swingLow = Math.min(...quotes.slice(-10).map(q => q.low));
+    let stop = Math.max(swingLow, price - 2 * atr);
+    stop = Math.min(stop, price - atr);
+    stop = Math.max(stop, price * (1 - maxStopPct));
+    if (stop >= price) stop = price - 1.5 * atr;
+
+    const baseLow = Math.min(...quotes.slice(-45).map(q => q.low));
+    const baseDepth = pivot - baseLow;
+    const t1 = +Math.max(pivot + baseDepth * 0.5, price + 2 * (price - stop)).toFixed(2);
+    const t2 = +(pivot + baseDepth).toFixed(2);
+    const rr = +((t1 - price) / (price - stop)).toFixed(2);
+
+    const base = { pivot: +pivot.toFixed(2), entry: +price.toFixed(2), stop: +stop.toFixed(2), t1, t2, rr, atr: +atr.toFixed(2), compression: comp };
+
+    if (distPastPivot > 0.05 || price > pivot + 1.5 * atr) {
+      return { state: 'EXTENDED', score: 10, ...base,
+        detail: `+${(distPastPivot * 100).toFixed(1)}% past pivot — chase risk. Alert on retest of ${pivot.toFixed(2)}.` };
+    }
+
+    if (price > pivot && distPastPivot <= 0.03 && volThrust && cr != null && cr >= 0.6 && comp.score >= 40) {
+      return { state: 'TRIGGERED', score: 90 + Math.round(comp.score / 10), ...base,
+        detail: `Pivot break +${(distPastPivot * 100).toFixed(1)}% on ${(today.volume / avgVol50).toFixed(1)}x vol, close-range ${cr}. Coil score ${comp.score}.` };
+    }
+
+    const nearPivot = (pivot - price) / pivot;
+    if (price <= pivot && nearPivot <= 0.08 && comp.score >= 55 && price > ma50 * 0.97) {
+      return { state: 'COILING', score: 50 + Math.round(comp.score / 4), ...base,
+        detail: `Coil ${comp.score}/100, ${(nearPivot * 100).toFixed(1)}% below pivot ${pivot.toFixed(2)}. ALERT: break of pivot on ≥1.4x vol.` };
+    }
+
+    const lo60 = Math.min(...quotes.slice(-60).map(q => q.low));
+    const offLow = (price - lo60) / lo60;
+    const reclaim20 = price > ma20 && quotes[quotes.length - 2].close <= ma20;
+    if (offLow > 0.05 && offLow < 0.20 && reclaim20 && volThrust) {
+      return { state: 'REVERSAL', score: 55, ...base,
+        detail: `Reclaimed 20d MA on volume, +${(offLow * 100).toFixed(1)}% off 60d low.` };
+    }
+
+    return { state: 'NONE', score: comp.score >= 45 ? 20 : 0, ...base,
+      detail: comp.score >= 45 ? `Compressing (${comp.score}) but pivot ${pivot.toFixed(2)} is ${(nearPivot * 100).toFixed(1)}% away.` : 'No setup.' };
+  }
+
+  async function computeEarningsCatalyst(ticker: string, horizon: string = 'weeks', daysWindow: number = 3) {
+    if (!ticker || typeof ticker !== 'string') return null;
+    try {
+      const qs: any = await yahooFinance.quoteSummary(ticker, { modules: ['calendarEvents', 'earningsHistory', 'financialData', 'price', 'earningsTrend'] }, { validateResult: false }).catch(() => null);
+      if (!qs) return null;
+
+      const ev = qs.calendarEvents?.earnings;
+      const edRaw = ev?.earningsDate?.[0];
+      const now = new Date();
+      
+      let reportDate: Date | null = null;
+      let edDays = 0;
+      
+      const callDateRaw = ev?.earningsCallDate?.[0];
+      if (callDateRaw) {
+        const d = new Date(callDateRaw);
+        const days = Math.round((d.getTime() - now.getTime()) / 86400000);
+        if (days >= -daysWindow && days <= 1) {
+          reportDate = d;
+          edDays = days;
+        }
+      }
+      
+      if (!reportDate && edRaw && !ev.isEarningsDateEstimate) {
+        const d = new Date(edRaw);
+        const days = Math.round((d.getTime() - now.getTime()) / 86400000);
+        if (days >= -daysWindow && days <= 1) {
+          reportDate = d;
+          edDays = days;
+        }
+      }
+      
+      if (!reportDate) return null; 
+
+      const hist = qs.earningsHistory?.history || [];
+      const last = hist[hist.length - 1];
+      const epsActual = last?.epsActual ?? null;
+      const epsEst = last?.epsEstimate ?? null;
+      const surprisePct = last?.surprisePercent != null ? +(last.surprisePercent * 100).toFixed(1) : null;
+      const epsBeat = (epsActual != null && epsEst != null) ? epsActual > epsEst : null;
+      
+      const revGrowth = qs.financialData?.revenueGrowth != null ? +(qs.financialData.revenueGrowth * 100).toFixed(1) : null;
+      
+      // New: Earnings Trend data
+      let q0_rev_est = null, q0_rev_growth = null, q0_eps_est = null, q0_eps_growth = null;
+      let q1_rev_est = null, q1_rev_growth = null, q1_eps_est = null, q1_eps_growth = null;
+      
+      const trends = qs.earningsTrend?.trend || [];
+      const q0 = trends.find((t: any) => t.period === '0q');
+      const q1 = trends.find((t: any) => t.period === '+1q');
+      
+      if (q0) {
+        q0_rev_est = q0.revenueEstimate?.avg;
+        q0_rev_growth = q0.revenueEstimate?.growth != null ? +(q0.revenueEstimate.growth * 100).toFixed(1) : null;
+        q0_eps_est = q0.earningsEstimate?.avg;
+        q0_eps_growth = q0.earningsEstimate?.growth != null ? +(q0.earningsEstimate.growth * 100).toFixed(1) : null;
+      }
+      if (q1) {
+        q1_rev_est = q1.revenueEstimate?.avg;
+        q1_rev_growth = q1.revenueEstimate?.growth != null ? +(q1.revenueEstimate.growth * 100).toFixed(1) : null;
+        q1_eps_est = q1.earningsEstimate?.avg;
+        q1_eps_growth = q1.earningsEstimate?.growth != null ? +(q1.earningsEstimate.growth * 100).toFixed(1) : null;
+      }
+
+      const d1 = Math.floor(Date.now() / 1000) - 120 * 86400;
+      const ch = await (yahooFinance as any).chart(ticker, { period1: d1, interval: '1d' }).catch(() => null);
+      let quotes = (ch?.quotes || []).filter((q: any) => q.close != null);
+      
+      if (quotes.length < 5) return null;
+      const price = quotes[quotes.length - 1].close;
+
+      const earningsDateStr = reportDate.toISOString().slice(0, 10);
+      let idx = quotes.findIndex((q: any) => new Date(q.date).toISOString().slice(0, 10) >= earningsDateStr);
+      if (idx <= 0) idx = quotes.length - 1;
+      const reactBar = quotes[idx];
+      const prevBar = quotes[idx - 1] || quotes[idx];
+      
+      // If the report hasn't happened yet (market hasn't opened on ED, or it's later today), the reaction might be 0% wait.
+      const isUpcoming = edDays >= 0 && reactBar === quotes[quotes.length - 1]; // loosely check if today is or before earnings date
+      const reportMovePct = prevBar.close ? ((reactBar.close - prevBar.close) / prevBar.close) * 100 : 0;
+
+      let setup = 'NEUTRAL';
+      if (isUpcoming && reportDate > now) {
+         setup = 'UPCOMING';
+      } else if (epsBeat && reportMovePct >= 4) setup = 'GAP_AND_HOLD';
+      else if (epsBeat && reportMovePct > 0) setup = 'BEAT_GAP';
+      else if (epsBeat === false && reportMovePct <= -4) setup = 'MISS_GAP_DOWN';
+      else if (epsBeat) setup = 'QUIET_BEAT';
+      else setup = 'MISS_OR_FLAT';
+
+      const beatAndRaiseCandidate = (epsBeat === true && (surprisePct == null || surprisePct >= 5) && (setup === 'GAP_AND_HOLD' || setup === 'BEAT_GAP' || setup === 'QUIET_BEAT'));
+
+      return {
+         ticker,
+         price: +price.toFixed(2),
+         close: +price.toFixed(2),
+         signal: setup,
+         state: setup === 'UPCOMING' ? '⏳ UPCOMING' : (beatAndRaiseCandidate ? '🔥 BEAT & RAISE CANDIDATE' : (epsBeat ? '📈 BEAT' : '📉 MISS / FLAT')),
+         bull_score: setup === 'UPCOMING' ? 50 : (beatAndRaiseCandidate ? 90 : (epsBeat ? 50 : 20)),
+         revenue_growth_pct: revGrowth,
+         eps_actual: epsActual,
+         eps_est: epsEst,
+         surprise_pct: surprisePct,
+         report_move_pct: +reportMovePct.toFixed(1),
+         earnings_date: earningsDateStr,
+         setup: setup,
+         box_spread: 0,
+         q0_rev_est, q0_rev_growth, q0_eps_est, q0_eps_growth,
+         q1_rev_est, q1_rev_growth, q1_eps_est, q1_eps_growth,
+         n_entry: `$${(+price).toFixed(2)}`,
+         n_tp1: `$${(+(price * 1.05)).toFixed(2)}`,
+         n_tp2: `$${(+(price * 1.10)).toFixed(2)}`,
+         n_exit: `$${(+(price * 0.95)).toFixed(2)}`,
+      };
+
+    } catch (e: any) {
+      return null;
+    }
+  }
+
   async function computeCoiledSpring(ticker: string, horizon: string = 'weeks') {
     if (!ticker || typeof ticker !== 'string') return null;
     try {
-      const daysCount = 120; // Enough for lookback + 15
-      let history: any = null;
+      let quotes: any[] = [];
+      let current_price = 0;
+      
       try {
-        history = await fetchWithRetry(ticker, daysCount);
+        const days = 420;
+        const d1 = Math.floor(Date.now() / 1000) - days * 24 * 3600;
+        const ch = await (yahooFinance as any).chart(ticker, { period1: d1, interval: '1d' }).catch(() => null);
+        quotes = (ch?.quotes || []).filter((q: any) => q.close != null && !isNaN(q.close));
+        
+        if (quotes.length >= 80) {
+          // Patch last quote with live quote for accuracy
+          try {
+            const live = await yahooFinance.quote(ticker, {}, { validateResult: false });
+            if (live && live.regularMarketPrice) {
+              const last = quotes[quotes.length - 1];
+              last.close = live.regularMarketPrice;
+              if (live.regularMarketOpen) last.open = live.regularMarketOpen;
+              if (live.regularMarketDayHigh) last.high = live.regularMarketDayHigh;
+              if (live.regularMarketDayLow) last.low = live.regularMarketDayLow;
+              if (live.regularMarketVolume) last.volume = live.regularMarketVolume;
+            }
+          } catch(e) {}
+        }
       } catch (e: any) {
         console.warn(`[Coiled DATA] Fetch Error for ${ticker}:`, e.message);
       }
       
-      const box_lookback = 40;
-      const signal_lookback = 15;
-      const min_required = box_lookback + signal_lookback + 15;
-      if (!history || !history.quotes || history.quotes.length < min_required) {
+      if (quotes.length < 80) {
           console.log(`[Coiled] Insufficient data for ${ticker}`);
           return null;
       }
 
-      const qs = history.quotes;
-      
-      const today = qs[qs.length - 1]; // Always use latest quote for current_price
-      
-      // Preserve original logic for box sizing by keeping signal/box lookback relative to recent full days, but we can safely just use the same lengths without skipping the current day entirely for triggers.
-      // Actually, if we just set offset = 0, it achieves the same thing and uses today for everything.
-      const offset = 0;
-      
-      const box_end = qs.length - (signal_lookback + offset);
-      const box_start = qs.length - (box_lookback + signal_lookback + offset);
-      const sig_end = offset > 0 ? qs.length - offset : qs.length;
-      
-      const box_df = qs.slice(box_start, box_end);
-      const box_with_prior = qs.slice(box_start - 1, box_end);
-      const signal_df = qs.slice(box_end, sig_end);
+      const today = quotes[quotes.length - 1]; 
+      current_price = today.close;
+      const closes = quotes.map((q: any) => q.close);
 
-      // Calculate ATR
-      let tr_arr = [];
-      for (let i = 1; i < box_with_prior.length; i++) {
-        const prevClose = box_with_prior[i-1].close;
-        const h = box_with_prior[i].high;
-        const l = box_with_prior[i].low;
-        const tr1 = h - l;
-        const tr2 = Math.abs(h - prevClose);
-        const tr3 = Math.abs(l - prevClose);
-        tr_arr.push(Math.max(tr1, tr2, tr3));
+      const spy = await getCachedSpyCloses(250);
+      const qs = quotes;
+      const setup = cs_classifySetup(qs);
+
+      if (setup.state === 'NO_DATA') {
+        return null;
       }
-      // ATR of the last 14 of those TRs
-      const atr_trs = tr_arr.slice(-14);
-      const atr = atr_trs.reduce((a, b) => a + b, 0) / atr_trs.length;
 
-      const box_high = Math.max(...box_df.map((q: any) => q.high));
-      const box_low = Math.min(...box_df.map((q: any) => q.low));
+      let signal = "NONE";
+      let state = "NEUTRAL";
+      if (setup.state === "TRIGGERED") {
+        signal = "HOT_BREAKOUT";
+        state = "🔥 HOT BREAKOUT";
+      } else if (setup.state === "COILING") {
+        signal = "COILED_SPRING";
+        state = "⚡ COILED SPRING SQUEEZE";
+      } else if (setup.state === "REVERSAL") {
+        signal = "REVERSAL";
+        state = "🔄 REVERSAL RECLAIM";
+      } else if (setup.state === "EXTENDED") {
+        signal = "EXTENDED";
+        state = "⏳ EXTENDED";
+      } else {
+        signal = "NONE";
+        state = "😴 NEUTRAL / NO SETUP";
+      }
+
+      const score = setup.score || 0;
+      const box_high = setup.pivot || current_price;
+      const baseLow = Math.min(...qs.slice(-45).map((q: any) => q.low));
+      const box_low = baseLow || current_price;
       const box_spread = box_high - box_low;
 
-      const atr_multiplier = 8.0;
-      let atr_failed = false;
-      if (box_spread > atr * atr_multiplier) {
-        atr_failed = true;
-      }
+      const atrVal = cs_getATR(qs, 14) || 1.0;
+      const atr_pct = current_price > 0 ? (atrVal / current_price) * 100 : 2.0;
 
-      let up_vol = 0;
-      let down_vol = 0;
-
-      for (const q of box_df) {
-        if (q.close > q.open) {
-          up_vol += q.volume;
-        } else if (q.close < q.open) {
-          down_vol += q.volume;
-        }
-      }
-
-      const safe_down = Math.max(down_vol, 1);
-      const safe_up = Math.max(up_vol, 1);
-
-      const acc_ratio = Math.round((up_vol / safe_down) * 100) / 100;
-      const dist_ratio = Math.round((down_vol / safe_up) * 100) / 100;
-
-      const accumulated = acc_ratio >= 1.2;
-      const distributed = dist_ratio >= 1.2;
-
-      const current_price = today.close;
-      
-      let above_high = false;
-      let below_low = false;
-
-      if (signal_df.length > 0) {
-        above_high = Math.max(...signal_df.map((q: any) => q.high)) > box_high;
-        below_low = Math.min(...signal_df.map((q: any) => q.low)) < box_low;
-      } else {
-        above_high = current_price > box_high;
-        below_low = current_price < box_low;
-      }
-      
-      let is_neutral = false;
-      if (!above_high && !below_low) {
-         is_neutral = true;
-      }
-
-      const full_avg_vol = qs.reduce((acc: number, val: any) => acc + val.volume, 0) / qs.length;
-      let breakout_vol = today.volume;
-      
-      if (above_high && signal_df.length > 0) {
-         const bkout_bar = signal_df.reduce((max: any, q: any) => q.high > max.high ? q : max, signal_df[0]);
-         breakout_vol = bkout_bar.volume;
-      } else if (below_low && signal_df.length > 0) {
-         const bkout_bar = signal_df.reduce((min: any, q: any) => q.low < min.low ? q : min, signal_df[0]);
-         breakout_vol = bkout_bar.volume;
-      }
-
-      const breakout_vol_multiplier = 1.0;
-      const vol_confirmed = breakout_vol > full_avg_vol * breakout_vol_multiplier;
+      const udv = cs_upDownVolRatio(qs, 50) || 1.0;
+      const acc_ratio = udv;
+      const dist_ratio = +(1 / (udv || 1)).toFixed(2);
 
       let fund_pass = true;
       try {
@@ -1075,13 +1491,13 @@ async function startServer() {
          if (yfData && yfData.length >= 2) {
              let revs = yfData.reverse().map((q: any) => q.totalRevenue || 0).filter((r: number) => r > 0);
              if (revs.length >= 5) {
-                 fund_pass = revs[0] >= revs[4]; // 0 is latest, 4 is a year ago
+                 fund_pass = revs[0] >= revs[4];
              } else if (revs.length >= 2) {
                  fund_pass = revs[0] >= revs[1];
              }
          }
       } catch (err) {
-         // Fallback to true
+         // Fallback
       }
 
       let targetMeanPrice = current_price * 1.15;
@@ -1102,73 +1518,28 @@ async function startServer() {
           }
         }
       } catch (err) {
-        // use fallback
+        // Fallback
       }
 
-      let signal = "NONE";
-      if (atr_failed) {
-          signal = "NONE";
-      } else if (above_high && accumulated && fund_pass) {
-          signal = vol_confirmed ? "HOT_BREAKOUT" : "COLD_UP_TRAP";
-      } else if (below_low && distributed) {
-          signal = vol_confirmed ? "DROP_BREAKDOWN" : "COLD_DOWN_TRAP";
-      } else if (above_high && !accumulated) {
-          signal = "COLD_UP_TRAP";
-      } else if (below_low && !distributed) {
-          signal = "COLD_DOWN_TRAP";
-      } else if (is_neutral && accumulated && fund_pass) {
-          signal = "COILED_SPRING";
-      }
+      const n_entry = "$" + (setup.entry || current_price).toFixed(2);
+      const n_exit = "$" + (setup.stop || (current_price - 1.5 * atrVal)).toFixed(2);
+      const n_tp1 = "$" + (setup.t1 || (current_price + 2 * atrVal)).toFixed(2);
+      const n_tp2 = "$" + (setup.t2 || (current_price + 3.5 * atrVal)).toFixed(2);
 
-      const score = calculateNeuralScore(signal, acc_ratio, dist_ratio, fund_pass);
+      const calculatedUpside = current_price > 0 ? ((targetMeanPrice / current_price) - 1) * 100 : 15.0;
+      const dynamic_rr = (setup.rr || 1.5).toFixed(1) + "x";
+      const rs = (closes.length && spy.closes.length) ? cs_relStrength(closes, spy.closes) : 50;
 
-      let state = "NEUTRAL";
-      if (signal === "HOT_BREAKOUT") state = "🔥 HOT BREAKOUT";
-      else if (signal === "DROP_BREAKDOWN") state = "🩸 DROP BREAKDOWN";
-      else if (signal === "COILED_SPRING") state = "⚡ COILED SPRING SQUEEZE";
-      else if (signal.includes("COLD")) state = "🧊 RETAIL TRAP";
-      else if (atr_failed) state = "⏳ VOLATILE / NO COIL";
-      else if (is_neutral) state = "😴 NEUTRAL / NO BREAKOUT";
-
-      let n_entry = "N/A";
-      let n_exit = "N/A";
-      let n_tp1 = "N/A";
-      let n_tp2 = "N/A";
-
-      if (signal === "HOT_BREAKOUT") {
-          n_entry = `$${current_price.toFixed(2)}`;
-          n_exit = `$${(box_high * 0.99).toFixed(2)}`;
-          n_tp1 = `$${(box_high + box_spread).toFixed(2)}`;
-          n_tp2 = `$${(box_high + box_spread * 1.618).toFixed(2)}`;
-      } else if (signal === "COILED_SPRING") {
-          n_entry = `$${current_price.toFixed(2)}`;
-          n_exit = `$${(box_low * 0.99).toFixed(2)}`;
-          n_tp1 = `$${(box_high + box_spread).toFixed(2)}`;
-          n_tp2 = `$${(box_high + box_spread * 1.618).toFixed(2)}`;
-      } else if (signal === "DROP_BREAKDOWN") {
-          n_entry = `$${current_price.toFixed(2)}`;
-          n_exit = `$${(box_low * 1.01).toFixed(2)}`;
-          n_tp1 = `$${(box_low - box_spread).toFixed(2)}`;
-          n_tp2 = `$${(box_low - box_spread * 1.618).toFixed(2)}`;
-      }
-
-      // Calculate dynamic R:R and extra properties matching the reference report
-      const calculatedUpside = ((targetMeanPrice / current_price) - 1) * 100;
-      let dynamic_rr = "1.5x";
-      if (box_low < current_price && targetMeanPrice > current_price) {
-        const risk = current_price - box_low;
-        const reward = targetMeanPrice - current_price;
-        if (risk > 0) {
-          dynamic_rr = (reward / risk).toFixed(1) + "x";
-        }
-      }
-      
       const cs_setup = (signal === "HOT_BREAKOUT" || signal === "COILED_SPRING") ? "🔥 COILED SPRING" : "WATCHING";
-      const tags: string[] = [];
-      if (revGrowth > 0.15) tags.push("🤖 AI Tailwind");
-      if (fund_pass) tags.push("🤫 M&A/Rumor");
-      if (signal === "HOT_BREAKOUT" || breakout_vol > full_avg_vol * 1.1) tags.push("🏛️ Gov Contract");
-      const noise_signals = tags.join(" | ") || "😴 Neutral Flow";
+      const obvSlopeVal = cs_obvSlope(qs, 20) || 0;
+      const tape = {
+        udvRatio50: udv,
+        obvSlope20: obvSlopeVal,
+        closeRange: cs_closingRange(today),
+        rsLineHigh: (closes.length && spy.closes.length) ? cs_rsLineNearHigh(closes, spy.closes) : false,
+        rsi14: +(cs_getRSI(qs, 14) || 50).toFixed(1),
+        atrPct: +atr_pct.toFixed(2),
+      };
 
       return {
           ticker,
@@ -1178,9 +1549,9 @@ async function startServer() {
           state,
           setup: cs_setup,
           bull_score: score,
-          neural_score: score, // ensure this is included
+          neural_score: score,
           strength: score > 80 ? 5 : score > 50 ? 3 : 1,
-          rsi: 0,
+          rsi: tape.rsi14,
           vol_ratio: acc_ratio,
           acc_ratio: acc_ratio,
           dist_ratio: dist_ratio,
@@ -1188,8 +1559,8 @@ async function startServer() {
           box_low: Math.round(box_low * 100) / 100,
           box_spread: Math.round(box_spread * 100) / 100,
           fund_pass,
-          go_long: signal === "HOT_BREAKOUT",
-          prior_sqz: false,
+          go_long: signal === "HOT_BREAKOUT" || signal === "COILED_SPRING",
+          prior_sqz: cs_isSqueezed(qs) || false,
           n_entry,
           n_exit,
           n_tp1,
@@ -1198,7 +1569,9 @@ async function startServer() {
           upside_pct: Math.round(calculatedUpside * 10) / 10,
           dynamic_rr,
           analyst_target: Math.round(targetMeanPrice * 100) / 100,
-          noise_signals
+          noise_signals: setup.detail || "😴 Neutral Flow",
+          rs: rs !== null ? rs : 50,
+          tape
       };
     } catch(err) {
       console.error(`Coiled Spring error for ${ticker}:`, err);
@@ -1224,10 +1597,10 @@ async function startServer() {
 
     if (isLong) {
       // ── BULLISH / LONG LEVELS ──────────────────────────────────────────────
-      const coiled_entry = (coiled?.n_entry && coiled.n_entry !== "N/A") ? parseFloat(coiled.n_entry.replace('$', '').replace(',', '')) : null;
-      const coiled_exit = (coiled?.n_exit && coiled.n_exit !== "N/A") ? parseFloat(coiled.n_exit.replace('$', '').replace(',', '')) : null;
-      const coiled_tp1 = (coiled?.n_tp1 && coiled.n_tp1 !== "N/A") ? parseFloat(coiled.n_tp1.replace('$', '').replace(',', '')) : null;
-      const coiled_tp2 = (coiled?.n_tp2 && coiled.n_tp2 !== "N/A") ? parseFloat(coiled.n_tp2.replace('$', '').replace(',', '')) : null;
+      const coiled_entry = (coiled?.n_entry && coiled.n_entry !== "N/A") ? parseFloat(String(coiled.n_entry).replace('$', '').replace(',', '')) : null;
+      const coiled_exit = (coiled?.n_exit && coiled.n_exit !== "N/A") ? parseFloat(String(coiled.n_exit).replace('$', '').replace(',', '')) : null;
+      const coiled_tp1 = (coiled?.n_tp1 && coiled.n_tp1 !== "N/A") ? parseFloat(String(coiled.n_tp1).replace('$', '').replace(',', '')) : null;
+      const coiled_tp2 = (coiled?.n_tp2 && coiled.n_tp2 !== "N/A") ? parseFloat(String(coiled.n_tp2).replace('$', '').replace(',', '')) : null;
 
       if ((coiled?.signal === "HOT_BREAKOUT" || coiled?.signal === "COILED_SPRING") && coiled_entry && coiled_exit && coiled_tp1 && coiled_tp2 && coiled_exit < coiled_entry && coiled_tp1 > coiled_entry) {
         entry = coiled_entry;
@@ -1256,10 +1629,10 @@ async function startServer() {
       }
     } else {
       // ── BEARISH / SHORT LEVELS ─────────────────────────────────────────────
-      const coiled_entry = (coiled?.n_entry && coiled.n_entry !== "N/A") ? parseFloat(coiled.n_entry.replace('$', '').replace(',', '')) : null;
-      const coiled_exit = (coiled?.n_exit && coiled.n_exit !== "N/A") ? parseFloat(coiled.n_exit.replace('$', '').replace(',', '')) : null;
-      const coiled_tp1 = (coiled?.n_tp1 && coiled.n_tp1 !== "N/A") ? parseFloat(coiled.n_tp1.replace('$', '').replace(',', '')) : null;
-      const coiled_tp2 = (coiled?.n_tp2 && coiled.n_tp2 !== "N/A") ? parseFloat(coiled.n_tp2.replace('$', '').replace(',', '')) : null;
+      const coiled_entry = (coiled?.n_entry && coiled.n_entry !== "N/A") ? parseFloat(String(coiled.n_entry).replace('$', '').replace(',', '')) : null;
+      const coiled_exit = (coiled?.n_exit && coiled.n_exit !== "N/A") ? parseFloat(String(coiled.n_exit).replace('$', '').replace(',', '')) : null;
+      const coiled_tp1 = (coiled?.n_tp1 && coiled.n_tp1 !== "N/A") ? parseFloat(String(coiled.n_tp1).replace('$', '').replace(',', '')) : null;
+      const coiled_tp2 = (coiled?.n_tp2 && coiled.n_tp2 !== "N/A") ? parseFloat(String(coiled.n_tp2).replace('$', '').replace(',', '')) : null;
 
       if (coiled?.signal === "DROP_BREAKDOWN" && coiled_entry && coiled_exit && coiled_tp1 && coiled_tp2 && coiled_exit > coiled_entry && coiled_tp1 < coiled_entry) {
         entry = coiled_entry;
@@ -1316,6 +1689,161 @@ async function startServer() {
     if (s === "N/A" || s === "" || s.toLowerCase() === "null") return null;
     const num = parseFloat(s);
     return isNaN(num) ? null : num;
+  }
+
+  async function computeSuperSignalV5_3(ticker: string, horizon: string = 'weeks', macroResult: any = null) {
+    if (!ticker || typeof ticker !== 'string') return null;
+    try {
+      const days = 420;
+      const d1 = Math.floor(Date.now() / 1000) - days * 24 * 3600;
+      
+      const [ch, qs] = await Promise.all([
+        (yahooFinance as any).chart(ticker, { period1: d1, interval: '1d' }).catch(() => null),
+        yahooFinance.quoteSummary(ticker, { modules: ['financialData', 'recommendationTrend', 'defaultKeyStatistics'] }, { validateResult: false }).catch(() => null)
+      ]);
+
+      if (!ch || !ch.quotes || ch.quotes.length < 60) {
+        console.warn(`[Super Signal 5.3] No sufficient chart data for ${ticker}`);
+        return null;
+      }
+
+      const quotes = ch.quotes
+        .filter((q: any) => q.close != null && q.volume != null)
+        .map((q: any) => ({
+          date: q.date,
+          open: q.open || q.close,
+          high: q.high || q.close,
+          low: q.low || q.close,
+          close: q.close,
+          volume: q.volume || 0
+        }));
+
+      if (quotes.length < 60) {
+        console.warn(`[Super Signal 5.3] Quotes filter count < 60 for ${ticker}`);
+        return null;
+      }
+
+      const price = quotes[quotes.length - 1].close;
+      const vol = quotes[quotes.length - 1].volume;
+
+      let analystData = null;
+      if (qs && qs.financialData) {
+        const fd = qs.financialData;
+        const currentPrice = fd.currentPrice || price;
+        const tgtMean = fd.targetMeanPrice;
+        let sb = 0, b = 0, h = 0, s = 0, ss = 0;
+        if (qs.recommendationTrend && qs.recommendationTrend.trend && qs.recommendationTrend.trend.length > 0) {
+          const rec = qs.recommendationTrend.trend[0];
+          sb = rec.strongBuy || 0; b = rec.buy || 0; h = rec.hold || 0; s = rec.sell || 0; ss = rec.strongSell || 0;
+        }
+        const analystN = sb + b + h + s + ss;
+        const tgtIsMean = tgtMean != null && tgtMean > 0;
+        let analystTgt = null, analystOk = false;
+        if (tgtMean && currentPrice && tgtMean > currentPrice * 0.30 && tgtMean < currentPrice * 3.0) {
+          analystTgt = tgtMean; analystOk = true;
+        }
+        const analystUp = analystOk && currentPrice ? ((analystTgt / currentPrice) - 1) * 100 : null;
+        let upGrade = 'NO DATA';
+        if (analystUp !== null) {
+          if (analystUp >= 15.0) upGrade = 'STRONG';
+          else if (analystUp >= 5.0) upGrade = 'OK';
+          else if (analystUp >= -5.0) upGrade = 'THIN';
+          else upGrade = 'NEGATIVE';
+        }
+        analystData = {
+          tgtMean,
+          tgtHigh: fd.targetHighPrice,
+          tgtLow: fd.targetLowPrice,
+          analystN, sb, b, h, s, ss, analystTgt, analystOk,
+          analystUp: analystUp !== null ? Math.round(analystUp * 100) / 100 : null,
+          upGrade, tgtIsMean, currentPrice
+        };
+      }
+
+      const fd = qs ? (qs.financialData || {}) : {};
+      const revGrowth = fd.revenueGrowth || 0;
+      const margins = fd.operatingMargins || 0;
+
+      const tech = analyzeTechnical(quotes);
+      if (!tech) {
+        console.warn(`[Super Signal 5.3] analyzeTechnical failed for ${ticker}`);
+        return null;
+      }
+
+      const risk = computeRisk(price, tech, analystData);
+
+      if (macroResult) {
+        const macroRiskMult = macroResult.macroRiskMult || 0.6;
+        const riskPctEff = 0.75 * macroRiskMult;
+        const riskDollarsTarget = 500000 * (riskPctEff / 100);
+        const riskPts = price - risk.stopLevel;
+        let sharesRaw = riskPts > 0 ? riskDollarsTarget / riskPts : 0;
+        let posDollars = price > 0 ? sharesRaw * price : 0;
+        const maxAlloc = 500000 * (7.5 / 100);
+        if (posDollars > maxAlloc) { posDollars = maxAlloc; sharesRaw = price > 0 ? posDollars / price : 0; }
+        risk.sharesFinal = Math.max(0, Math.floor(sharesRaw));
+        risk.finalPositionDollars = Math.round(price > 0 ? risk.sharesFinal * price : 0);
+        risk.finalRiskDollars = Math.round(riskPts > 0 ? risk.sharesFinal * riskPts : 0);
+        risk.portfolioPct = Math.round((risk.finalPositionDollars / 500000) * 100 * 100) / 100;
+        risk.portfolioRiskPct = Math.round((risk.finalRiskDollars / 500000) * 100 * 100) / 100;
+      } else {
+        risk.sharesFinal = 0;
+        risk.finalPositionDollars = 0;
+        risk.finalRiskDollars = 0;
+        risk.portfolioPct = 0;
+        risk.portfolioRiskPct = 0;
+      }
+
+      const rating = computeRating(macroResult, tech, analystData, risk);
+
+      return {
+        ticker,
+        price,
+        close: price,
+        vol,
+        trend: tech.trendStatus,
+        ma_stack: tech.trendStatus === 'UPTREND' ? "BULLISH" : "BEARISH",
+        rsi: tech.rsi14,
+        atr_pct: tech.atr14 ? (tech.atr14 / price) * 100 : 2.0,
+        vol_surge: tech.volLast && tech.volSma ? tech.volLast / tech.volSma : 1.0,
+        acc_ratio: tech.fastDelta,
+        upside_pct: analystData && analystData.analystOk ? analystData.analystUp : 0,
+        fund_pass: true,
+        
+        sort_score: rating.rating,
+        composite: Math.round(rating.rating * 20),
+        vcs_score: tech.bullScore,
+        neural_score: tech.bullScore,
+        bull_score: tech.bullScore,
+        steam: tech.techPts,
+        bucket: rating.label,
+        bucket_rank: rating.rating === 5 ? 0 : rating.rating === 4 ? 1 : rating.rating === 3 ? 2 : rating.rating === 2 ? 3 : 4,
+        rev_state: tech.stateStr,
+        
+        algoEntry: price,
+        algoExit: risk.stopLevel,
+        algoTP1: risk.targetLevel,
+        algoTP2: price + (risk.targetLevel - price) * 1.5,
+        
+        rr: risk.rr,
+        cs_signal: tech.stateStr,
+        signal: tech.stateStr,
+        setup: rating.stars + " " + rating.label,
+        revenue_growth_pct: revGrowth * 100,
+        dynamic_rr: risk.rr ? risk.rr.toFixed(2) + "x (" + risk.g4 + ")" : "—",
+        analyst_target: analystData && analystData.analystOk ? analystData.analystTgt : 0,
+        noise_signals: rating.comboWhy,
+        
+        g1: tech.isAccum ? "PASS" : "WATCH",
+        g2: analystData && analystData.analystOk ? `${analystData.upGrade} (+${analystData.analystUp}%)` : "—",
+        g3: tech.trendStatus,
+        g4: risk.g4,
+        gate_pass_raw: "G1:" + (tech.isAccum ? "P" : "W") + " G2:" + (analystData && analystData.analystOk ? "P" : "W") + " G3:" + (tech.trendStatus === 'UPTREND' ? "P" : "W") + " G4:" + (risk.g4 === 'EXCELLENT' ? "P" : "W"),
+      };
+    } catch (e: any) {
+      console.error(`Error computing Super Signal for ${ticker}:`, e.message);
+      return null;
+    }
   }
 
   function parseScreenerTickerRecord(r: any): any {
@@ -1393,12 +1921,29 @@ async function startServer() {
       
       rr: rrVal,
       cs_signal: r.cs_signal || r.signal || "NONE",
+      signal: r.signal || r.cs_signal || "NONE",
       
       setup: r.setup || (r.signal === "HOT_BREAKOUT" ? "🔥 COILED SPRING" : "WATCHING"),
-      revenue_growth_pct: parseNumeric(r.revenue_growth_pct || r.rev_growth_pct || r.revGrowth || 0),
+      revenue_growth_pct: parseNumericNullable(r.revenue_growth_pct !== undefined ? r.revenue_growth_pct : (r.rev_growth_pct !== undefined ? r.rev_growth_pct : r.revGrowth)),
       dynamic_rr: r.dynamic_rr || "1.5x",
       analyst_target: parseNumeric(r.analyst_target || r.targetMeanPrice || 0),
       noise_signals: r.noise_signals || "—",
+
+      // Earnings Catalyst specific fields
+      state: r.state || "—",
+      eps_actual: r.eps_actual != null ? r.eps_actual : null,
+      eps_est: r.eps_est != null ? r.eps_est : null,
+      surprise_pct: r.surprise_pct != null ? r.surprise_pct : null,
+      report_move_pct: r.report_move_pct != null ? r.report_move_pct : null,
+      earnings_date: r.earnings_date || null,
+      q0_rev_est: r.q0_rev_est != null ? r.q0_rev_est : null,
+      q0_rev_growth: r.q0_rev_growth != null ? r.q0_rev_growth : null,
+      q0_eps_est: r.q0_eps_est != null ? r.q0_eps_est : null,
+      q0_eps_growth: r.q0_eps_growth != null ? r.q0_eps_growth : null,
+      q1_rev_est: r.q1_rev_est != null ? r.q1_rev_est : null,
+      q1_rev_growth: r.q1_rev_growth != null ? r.q1_rev_growth : null,
+      q1_eps_est: r.q1_eps_est != null ? r.q1_eps_est : null,
+      q1_eps_growth: r.q1_eps_growth != null ? r.q1_eps_growth : null,
 
       g1: r.g1 || "—",
       g2: r.g2 || "—",
@@ -1972,7 +2517,7 @@ Generate a highly-polished, institutional-grade quantitative and qualitative ass
       // Try first with full Google Search Grounding to ensure live details, but only 1 attempt
       try {
         const response = await generateContentWithRetry({
-          model: MODELS.FLASH,
+          model: MODELS.FLASH_LITE,
           contents: gSearchPrompt,
           config: {
             temperature: 0.2,
@@ -1986,7 +2531,7 @@ Generate a highly-polished, institutional-grade quantitative and qualitative ass
 
         // Fallback calling without tools to prevent limit/resource crash, utilizing retry mechanism
         const fallbackRes = await generateContentWithRetry({
-          model: MODELS.FLASH,
+          model: MODELS.FLASH_LITE,
           contents: gSearchPrompt,
           config: {
             temperature: 0.2,
@@ -2040,7 +2585,7 @@ Output EXACTLY as a JSON object:
 }`;
 
       const response = await generateContentWithRetry({
-        model: MODELS.FLASH,
+        model: MODELS.FLASH_LITE,
         contents: synthesizePrompt,
         config: {
           temperature: 0.2,
@@ -2204,7 +2749,7 @@ Scoring Guidelines:
 Your response MUST match the JSON response schema perfectly. Evaluate each provided article item and return its corresponding score, classified subject, a punchy two-word assessment, and a clear one-line justification.`;
 
       const response = await generateContentWithRetry({
-        model: MODELS.FLASH,
+        model: MODELS.FLASH_LITE,
         contents: prompt,
         config: {
           temperature: 0.1,
@@ -2315,7 +2860,7 @@ Task Instructions:
 Ensure your entire output matches the custom JSON schema layout exactly.`;
 
       const response = await generateContentWithRetry({
-        model: MODELS.FLASH,
+        model: MODELS.FLASH_LITE,
         contents: prompt,
         config: {
           temperature: 0.15,
@@ -2456,12 +3001,95 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
     res.json({ message: "Legacy endpoint deprecated. Please utilize decoupled feeds /api/market-news-list instead." });
   });
 
+  app.post("/api/gemini-generate", express.json(), async (req, res) => {
+    try {
+      const { model, contents, config } = req.body;
+      const response = await generateContentWithRetry({
+        model: model || MODELS.FLASH_LITE,
+        contents,
+        config
+      });
+      res.json({ text: response.text });
+    } catch (err: any) {
+      console.error("[GEMINI GENERATE ERROR]", err);
+      res.status(500).json({ error: err.message || "Failed to generate content via backend proxy" });
+    }
+  });
+
+  app.post("/api/gemini-stream", express.json(), async (req, res) => {
+    let { model, contents, config } = req.body;
+    let targetModel = model || MODELS.FLASH_LITE;
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    async function tryStream(selectedModel: string): Promise<boolean> {
+      try {
+        const stream = await ai.models.generateContentStream({
+          model: selectedModel,
+          contents,
+          config
+        });
+        
+        for await (const chunk of stream) {
+          if (chunk.text) {
+            res.write(chunk.text);
+          }
+        }
+        res.end();
+        return true;
+      } catch (err: any) {
+        const errMsg = err.message || "";
+        const isRateLimit = errMsg.includes("429") || 
+                            errMsg.toLowerCase().includes("exhausted") || 
+                            errMsg.toLowerCase().includes("rate limit") || 
+                            errMsg.toLowerCase().includes("quota") ||
+                            errMsg.toLowerCase().includes("resource");
+
+        if (isRateLimit && selectedModel !== "gemini-3.1-flash-lite") {
+          console.warn(`[Gemini Stream Proxy] Rate limit hit on ${selectedModel}. Trying fallback to gemini-3.1-flash-lite...`);
+          return false; // Retriable with flash-lite
+        } else if (isRateLimit && config && config.tools) {
+          console.warn(`[Gemini Stream Proxy] Rate limit hit on ${selectedModel} with tools. Stripping tools and retrying...`);
+          delete config.tools;
+          delete config.toolConfig;
+          return false; // Retriable without tools
+        }
+        throw err;
+      }
+    }
+
+    try {
+      let success = await tryStream(targetModel);
+      if (!success) {
+        success = await tryStream("gemini-3.1-flash-lite");
+        if (!success) {
+          // One more try (with tools stripped if it failed due to tools)
+          success = await tryStream("gemini-3.1-flash-lite");
+          if (!success) {
+            throw new Error("Failed to stream using fallback lite model and stripped tools");
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("[GEMINI STREAM ERROR]", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message || "Failed to generate stream via backend proxy" });
+      } else {
+        res.write(`\n\n[ERROR: ${err.message || "Pipeline streaming interrupted"}]`);
+        res.end();
+      }
+    }
+  });
+
   app.post("/api/intelligence-feed", async (req, res) => {
     try {
       const { prompt } = req.body;
       
       const response = await generateContentWithRetry({
-        model: MODELS.FLASH,
+        model: MODELS.FLASH_LITE,
         contents: prompt || '',
         config: {
           temperature: 0.2
@@ -2508,6 +3136,20 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
 
     logToClient(`[SYSTEM] INITIATING VCS NEURAL SCAN: ${tickersToScreen.length} TICKERS`);
 
+    // Fetch macro for Super Signal v5.3 once before loop
+    let sMacroResult: any = null;
+    if (screenerType === 'super_v5_3') {
+      try {
+        logToClient("[SYSTEM] FETCHING FRED ECONOMIC SERIES FOR COMBINED MACRO REGIME...");
+        sMacroResult = await computeMacroRegime();
+        logToClient(`[MACRO] Regime Decided: ${sMacroResult.label} (Score: ${sMacroResult.score.toFixed(1)}/100)`);
+      } catch (err: any) {
+        console.error("FRED Macro Fetch failed:", err.message);
+        sMacroResult = { score: 50, regime: 0, label: 'NEUTRAL', equityAlloc: 55, macroRiskMult: 0.6, why: 'Macro data unavailable', pillars: { curve: { score: 0, state: 'no data' }, labor: { score: 0, state: 'no data' }, fed: { score: 0, state: 'no data' }, housing: { score: 0, state: 'no data' } }, drags: '', supports: '' };
+        logToClient("[SYSTEM] MACRO DATA UNAVAILABLE. DEFAULTING TO NEUTRAL.");
+      }
+    }
+
     const results = [];
     const BATCH_SIZE = 40; 
     let successCount = 0;
@@ -2522,6 +3164,10 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
             ? await computeGateScreener(t, horizon)
             : screenerType === 'coiled'
             ? await computeCoiledSpring(t, horizon)
+            : screenerType === 'earnings'
+            ? await computeEarningsCatalyst(t, horizon, 7)
+            : screenerType === 'super_v5_3'
+            ? await computeSuperSignalV5_3(t, horizon, sMacroResult)
             : (screenerType === 'unified' || screenerType === 'unified_v2')
             ? await computeUnifiedAlpha(t, horizon, isCustom)
             : await computeVCS(t, horizon);
@@ -2558,8 +3204,12 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
 
     const filteredResults = results.filter(r => {
       // Unified Alpha Screener accepts classic/gate merges and positive scores
-      if (screenerType === 'classic' || screenerType === 'unified' || screenerType === 'unified_v2') {
+      if (screenerType === 'classic' || screenerType === 'unified' || screenerType === 'unified_v2' || screenerType === 'super_v5_3') {
         return r.bull_score > 0;
+      }
+      if (screenerType === 'coiled' || screenerType === 'earnings') {
+        // Allow positive scores up to the top, so we get the best setups even if no absolute trigger
+        return r.bull_score >= 0;
       }
       return r.bull_score > 0;
     });
@@ -2571,10 +3221,10 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
         const close = r.close || r.price || 100;
         
         // Prefer actual Coiled Spring levels without $ if available
-        const algoEntry = r.n_entry && r.n_entry !== "N/A" ? r.n_entry.replace('$', '').replace(',', '').trim() : close.toFixed(2);
-        const algoExit = r.n_exit && r.n_exit !== "N/A" ? r.n_exit.replace('$', '').replace(',', '').trim() : (close * (1 - atr/100)).toFixed(2);
-        const algoTP1 = r.n_tp1 && r.n_tp1 !== "N/A" ? r.n_tp1.replace('$', '').replace(',', '').trim() : (close * (1 + atr/100)).toFixed(2);
-        const algoTP2 = r.n_tp2 && r.n_tp2 !== "N/A" ? r.n_tp2.replace('$', '').replace(',', '').trim() : (close * (1 + (atr * 2)/100)).toFixed(2);
+        const algoEntry = (screenerType === 'super_v5_3' && r.algoEntry) ? String(r.algoEntry) : (r.n_entry && r.n_entry !== "N/A" ? String(r.n_entry).replace('$', '').replace(',', '').trim() : close.toFixed(2));
+        const algoExit = (screenerType === 'super_v5_3' && r.algoExit) ? String(r.algoExit) : (r.n_exit && r.n_exit !== "N/A" ? String(r.n_exit).replace('$', '').replace(',', '').trim() : (close * (1 - atr/100)).toFixed(2));
+        const algoTP1 = (screenerType === 'super_v5_3' && r.algoTP1) ? String(r.algoTP1) : (r.n_tp1 && r.n_tp1 !== "N/A" ? String(r.n_tp1).replace('$', '').replace(',', '').trim() : (close * (1 + atr/100)).toFixed(2));
+        const algoTP2 = (screenerType === 'super_v5_3' && r.algoTP2) ? String(r.algoTP2) : (r.n_tp2 && r.n_tp2 !== "N/A" ? String(r.n_tp2).replace('$', '').replace(',', '').trim() : (close * (1 + (atr * 2)/100)).toFixed(2));
 
         return { 
           ...r, 
@@ -2657,6 +3307,48 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
       tableText += '══════════════════════════════════════════════════════════════════════════════════════════════════════════════';
     }
     
+    try {
+      if (screenerType === 'coiled') {
+        const dateStr = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+        const triggers = sorted.filter(r => r.state === 'TRIGGERED' || r.signal === 'HOT_BREAKOUT' || r.signal === 'COILED_SPRING');
+        const logPath = path.join(process.cwd(), 'screener', 'screener_log.jsonl');
+        
+        if (!fs.existsSync(path.join(process.cwd(), 'screener'))) {
+          fs.mkdirSync(path.join(process.cwd(), 'screener'), { recursive: true });
+        }
+        
+        let priorLog: any[] = [];
+        if (fs.existsSync(logPath)) {
+          const contents = fs.readFileSync(logPath, 'utf8').split('\n').filter((l: string) => l.trim().length);
+          priorLog = contents.map((c: string) => { try { return JSON.parse(c); } catch(e) { return null; } }).filter((Boolean));
+        }
+        
+        const already = new Set(priorLog.map(x => `${x.sym}|${x.date}`));
+        const newLines = triggers.filter(r => !already.has(`${r.ticker}|${dateStr}`)).map(r => {
+          const pFloat = (v: any) => typeof v === 'number' ? v : parseFloat((v || '').toString().replace(/[^0-9.-]+/g,""));
+          return JSON.stringify({
+          date: dateStr,
+          sym: r.ticker,
+          entry: pFloat(r.n_entry || r.algoEntry) || r.price,
+          stop: pFloat(r.n_exit || r.algoExit) || (r.price * 0.95),
+          t1: pFloat(r.n_tp1 || r.algoTP1) || (r.price * 1.15),
+          pivot: pFloat(r.box_high) || r.price,
+          rr: pFloat(r.rr) || 2.0,
+          score: pFloat(r.bull_score || r.vcs_score),
+          rs: pFloat(r.rs) || 50,
+          regime: "RISK_ON",
+          exposure: 1
+        })});
+        
+        if (newLines.length > 0) {
+          fs.appendFileSync(logPath, newLines.join('\n') + '\n');
+          console.log(`[VCS LOG] Appended ${newLines.length} TRIGGERED signal(s) to screener_log.jsonl`);
+        }
+      }
+    } catch(err) {
+      console.error("Failed to write to screener_log.jsonl:", err);
+    }
+    
     logToClient("FINAL_REPORT", { results: sorted, rawTable: tableText });
     res.end();
   });
@@ -2682,6 +3374,17 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
 
     console.log(`[VCS EXPLORER] Screening ${tickersToScreen.length} tickers on ${indexName} using ${screenerType}...`);
     
+    // Fetch macro for Super Signal v5.3 once before loop
+    let sMacroResult: any = null;
+    if (screenerType === 'super_v5_3') {
+      try {
+        sMacroResult = await computeMacroRegime();
+      } catch (err: any) {
+        console.error("FRED Macro Fetch failed in /api/screen:", err.message);
+        sMacroResult = { score: 50, regime: 0, label: 'NEUTRAL', equityAlloc: 55, macroRiskMult: 0.6, why: 'Macro data unavailable', pillars: { curve: { score: 0, state: 'no data' }, labor: { score: 0, state: 'no data' }, fed: { score: 0, state: 'no data' }, housing: { score: 0, state: 'no data' } }, drags: '', supports: '' };
+      }
+    }
+
     const results = [];
     const BATCH_SIZE = 40; 
     let successCount = 0;
@@ -2693,6 +3396,14 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
         try {
           const res = screenerType === 'gate' 
             ? await computeGateScreener(t, horizon)
+            : screenerType === 'coiled'
+            ? await computeCoiledSpring(t, horizon)
+            : screenerType === 'earnings'
+            ? await computeEarningsCatalyst(t, horizon, 7)
+            : screenerType === 'super_v5_3'
+            ? await computeSuperSignalV5_3(t, horizon, sMacroResult)
+            : (screenerType === 'unified' || screenerType === 'unified_v2')
+            ? await computeUnifiedAlpha(t, horizon, false)
             : await computeVCS(t, horizon);
           if (res) {
             successCount++;
@@ -2717,11 +3428,18 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
     console.log(`[VCS EXPLORER] Finished! Processed: ${tickersToScreen.length} | Found: ${results.length}`);
 
     const filteredResults = results.filter(r => {
+      if (customTickers && customTickers.length > 0) {
+        return true;
+      }
       if (screenerType === 'classic') {
         return r.bull_score >= 55 && 
                (r.signal === 'BUY' || r.signal === 'STRONG BUY') && 
                r.rsi >= 45 && r.rsi <= 80 && 
                r.vol_ratio >= 1.2;
+      } else if (screenerType === 'coiled' || screenerType === 'earnings') {
+        return r.bull_score >= 0;
+      } else if (screenerType === 'unified_v2' || screenerType === 'super_v5_3') {
+        return r.bull_score > 0;
       } else {
         return r.bull_score > 0;
       }
@@ -2802,7 +3520,49 @@ Ensure your entire output matches the custom JSON schema layout exactly.`;
       tableText += '══════════════════════════════════════════════════════════════════════════════════════════════════════════════';
     }
     
-    res.json({ results: sorted, rawTable: tableText });
+    try {
+      if (screenerType === 'coiled') {
+        const dateStr = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+        const triggers = sorted.filter(r => r.state === 'TRIGGERED' || r.signal === 'HOT_BREAKOUT' || r.signal === 'COILED_SPRING');
+        const logPath = path.join(process.cwd(), 'screener', 'screener_log.jsonl');
+        
+        if (!fs.existsSync(path.join(process.cwd(), 'screener'))) {
+          fs.mkdirSync(path.join(process.cwd(), 'screener'), { recursive: true });
+        }
+        
+        let priorLog: any[] = [];
+        if (fs.existsSync(logPath)) {
+          const contents = fs.readFileSync(logPath, 'utf8').split('\n').filter((l: string) => l.trim().length);
+          priorLog = contents.map((c: string) => { try { return JSON.parse(c); } catch(e) { return null; } }).filter((Boolean));
+        }
+        
+        const already = new Set(priorLog.map(x => `${x.sym}|${x.date}`));
+        const newLines = triggers.filter(r => !already.has(`${r.ticker}|${dateStr}`)).map(r => {
+          const pFloat = (v: any) => typeof v === 'number' ? v : parseFloat((v || '').toString().replace(/[^0-9.-]+/g,""));
+          return JSON.stringify({
+          date: dateStr,
+          sym: r.ticker,
+          entry: pFloat(r.n_entry || r.algoEntry) || r.price,
+          stop: pFloat(r.n_exit || r.algoExit) || (r.price * 0.95),
+          t1: pFloat(r.n_tp1 || r.algoTP1) || (r.price * 1.15),
+          pivot: pFloat(r.box_high) || r.price,
+          rr: pFloat(r.rr) || 2.0,
+          score: pFloat(r.bull_score || r.vcs_score),
+          rs: pFloat(r.rs) || 50,
+          regime: "RISK_ON",
+          exposure: 1
+        })});
+        
+        if (newLines.length > 0) {
+          fs.appendFileSync(logPath, newLines.join('\n') + '\n');
+          console.log(`[VCS LOG] Appended ${newLines.length} TRIGGERED signal(s) to screener_log.jsonl via /api/screen`);
+        }
+      }
+    } catch(err) {
+      console.error("Failed to write to screener_log.jsonl:", err);
+    }
+
+    res.json({ results: sorted, rawTable: tableText, rawUnfiltered: results });
   });
 
   // --- Vite / Production Setup ---

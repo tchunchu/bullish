@@ -10,7 +10,7 @@
  */
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type } from "./lib/gemini";
 import { 
   BarChart3, 
   History, 
@@ -2580,7 +2580,7 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
       setUniversalChatMessages(prev => [...prev, { role: 'assistant', content: '' }]);
 
       const stream = await ai.models.generateContentStream({
-        model: MODELS.FLASH,
+        model: MODELS.FLASH_LITE,
         contents: [
           { role: 'user', parts: [{ text: `${systemPrompt}\n\nUSER INQUIRY: ${promptText}` }] }
         ],
@@ -3007,6 +3007,27 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
                       <span className="text-blue-400 font-mono font-bold">{r.n_tp1 || r.algoTP1 || '—'}</span>
                     </div>
                   </div>
+                  
+                  {r.earnings_date && (
+                    <div className="grid grid-cols-2 gap-2 text-xs bg-black/40 p-2.5 rounded-lg border border-white/5 mt-1">
+                      <div>
+                        <span className="block text-[8px] text-indigo-300/70 uppercase font-bold">Q0 Est (Rev / EPS)</span>
+                        <span className="text-indigo-300 font-mono font-bold block">{r.q0_rev_est ? `$${(r.q0_rev_est / 1e9).toFixed(2)}B` : "—"} / {r.q0_eps_est ? `$${parseFloat(r.q0_eps_est).toFixed(2)}` : "—"}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[8px] text-sky-400/70 uppercase font-bold">Q0 YoY Growth</span>
+                        <span className="text-sky-400 font-mono font-bold block">{r.q0_rev_growth != null ? `${r.q0_rev_growth > 0 ? '+' : ''}${r.q0_rev_growth}%` : "—"} / {r.q0_eps_growth != null ? `${r.q0_eps_growth > 0 ? '+' : ''}${r.q0_eps_growth}%` : "—"}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[8px] text-purple-300/70 uppercase font-bold">Q1 Forecast (Rev / EPS)</span>
+                        <span className="text-purple-300 font-mono font-bold block">{r.q1_rev_est ? `$${(r.q1_rev_est / 1e9).toFixed(2)}B` : "—"} / {r.q1_eps_est ? `$${parseFloat(r.q1_eps_est).toFixed(2)}` : "—"}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[8px] text-fuchsia-400/70 uppercase font-bold">Q1 YoY Growth</span>
+                        <span className="text-fuchsia-400 font-mono font-bold block">{r.q1_rev_growth != null ? `${r.q1_rev_growth > 0 ? '+' : ''}${r.q1_rev_growth}%` : "—"} / {r.q1_eps_growth != null ? `${r.q1_eps_growth > 0 ? '+' : ''}${r.q1_eps_growth}%` : "—"}</span>
+                      </div>
+                    </div>
+                  )}
 
                   {r.noise_signals && (
                     <div className="pt-2 border-t border-white/5">
@@ -3426,11 +3447,11 @@ ${newsContext ? newsContext.substring(0, 20000) : "No news archive files loaded.
   const [maxScreenerCount, setMaxScreenerCount] = useState<number>(30);
   const [screenerPreset, setScreenerPreset] = useState<'full' | 'phase1' | 'phase2'>('full');
   const [rawScreenerCount, setRawScreenerCount] = useState<number>(30);
-  const [screenerMode, setScreenerMode] = useState<'classic' | 'unified_v2' | 'coiled'>('unified_v2');
+  const [screenerMode, setScreenerMode] = useState<'classic' | 'unified_v2' | 'coiled' | 'earnings' | 'super_v5_3'>('super_v5_3');
 
   const displayedScreenerResults = useMemo(() => {
     let filtered = [...screenerResults];
-    if (screenerPreset !== 'full') {
+    if (screenerPreset !== 'full' && screenerMode !== 'earnings') {
       filtered = filtered.filter((r: any) => {
         const rev = (r.rev_state || "").toUpperCase();
         if (screenerPreset === 'phase1') {
@@ -3693,7 +3714,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
   const [showThinking, setShowThinking] = useState(true);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string>(MODELS.FLASH_35);
+  const [selectedModel, setSelectedModel] = useState<string>(MODELS.FLASH_LITE);
 
   useEffect(() => {
     setFollowUpMessages([]);
@@ -3714,7 +3735,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       }
     }
   }, [activeSnapshot]);
-  const [selectedScreenerModel, setSelectedScreenerModel] = useState<string>(MODELS.FLASH_35);
+  const [selectedScreenerModel, setSelectedScreenerModel] = useState<string>(MODELS.FLASH_LITE);
   const [disableNeural, setDisableNeural] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isClearingAll, setIsClearingAll] = useState(false);
@@ -4330,9 +4351,11 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       topN: (screenIndex === 'watchlist' || screenIndex === 'custom' ? "200" : (screenIndex.toLowerCase().startsWith('russell') ? "3500" : "150")) // fetch more to allow client-side raw limit
     });
 
+    let hasReceivedData = false;
     const ev = new EventSource(`/api/vcs-run?${queryParams.toString()}`);
 
     ev.onmessage = async (event) => {
+      hasReceivedData = true;
       const data = JSON.parse(event.data);
       if (data.msg === "FINAL_REPORT") {
         setTerminal(prev => [...prev, "--- ANALYSIS COMPLETE ---"]);
@@ -4340,7 +4363,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         
         // Filter out tickers with comp score < 50 and limit to specific rev states
         // UNLESS the user is actively screening their own custom watchlist or ad-hoc custom tickers
-        if (screenIndex !== 'watchlist' && screenIndex !== 'custom' && screenerMode !== 'coiled') {
+        if (screenIndex !== 'watchlist' && screenIndex !== 'custom' && screenerMode !== 'coiled' && screenerMode !== 'earnings') {
           results = results.filter((r: any) => {
             const compScore = parseFloat(r.composite || "0") || 0;
             const steamScore = parseFloat(r.steam || "0") || 0;
@@ -4350,7 +4373,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
         }
 
         // Custom sorting depending on mode
-        if (screenerMode === 'coiled') {
+        if (screenerMode === 'coiled' || screenerMode === 'earnings') {
           results.sort((a: any, b: any) => {
             const scoreA = parseFloat(a.neural_score || a.bull_score || "0") || 0;
             const scoreB = parseFloat(b.neural_score || b.bull_score || "0") || 0;
@@ -4411,7 +4434,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
           const mdLabels: Record<string, string> = {
             'classic': 'Classic Screener (VCS)',
             'unified_v2': 'Unified Alpha (Reversal-First v3.0)',
-            'coiled': 'Coiled Spring Momentum'
+            'coiled': 'Coiled Spring Momentum',
+            'earnings': 'Post-Earnings Catalyst (Beat/Raise)'
           };
           const hzLabels: Record<string, string> = {
             'weeks': 'Swing (Weeks)',
@@ -4434,11 +4458,13 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
           let filtered = [...finalResults];
           if (isRussellScan) {
             // For Russell indices, ALWAYS enforce dynamic Phase 1 filter to sharply restrict document sizes
-            filtered = filtered.filter((r: any) => {
-              const rev = (r.rev_state || "").toUpperCase();
-              return rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
-            });
-          } else if (screenerPreset !== 'full') {
+            if (screenerMode !== 'earnings') {
+              filtered = filtered.filter((r: any) => {
+                const rev = (r.rev_state || "").toUpperCase();
+                return rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
+              });
+            }
+          } else if (screenerPreset !== 'full' && screenerMode !== 'earnings') {
             filtered = filtered.filter((r: any) => {
               const rev = (r.rev_state || "").toUpperCase();
               if (screenerPreset === 'phase1') {
@@ -4520,9 +4546,204 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     };
 
     ev.onerror = () => {
-      setTerminal(prev => [...prev, "!! CONNECTION INTERRUPTED !!"]);
       ev.close();
-      setIsScreening(false);
+      if (!hasReceivedData) {
+        setTerminal(prev => [...prev, "[PROT FALLBACK] SSE Tunnel aborted. Switching to high-speed API poll..."]);
+        
+        fetch(`/api/screen?${queryParams.toString()}`)
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+            const data = await res.json();
+            let results = data.results || [];
+            
+            // Filter out tickers with comp score < 50 and limit to specific rev states
+            // UNLESS the user is actively screening their own custom watchlist or ad-hoc custom tickers
+            if (screenIndex !== 'watchlist' && screenIndex !== 'custom' && screenerMode !== 'coiled' && screenerMode !== 'earnings') {
+              results = results.filter((r: any) => {
+                const compScore = parseFloat(r.composite || "0") || 0;
+                const steamScore = parseFloat(r.steam || "0") || 0;
+                if (compScore < 50 || steamScore < 5) return false;
+                return true;
+              });
+            }
+
+            // Custom sorting depending on mode
+            if (screenerMode === 'coiled' || screenerMode === 'earnings') {
+              results.sort((a: any, b: any) => {
+                const scoreA = parseFloat(a.neural_score || a.bull_score || "0") || 0;
+                const scoreB = parseFloat(b.neural_score || b.bull_score || "0") || 0;
+                return scoreB - scoreA;
+              });
+            } else {
+              results.sort((a: any, b: any) => {
+                const getBucket = (gateSig: string, revState: string) => {
+                  const sig = (gateSig || "").toUpperCase();
+                  const rev = (revState || "").toUpperCase();
+                  
+                  let sigRank = 4;
+                  if (sig === "STRONG BUY") sigRank = 1;
+                  else if (sig === "BUY") sigRank = 2;
+                  else if (sig === "WATCH") sigRank = 3;
+                  
+                  const isHotBreakout = rev.includes("HOT BREAKOUT");
+                  const isBreakout = rev.includes("BREAKOUT") && !isHotBreakout;
+                  const isEarlySteam = rev.includes("EARLY STEAM");
+                  const isGroupA = isHotBreakout || isBreakout || isEarlySteam;
+                  
+                  if (isGroupA) return sigRank;
+                  return sigRank + 3; // Group B and others
+                };
+
+                const bucketA = getBucket(a.gate_sig, a.rev_state);
+                const bucketB = getBucket(b.gate_sig, b.rev_state);
+                
+                if (bucketA !== bucketB) return bucketA - bucketB;
+
+                // Sort by steam score descending
+                const steamA = parseFloat(a.steam || "0") || 0;
+                const steamB = parseFloat(b.steam || "0") || 0;
+                if (steamA !== steamB) return steamB - steamA;
+                
+                // Sort by composite score descending
+                const compA = parseFloat(a.composite || "0") || 0;
+                const compB = parseFloat(b.composite || "0") || 0;
+                return compB - compA;
+              });
+            }
+
+            setScreenerResults(results);
+            setIsScreened(true);
+
+            // Auto-save Snapshot
+            const autoSaveRawSnapshot = async (finalResults: any[]) => {
+              const idxLabels: Record<string, string> = {
+                'sp500': 'S&P 500',
+                'nasdaq100': 'Nasdaq-100',
+                'both': 'S&P 500 + NDX',
+                'russell1000': 'Russell 1000',
+                'russell2000': 'Russell 2000',
+                'russell3000': 'Russell 3000',
+                'watchlist': 'Watchlist',
+                'custom': 'Custom Tickers'
+              };
+              const mdLabels: Record<string, string> = {
+                'classic': 'Classic Screener (VCS)',
+                'unified_v2': 'Unified Alpha (Reversal-First v3.0)',
+                'coiled': 'Coiled Spring Momentum',
+                'earnings': 'Post-Earnings Catalyst (Beat/Raise)'
+              };
+              const hzLabels: Record<string, string> = {
+                'weeks': 'Swing (Weeks)',
+                'months': 'Position (Months)',
+                'days': 'Day/Momentum (Days)'
+              };
+              
+              const isRussellScan = screenIndex.toLowerCase().startsWith('russell');
+              let presetLabel = "Full";
+              if (isRussellScan) {
+                presetLabel = "Phase 1 Filtered";
+              } else if (screenerPreset === "phase1") {
+                presetLabel = "Phase 1";
+              } else if (screenerPreset === "phase2") {
+                presetLabel = "Phase 2";
+              }
+              
+              const snapTitle = (idxLabels[screenIndex] || "Custom/Colab") + ` (Auto-Save - ${presetLabel})`;
+              
+              let filtered = [...finalResults];
+              if (isRussellScan) {
+                // For Russell indices, ALWAYS enforce dynamic Phase 1 filter to sharply restrict document sizes
+                if (screenerMode !== 'earnings') {
+                  filtered = filtered.filter((r: any) => {
+                    const rev = (r.rev_state || "").toUpperCase();
+                    return rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
+                  });
+                }
+              } else if (screenerPreset !== 'full' && screenerMode !== 'earnings') {
+                filtered = filtered.filter((r: any) => {
+                  const rev = (r.rev_state || "").toUpperCase();
+                  if (screenerPreset === 'phase1') {
+                    return rev.includes("HOT BREAKOUT") || rev.includes("BREAKOUT") || rev.includes("EARLY STEAM");
+                  }
+                  if (screenerPreset === 'phase2') {
+                    return rev.includes("SQUEEZE") || rev.includes("NEUTRAL") || rev.includes("ACCUM") || rev.includes("BOTTOM");
+                  }
+                  return true;
+                });
+                filtered = filtered.slice(0, Math.min(rawScreenerCount, 200));
+              } else {
+                // Apply a strict 250 limit for Firestore document size to avoid the 1 MB cap
+                filtered = filtered.slice(0, 250);
+              }
+              
+              // Split into multiple reports of max 250 tickers per document to respect firestore bounds
+              const CHUNK_SIZE = 250;
+              const chunks: any[][] = [];
+              if (filtered.length === 0) {
+                chunks.push([]);
+              } else {
+                for (let i = 0; i < filtered.length; i += CHUNK_SIZE) {
+                  chunks.push(filtered.slice(i, i + CHUNK_SIZE));
+                }
+              }
+
+              try {
+                for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+                  const chunk = chunks[chunkIdx];
+                  const partSuffix = chunks.length > 1 ? ` - Part ${chunkIdx + 1} (Tickers ${chunkIdx * CHUNK_SIZE + 1}-${Math.min((chunkIdx + 1) * CHUNK_SIZE, filtered.length)})` : "";
+                  const chunkTitle = snapTitle + partSuffix;
+
+                  if (user) {
+                    await addDoc(collection(db, 'snapshots'), sanitizeForFirestore({
+                      timestamp: new Date().toISOString(),
+                      source: "screener",
+                      index: chunkTitle,
+                      screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                      horizon: hzLabels[screenHorizon] || screenHorizon,
+                      rawResults: chunk,
+                      aiResults: [],
+                      tickerCount: chunk.length,
+                      userId: user.uid
+                    }));
+                  } else {
+                    setSavedSnapshots(prev => {
+                      const newSnapshot = {
+                        id: (Date.now() + chunkIdx).toString(),
+                        timestamp: new Date().toISOString(),
+                        source: "screener",
+                        index: chunkTitle,
+                        screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                        horizon: hzLabels[screenHorizon] || screenHorizon,
+                        rawResults: chunk,
+                        aiResults: [],
+                        tickerCount: chunk.length
+                      };
+                      return [newSnapshot, ...prev];
+                    });
+                  }
+                }
+              } catch (err) {
+                console.error("Auto-save snapshot failed on fallback", err);
+              }
+            };
+            
+            autoSaveRawSnapshot(results);
+
+            setIsScreening(false);
+            setIsNeuralLoading(false);
+            setNeuralScreenerText(""); 
+            setSnapshotSortBy('raw');
+            setTerminal(prev => [...prev, "[SYSTEM] Done! Screen completed via API fallback."]);
+          })
+          .catch((err) => {
+            console.error("HTTP Fallback failed:", err);
+            setTerminal(prev => [...prev, `!! FALLBACK ERROR: ${err.message} !!`]);
+            setIsScreening(false);
+          });
+      } else {
+        setTerminal(prev => [...prev, "!! CONNECTION INTERRUPTED !!"]);
+        setIsScreening(false);
+      }
     };
   };
 
@@ -4632,7 +4853,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
       const modeLabels: Record<string, string> = {
         'classic': 'Classic Screener (VCS)',
         'unified_v2': 'Unified Alpha (Reversal-First v3.0)',
-        'coiled': 'Coiled Spring Deep Scanner'
+        'coiled': 'Primed Coiled Spring (v4)',
+        'earnings': 'Post-Earnings Catalyst (Beat/Raise)'
       };
       const horizonLabels: Record<string, string> = {
         'weeks': 'Swing (Weeks)',
@@ -4690,7 +4912,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
     try {
       const gAI = new GoogleGenAI({ apiKey: import.meta.env.VITE_MYKEY || '' });
       let prompt = "";
-      if (screenerMode === 'unified_v2' && typeof coiledSpringMacroPrompt !== 'undefined') {
+      if ((screenerMode === 'unified_v2' || screenerMode === 'super_v5_3') && typeof coiledSpringMacroPrompt !== 'undefined') {
         const aiTargetResults = displayedScreenerResults.slice(0, maxScreenerCount);
         const gate_results = aiTargetResults.filter((r: any) => r.cs_signal === "HOT_BREAKOUT" || r.signal === "HOT_BREAKOUT");
         const reversal_results = aiTargetResults.filter((r: any) => r.cs_signal === "DROP_BREAKDOWN" || r.signal === "DROP_BREAKDOWN" || (r.rev_state && r.rev_state.includes("STEAM")));
@@ -4714,7 +4936,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
            else if (r.cs_signal === "COLD_UP_TRAP") rec = "AVOID";
 
            commentary_skeleton[r.ticker] = {
-               "signal_state": (screenerMode === 'unified_v2') ? (r.rev_state || r.cs_signal || r.signal || r.gate_sig) : r.signal,
+               "signal_state": (screenerMode === 'unified_v2' || screenerMode === 'super_v5_3') ? (r.rev_state || r.cs_signal || r.signal || r.gate_sig) : r.signal,
                "neural_score": r.neural_score || r.bull_score || r.steam_score || 50,
                "recommendation": rec,
                "n_entry": r.n_entry || "N/A",
@@ -4751,6 +4973,47 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
            neural_commentary: commentary_skeleton
         };
         prompt = coiledSpringMacroPrompt + `\n\nHere are the algorithmic setups grouped in buckets. Pay specific attention to the highly scored top_quality_bulls:\n${JSON.stringify(structuredPayload, null, 2)}`;
+      } else if (screenerMode === 'coiled') {
+        const aiTargetResults = displayedScreenerResults.slice(0, maxScreenerCount);
+        prompt = `You are a professional quantitative and equity research analyst running the "Coiled Spring" Pass 2 Neural Scan.
+For each of the parsed tickers, analyze the stock's multi-factor setup from the provided algorithmic dump.
+
+CRITICAL INSTRUCTIONS (HARD-GATED):
+1. TAPE CHECK: Do \`udvRatio50\` (>1.3 = accum), \`obvSlope20\` (>0 = rising OBV), \`rsLineHigh\` (true = institutional tell), \`closeRange\` (≥0.6 = buyers at close) confirm or contradict the \`state\`? Conflict → cap \`conviction\` at 5 and explain in \`thesis\`.
+2. NEWS FUEL: Do a fresh Google Search for EVERY ticker for news from the LAST 7 DAYS. A coil + fresh fuel beats a coil alone. Fuel on an EXTENDED name is a trap (already priced in).
+3. REGIME: Current exposure is 1.0x (RISK_ON).
+
+Output schema — STRICT JSON array of objects. Each MUST contain these exact keys:
+- "ticker": String
+- "conviction": Integer 1-10 (cap at 5 if tape conflicts)
+- "hold": "weeks" or "days"
+- "thesis": String (≤40 words. Use ONLY qualitative language — no decimal numbers unless they appear verbatim in the dump. Explain the setup, tape confirmation/conflict, and core thesis.)
+- "invalidation": String (≤20 words. Plain English, what breaks the setup.)
+- "fuel": String (≤25 words. State the catalyst found, or write exactly: "No fresh catalyst found in 7-day search")
+
+Here is the algorithmic dump:
+${JSON.stringify(aiTargetResults, null, 2)}`;
+      } else if (screenerMode === 'earnings') {
+        const aiTargetResults = displayedScreenerResults.slice(0, maxScreenerCount);
+        prompt = `You are a Post-Earnings Catalyst (PEAD) quantitative equity analyst.
+For each of the recently reported tickers, analyze the fundamental dump (EPS, revenue, gap reaction).
+
+CRITICAL INSTRUCTIONS:
+1. Conduct a fresh Google Search to verify if the company issued exactly HIGHER FORWARD GUIDANCE (a true "Raise") or just reaffirmed/lowered.
+2. Synthesize what's good (surprise magnitude, gap hold) vs the risks/traps.
+3. Recommend next-day action ("BUY", "WATCH", "AVOID") and score conviction out of 10.
+
+Output schema — STRICT JSON array of objects. Each MUST contain these exact keys:
+- "ticker": String
+- "neuralScore": Integer 1-100 (conviction * 10)
+- "neuralRecommendation": "BUY" | "WATCH" | "AVOID"
+- "finalTake": String (≤60 words. What's good + guidance + what's the risk.)
+- "neuralEntry": String (e.g. entry logic based on gap)
+- "neuralExit": String (stop logic)
+- "neuralTP1": String (target logic)
+
+Here is the algorithmic dump:
+${JSON.stringify(aiTargetResults, null, 2)}`;
       } else {
         const aiTargetResults = displayedScreenerResults.slice(0, maxScreenerCount);
         prompt = `Analyze these top algorithmic setups. 
@@ -4810,7 +5073,7 @@ ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry,
       }
       
       let parsedAiArray: any[] = [];
-      if (screenerMode === 'unified_v2' && typeof neuralParsed === 'object' && !Array.isArray(neuralParsed)) {
+      if ((screenerMode === 'unified_v2' || screenerMode === 'super_v5_3') && typeof neuralParsed === 'object' && !Array.isArray(neuralParsed)) {
         const commentary = neuralParsed.neural_commentary || neuralParsed;
         parsedAiArray = Object.keys(commentary)
           .filter(ticker => commentary[ticker] && typeof commentary[ticker] === 'object' && (commentary[ticker].neural_score || commentary[ticker].recommendation || commentary[ticker].neuralScore))
@@ -7260,9 +7523,10 @@ ${stationInput}
                     onChange={(e) => setSelectedModel(e.target.value)}
                     className="bg-black/30 border border-bento-border rounded-lg text-[10px] px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-bento-accent/50 font-bold text-bento-muted"
                   >
-                    <option value={MODELS.FLASH_35} className="bg-bento-card">Model: Gen 3.5 Flash (Default)</option>
-                    <option value={MODELS.PRO} className="bg-bento-card">Model: Gen 3.1 Pro (Heavy Reasoning)</option>
-                    <option value={MODELS.FLASH} className="bg-bento-card">Model: Gen 3 Flash (Legacy)</option>
+                    <option value={MODELS.FLASH_35} className="bg-bento-card">Model: Gen 3.5 Flash</option>
+                    <option value={MODELS.FLASH_25} className="bg-bento-card">Model: Gen 2.5 Flash</option>
+                    <option value={MODELS.FLASH_LITE} className="bg-bento-card">Model: Gen 3.1 Flash Lite</option>
+                    <option value={MODELS.PRO} className="bg-bento-card">Model: Gen 3.1 Pro</option>
                   </select>
                 </div>
               )}
@@ -7636,8 +7900,10 @@ ${stationInput}
                           ? (activeReport ? "flex" : "hidden lg:flex")
                           : (activeNewsArchiveReport ? "flex" : "hidden lg:flex")
                     )}>
-                      {historySubTab === 'screener' ? (activeSnapshot ? (
-                         <div className="flex-1 flex flex-col overflow-auto custom-scrollbar pr-2 pb-6">
+                      {historySubTab === 'screener' ? (activeSnapshot ? (() => {
+                         const isEarningsSnap = activeSnapshot.screenerMode?.toLowerCase().includes('earnings') || (Array.isArray(activeSnapshot.rawResults) && activeSnapshot.rawResults.some((r: any) => r.earnings_date));
+                         return (
+                           <div className="flex-1 flex flex-col overflow-auto custom-scrollbar pr-2 pb-6">
                             <button
                               onClick={() => setActiveSnapshot(null)}
                               className="lg:hidden mb-4 self-start flex items-center gap-2 text-xs font-black uppercase tracking-widest text-emerald-400 border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5 rounded-xl hover:bg-emerald-500/10 shadow-sm"
@@ -7899,6 +8165,78 @@ ${stationInput}
                                             ))}
                                           </tbody>
                                         </table>
+                                      ) : isEarningsSnap ? (
+                                        <table className="w-full text-left text-[11px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
+                                          <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-semibold text-[10px]">
+                                            <tr>
+                                              <th className="p-3">TICKER</th>
+                                              <th className="p-3">DATE</th>
+                                              <th className="p-3">SETUP</th>
+                                              <th className="p-3">PRICE / REACT</th>
+                                              <th className="p-3">LAST EPS (ACT/EST)</th>
+                                              <th className="p-3 text-emerald-400">SURPRISE</th>
+                                              <th className="p-3 text-indigo-300">Q0 EST (REV / EPS)</th>
+                                              <th className="p-3 text-sky-400">Q0 YOY GROWTH</th>
+                                              <th className="p-3 text-purple-300">Q1 FORECAST (REV / EPS)</th>
+                                              <th className="p-3 text-fuchsia-400">Q1 YOY GROWTH</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {activeSnapshot.rawResults.map((r: any, i: number) => (
+                                              <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                                <td className="p-3 font-bold text-blue-400">
+                                                  <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
+                                                </td>
+                                                <td className="p-3 text-gray-300">
+                                                  {r.earnings_date || "—"}
+                                                </td>
+                                                <td className="p-3">
+                                                  <span className={cn(
+                                                    "px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider",
+                                                    r.setup?.includes("GAP_AND_HOLD") || r.setup?.includes("BEAT") ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" : r.setup?.includes("UPCOMING") ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" : "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20"
+                                                  )}>
+                                                    {r.setup || "N/A"}
+                                                  </span>
+                                                </td>
+                                                <td className="p-3 font-bold text-slate-100 flex flex-col gap-0.5">
+                                                  <a
+                                                    href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="hover:underline hover:text-blue-400 font-bold block"
+                                                  >
+                                                    ${parseFloat(r.price || r.close || 0).toFixed(2)}
+                                                  </a>
+                                                  <span className={cn("text-[10px] font-bold", r.report_move_pct >= 0 ? "text-emerald-400" : "text-red-400")}>
+                                                    {r.report_move_pct > 0 ? `+${r.report_move_pct}` : r.report_move_pct}%
+                                                  </span>
+                                                </td>
+                                                <td className="p-3 text-white/80">
+                                                  {r.eps_actual != null ? r.eps_actual : "—"} / {r.eps_est != null ? r.eps_est : "—"}
+                                                </td>
+                                                <td className="p-3 text-emerald-400 font-bold">
+                                                  {r.surprise_pct != null ? `${r.surprise_pct}%` : "—"}
+                                                </td>
+                                                <td className="p-3 text-indigo-300">
+                                                  <span className="block">{r.q0_rev_est ? `$${(r.q0_rev_est / 1e9).toFixed(2)}B` : "—"} Rev</span>
+                                                  <span className="block text-[10px] text-indigo-400/70">{r.q0_eps_est ? `$${parseFloat(r.q0_eps_est).toFixed(2)}` : "—"} EPS</span>
+                                                </td>
+                                                <td className="p-3 text-sky-400 font-bold">
+                                                  <span className="block">{r.q0_rev_growth != null ? `${r.q0_rev_growth > 0 ? '+' : ''}${r.q0_rev_growth}%` : "—"} Rev</span>
+                                                  <span className="block text-[10px] text-sky-500/70">{r.q0_eps_growth != null ? `${r.q0_eps_growth > 0 ? '+' : ''}${r.q0_eps_growth}%` : "—"} EPS</span>
+                                                </td>
+                                                <td className="p-3 text-purple-300">
+                                                  <span className="block">{r.q1_rev_est ? `$${(r.q1_rev_est / 1e9).toFixed(2)}B` : "—"} Rev</span>
+                                                  <span className="block text-[10px] text-purple-400/70">{r.q1_eps_est ? `$${parseFloat(r.q1_eps_est).toFixed(2)}` : "—"} EPS</span>
+                                                </td>
+                                                <td className="p-3 text-fuchsia-400 font-bold">
+                                                  <span className="block">{r.q1_rev_growth != null ? `${r.q1_rev_growth > 0 ? '+' : ''}${r.q1_rev_growth}%` : "—"} Rev</span>
+                                                  <span className="block text-[10px] text-fuchsia-500/70">{r.q1_eps_growth != null ? `${r.q1_eps_growth > 0 ? '+' : ''}${r.q1_eps_growth}%` : "—"} EPS</span>
+                                                </td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
                                       ) : (
                                       <table className="w-full text-left text-sm text-white border-collapse">
                                         <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-bento-muted">
@@ -7984,6 +8322,18 @@ ${stationInput}
                                               <th className="p-3 min-w-[150px]">Final Take (Sent Reason)</th>
                                             </tr>
                                           </thead>
+                                        ) : isEarningsSnap ? (
+                                          <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-[#cfd8ff]/70 font-semibold">
+                                            <tr>
+                                              <th className="p-3">Ticker</th>
+                                              <th className="p-3">N-Score</th>
+                                              <th className="p-3">Rec.</th>
+                                              <th className="p-3">Entry Strategy</th>
+                                              <th className="p-3">Stop Strategy</th>
+                                              <th className="p-3">Target Strategy</th>
+                                              <th className="p-3 min-w-[250px]">Final Take</th>
+                                            </tr>
+                                          </thead>
                                         ) : (
                                           <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-bento-muted">
                                             <tr>
@@ -8057,6 +8407,23 @@ ${stationInput}
                                                 </tr>
                                                );
                                             }
+                                            if (isEarningsSnap) {
+                                              return (
+                                                <tr key={i} className="border-b border-[#243056]/40 hover:bg-white/5 transition-colors align-top whitespace-nowrap">
+                                                  <td className="p-3 font-mono">
+                                                    <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-bold">
+                                                      {r.ticker}
+                                                    </a>
+                                                  </td>
+                                                  <td className="p-3 font-mono text-purple-400 font-bold">{r.neuralScore}</td>
+                                                  <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
+                                                  <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-indigo-300">{r.neuralEntry || '—'}</td>
+                                                  <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-red-300">{r.neuralExit || '—'}</td>
+                                                  <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-teal-300">{r.neuralTP1 || '—'}</td>
+                                                  <td className="p-3 text-[11px] whitespace-normal min-w-[250px] leading-relaxed text-blue-300 font-medium">{r.finalTake || '—'}</td>
+                                                </tr>
+                                              );
+                                            }
                                             const rawMatch = activeSnapshot.rawResults?.find((sr: any) => sr.ticker === r.ticker) || {} as any;
                                             const tp1Up = calcUpsidePct(r.neuralTP1 || r.tp1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close);
                                             const tp2Up = calcUpsidePct(r.neuralTP2 || r.tp2 || rawMatch.algoTP2 || rawMatch.n_tp2, r.currentPrice || rawMatch.price || rawMatch.close);
@@ -8097,7 +8464,8 @@ ${stationInput}
                               </div>
                             )}
                          </div>
-                      ) : (
+                       );
+                     })() : (
                          <div className="flex-1 flex items-center justify-center text-white/20 uppercase font-black text-xs tracking-widest text-center">
                             Select a Snapshot <br/>to view details
                          </div>
@@ -8280,8 +8648,10 @@ ${stationInput}
                         onChange={(e) => setScreenerMode(e.target.value as any)}
                         className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none"
                       >
+                        <option value="super_v5_3">Super Signal v5.3 (MACRO × TECH × ANALYST) 🚀</option>
                         <option value="unified_v2">Unified Alpha (Reversal-First v3.0)</option>
-                        <option value="coiled">Coiled Spring Momentum</option>
+                        <option value="coiled">Primed Coiled Spring (v4)</option>
+                        <option value="earnings">Post-Earnings Catalyst (Beat/Raise)</option>
                         <option value="classic">Classic (VCS Only)</option>
                       </select>
                     </div>
@@ -8308,7 +8678,7 @@ ${stationInput}
                           if (nextState) {
                             setSelectedScreenerModel('no_neural');
                           } else {
-                            setSelectedScreenerModel(MODELS.FLASH_35);
+                            setSelectedScreenerModel(MODELS.FLASH_LITE);
                           }
                         }}
                         className={cn(
@@ -8366,9 +8736,10 @@ ${stationInput}
                           onChange={(e) => setSelectedScreenerModel(e.target.value)}
                           className="w-full bg-black/30 border border-bento-border rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none hover:border-bento-accent transition-all font-black text-emerald-400 h-[34px]"
                         >
-                          <option value={MODELS.FLASH_35} className="bg-bento-card text-white">Gen 3.5 Flash (Default)</option>
+                          <option value={MODELS.FLASH_35} className="bg-bento-card text-white">Gen 3.5 Flash (Rate Limited)</option>
+                          <option value={MODELS.FLASH_LITE} className="bg-bento-card text-white">Gen 3.1 Flash Lite (Recommended Fallback)</option>
+                          <option value={MODELS.FLASH_25} className="bg-bento-card text-white">Gen 2.5 Flash</option>
                           <option value={MODELS.PRO} className="bg-bento-card text-white">Gen 3.1 Pro</option>
-                          <option value={MODELS.FLASH} className="bg-bento-card text-white">Gen 3 Flash</option>
                           <option value="no_neural" className="bg-bento-card text-white">No Neural (Raw Data Only)</option>
                         </select>
                       )}
@@ -8588,7 +8959,9 @@ ${stationInput}
                                 )}
                               >
                                 {tab === 'Neural Analysis' && isNeuralLoading && <Loader2 className="w-3 h-3 animate-spin"/>}
-                                {tab}
+                                {screenerMode === 'coiled' 
+                                  ? (tab === 'Raw Table' ? '📊 Technical Scan (Top 15)' : '🧠 AI Neural Hunt (Top 10)') 
+                                  : tab}
                               </button>
                             );
                           })}
@@ -8635,7 +9008,9 @@ ${stationInput}
                               const modeLabels: Record<string, string> = {
                                 'classic': 'Classic Screener (VCS)',
                                 'unified_v2': 'Unified Alpha (Reversal-First v3.0)',
-                                'coiled': 'Coiled Spring Deep Scanner'
+                                'coiled': 'Primed Coiled Spring (v4)',
+                                'earnings': 'Post-Earnings Catalyst (Beat/Raise)',
+                                'super_v5_3': 'Super Signal v5.3 (MACRO × TECH × ANALYST)'
                               };
                               const horizonLabels: Record<string, string> = {
                                 'weeks': 'Swing (Weeks)',
@@ -8676,7 +9051,7 @@ ${stationInput}
                         {snapshotSortBy === 'raw' && (
                           <>
                             <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
-                              {screenerMode === 'unified_v2' ? (
+                              {screenerMode === 'unified_v2' || screenerMode === 'super_v5_3' ? (
                               <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
                                 <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-bento-muted">
                                   <tr>
@@ -8736,60 +9111,147 @@ ${stationInput}
                                   ))}
                                 </tbody>
                               </table>
-                            ) : screenerMode === 'coiled' ? (
-                            <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
-                              <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-semibold text-[9px]">
+                             ) : screenerMode === 'coiled' ? (
+                            <table className="w-full text-left text-[11px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50 rounded-lg">
+                              <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-semibold text-[10px]">
                                 <tr>
-                                  <th className="p-2 text-center">X</th>
-                                  <th className="p-2">TICKER</th>
-                                  <th className="p-2 col-span-1">PRICE</th>
-                                  <th className="p-2">STATE</th>
-                                  <th className="p-2">SETUP</th>
-                                  <th className="p-2">NEURAL SCORE</th>
-                                  <th className="p-2">ACC RATIO</th>
-                                  <th className="p-2">DIST RATIO</th>
-                                  <th className="p-2">BOX SPREAD</th>
-                                  <th className="p-2 text-sky-300">REV GROWTH</th>
-                                  <th className="p-2 text-emerald-400">UPSIDE (FV)</th>
-                                  <th className="p-2">ANALYST TARGET</th>
-                                  <th className="p-2">DYNAMIC R:R</th>
-                                  <th className="p-2">NOISE SIGNALS</th>
-                                  <th className="p-2">STOP</th>
-                                  <th className="p-2">TARGET</th>
+                                  <th className="p-2.5 text-center">X</th>
+                                  <th className="p-2.5">Ticker</th>
+                                  <th className="p-2.5">Setup</th>
+                                  <th className="p-2.5">Price</th>
+                                  <th className="p-2.5 text-emerald-400">Upside</th>
+                                  <th className="p-2.5 text-sky-400">Rev Gr</th>
+                                  <th className="p-2.5">Dynamic R:R</th>
+                                  <th className="p-2.5 text-blue-400">Entry</th>
+                                  <th className="p-2.5 text-red-400 font-bold">Stop (Swing Low)</th>
+                                  <th className="p-2.5 text-emerald-400">Analyst Target</th>
+                                  <th className="p-2.5 text-gray-300">Noise Signals</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {displayedScreenerResults.map((r, i) => (
                                   <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
-                                    <td className="p-2 text-center">
+                                    <td className="p-2.5 text-center">
                                       <button onClick={() => handleDismissTicker(r.ticker)} className="text-red-500/50 hover:text-red-400 font-bold px-1" title="Dismiss">×</button>
                                     </td>
-                                    <td className="p-2 font-bold text-blue-400">
-                                      <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
+                                    <td className="p-2.5 font-bold text-blue-400">
+                                      <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-sm font-extrabold hover:underline block">{r.ticker}</a>
                                     </td>
-                                    <td className="p-2">
+                                    <td className="p-2.5">
+                                      <span className={cn(
+                                        "px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider",
+                                        r.setup === "🔥 COILED SPRING" ? "bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-[0_0_8px_rgba(245,158,11,0.15)]" : "bg-blue-500/15 text-blue-400 border border-blue-500/20"
+                                      )}>
+                                        {r.setup || "WATCHING"}
+                                      </span>
+                                    </td>
+                                    <td className="p-2.5 font-bold text-slate-100">
                                       <a
                                         href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="hover:underline text-[rgba(255,255,255,0.95)] font-bold transition-all"
+                                        className="hover:underline text-[rgba(255,255,255,0.95)] text-sm font-bold transition-all"
                                       >
                                         ${(r.price || r.close)?.toFixed(2)}
                                       </a>
                                     </td>
-                                    <td className="p-2 font-bold" style={{color: r.signal === "HOT_BREAKOUT" ? "#00ff66" : r.signal === "DROP_BREAKDOWN" ? "#ff4444" : r.signal?.includes("COLD") ? "#60a5fa" : "#fbbf24"}}>{r.state || r.signal}</td>
-                                    <td className="p-2 font-bold text-yellow-400">{r.setup || "WATCHING"}</td>
-                                    <td className="p-2 text-emerald-400 font-bold">{r.neural_score || r.bull_score || "—"}</td>
-                                    <td className="p-2">{r.acc_ratio || r.vol_ratio || "1.00"}x</td>
-                                    <td className="p-2">{r.dist_ratio || "1.00"}x</td>
-                                    <td className="p-2 text-gray-400">${r.box_spread?.toFixed(2)} (${r.box_low?.toFixed(2)} - ${r.box_high?.toFixed(2)})</td>
-                                    <td className="p-2 text-sky-400 font-bold">{r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct}%</td>
-                                    <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
-                                    <td className="p-2 text-indigo-400">${r.analyst_target?.toFixed(2)}</td>
-                                    <td className="p-2 font-bold" style={{color: parseFloat(r.dynamic_rr) >= 2.0 ? "#00ff66" : "#fbbf24"}}>{r.dynamic_rr || "1.5x"}</td>
-                                    <td className="p-2 text-gray-300 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.noise_signals}>{r.noise_signals}</td>
-                                    <td className="p-2 text-red-400 font-bold">${(r.n_exit || r.algoExit || r.stop)}</td>
-                                    <td className="p-2 text-blue-400 font-bold">${(r.n_tp1 || r.algoTP1 || r.target)}</td>
+                                    <td className="p-2.5 text-emerald-400 font-bold text-sm">
+                                      {r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%
+                                    </td>
+                                    <td className="p-2.5 text-sky-400 font-bold text-sm">
+                                      {r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct}%
+                                    </td>
+                                    <td className="p-2.5 font-bold text-yellow-400 text-sm">
+                                      {r.dynamic_rr || "1.5x"}
+                                    </td>
+                                    <td className="p-2.5 text-blue-400 font-bold">
+                                      {r.n_entry && r.n_entry !== "N/A" ? r.n_entry : `$${(r.price || r.close)?.toFixed(2)}`}
+                                    </td>
+                                    <td className="p-2.5 text-red-500 font-bold">
+                                      {r.n_exit && r.n_exit !== "N/A" ? r.n_exit : (r.algoExit ? `$${parseFloat(r.algoExit).toFixed(2)}` : "—")}
+                                    </td>
+                                    <td className="p-2.5 text-emerald-400 font-bold">
+                                      {r.analyst_target && r.analyst_target > 0 ? `$${r.analyst_target.toFixed(2)}` : "—"}
+                                    </td>
+                                    <td className="p-2.5 text-gray-300 max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap text-xs font-sans" title={r.noise_signals}>
+                                      {r.noise_signals || "No major recent catalyst"}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            ) : screenerMode === 'earnings' ? (
+                            <table className="w-full text-left text-[11px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50 rounded-lg">
+                              <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-semibold text-[10px]">
+                                <tr>
+                                  <th className="p-2.5 text-center">X</th>
+                                  <th className="p-2.5">Ticker</th>
+                                  <th className="p-2.5">Date</th>
+                                  <th className="p-2.5">Setup</th>
+                                  <th className="p-2.5">Price / React</th>
+                                  <th className="p-2.5">Last EPS (Act/Est)</th>
+                                  <th className="p-2.5 text-emerald-400">Surprise</th>
+                                  <th className="p-2.5 text-indigo-300">Q0 Est (Rev / EPS)</th>
+                                  <th className="p-2.5 text-sky-400">Q0 YoY Growth</th>
+                                  <th className="p-2.5 text-purple-300">Q1 Forecast (Rev / EPS)</th>
+                                  <th className="p-2.5 text-fuchsia-400">Q1 YoY Growth</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {displayedScreenerResults.map((r, i) => (
+                                  <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                    <td className="p-2.5 text-center">
+                                      <button onClick={() => handleDismissTicker(r.ticker)} className="text-red-500/50 hover:text-red-400 font-bold px-1" title="Dismiss">×</button>
+                                    </td>
+                                    <td className="p-2.5 font-bold text-blue-400">
+                                      <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-sm font-extrabold hover:underline block">{r.ticker}</a>
+                                    </td>
+                                    <td className="p-2.5 text-gray-300">
+                                      {r.earnings_date || "—"}
+                                    </td>
+                                    <td className="p-2.5">
+                                      <span className={cn(
+                                        "px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider",
+                                        r.setup?.includes("GAP_AND_HOLD") || r.setup?.includes("BEAT") ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" : r.setup?.includes("UPCOMING") ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" : "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20"
+                                      )}>
+                                        {r.setup || "N/A"}
+                                      </span>
+                                    </td>
+                                    <td className="p-2.5 font-bold text-slate-100 flex flex-col gap-0.5">
+                                      <a
+                                        href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="hover:underline hover:text-blue-400 font-bold block"
+                                      >
+                                        ${parseFloat(r.price || r.close || 0).toFixed(2)}
+                                      </a>
+                                      <span className={cn("text-[10px] font-bold", r.report_move_pct >= 0 ? "text-emerald-400" : "text-red-400")}>
+                                        {r.report_move_pct > 0 ? `+${r.report_move_pct}` : r.report_move_pct}%
+                                      </span>
+                                    </td>
+                                    <td className="p-2.5 text-white/80">
+                                      {r.eps_actual != null ? r.eps_actual : "—"} / {r.eps_est != null ? r.eps_est : "—"}
+                                    </td>
+                                    <td className="p-2.5 text-emerald-400 font-bold">
+                                      {r.surprise_pct != null ? `${r.surprise_pct}%` : "—"}
+                                    </td>
+                                    <td className="p-2.5 text-indigo-300">
+                                      <span className="block">{r.q0_rev_est ? `$${(r.q0_rev_est / 1e9).toFixed(2)}B` : "—"} Rev</span>
+                                      <span className="block text-[10px] text-indigo-400/70">{r.q0_eps_est ? `$${parseFloat(r.q0_eps_est).toFixed(2)}` : "—"} EPS</span>
+                                    </td>
+                                    <td className="p-2.5 text-sky-400 font-bold">
+                                      <span className="block">{r.q0_rev_growth != null ? `${r.q0_rev_growth > 0 ? '+' : ''}${r.q0_rev_growth}%` : "—"} Rev</span>
+                                      <span className="block text-[10px] text-sky-500/70">{r.q0_eps_growth != null ? `${r.q0_eps_growth > 0 ? '+' : ''}${r.q0_eps_growth}%` : "—"} EPS</span>
+                                    </td>
+                                    <td className="p-2.5 text-purple-300">
+                                      <span className="block">{r.q1_rev_est ? `$${(r.q1_rev_est / 1e9).toFixed(2)}B` : "—"} Rev</span>
+                                      <span className="block text-[10px] text-purple-400/70">{r.q1_eps_est ? `$${parseFloat(r.q1_eps_est).toFixed(2)}` : "—"} EPS</span>
+                                    </td>
+                                    <td className="p-2.5 text-fuchsia-400 font-bold">
+                                      <span className="block">{r.q1_rev_growth != null ? `${r.q1_rev_growth > 0 ? '+' : ''}${r.q1_rev_growth}%` : "—"} Rev</span>
+                                      <span className="block text-[10px] text-fuchsia-500/70">{r.q1_eps_growth != null ? `${r.q1_eps_growth > 0 ? '+' : ''}${r.q1_eps_growth}%` : "—"} EPS</span>
+                                    </td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -8840,7 +9302,7 @@ ${stationInput}
                             </table>
                             )}
                             </div>
-                            {renderRawScreenerMobile(displayedScreenerResults, screenerMode === 'unified_v2')}
+                            {renderRawScreenerMobile(displayedScreenerResults, screenerMode === 'unified_v2' || screenerMode === 'super_v5_3')}
                           </>
                         )}
                         {snapshotSortBy === 'neural' && (
@@ -8852,9 +9314,157 @@ ${stationInput}
                               </div>
                             ) : (
                               <>
-                                <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
+                                {screenerMode === 'coiled' ? (
+                                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-1">
+                                    {(function() {
+                                      try {
+                                        const parsed = JSON.parse(neuralScreenerText || "[]");
+                                        if (!Array.isArray(parsed) || parsed.length === 0) {
+                                          return <div className="col-span-2 text-center py-10 text-bento-muted font-bold text-xs uppercase tracking-widest bg-black/30 rounded-2xl border border-bento-border">{neuralScreenerText ? "No valid results parsed." : "Run screener to generate AI analysis."}</div>;
+                                        }
+                                        return parsed.map((r: any, i: number) => {
+                                          const rawMatch = displayedScreenerResults.find((sr: any) => sr.ticker === r.ticker) || {} as any;
+                                          const entryVal = r.neuralEntry || rawMatch.n_entry || (rawMatch.price || rawMatch.close ? `$${(rawMatch.price || rawMatch.close)?.toFixed(2)}` : '—');
+                                          const targetVal = r.neuralExit || (rawMatch.analyst_target ? `$${rawMatch.analyst_target?.toFixed(2)}` : rawMatch.n_tp1 || '—');
+                                          const rec = (r.neuralRecommendation || r.recommendation || "BUY").toUpperCase();
+                                          return (
+                                            <div key={i} className="bg-[#0b0b14]/50 border border-white/5 rounded-2xl p-6 shadow-xl text-left hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+                                              <div>
+                                                {/* Header */}
+                                                <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
+                                                  <div className="flex items-center gap-3">
+                                                    <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-xl font-extrabold text-blue-400 hover:underline tracking-tight">
+                                                      {r.ticker}
+                                                    </a>
+                                                    <span className={cn(
+                                                      "px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border",
+                                                      rec.includes("STRONG") 
+                                                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+                                                        : "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                                                    )}>
+                                                      {rec}
+                                                    </span>
+                                                  </div>
+                                                  <div className="px-3 py-1 bg-black/60 border border-white/10 rounded flex items-center gap-1.5 font-mono">
+                                                    <span className="text-[9px] uppercase font-bold text-bento-muted">N-Score</span>
+                                                    <span className="text-sm font-black text-purple-400">{r.neuralScore || '—'}</span>
+                                                  </div>
+                                                </div>
+
+                                                {/* Price Boxes */}
+                                                <div className="grid grid-cols-2 gap-4 mb-5 font-mono font-bold">
+                                                  <div className="bg-blue-500/5 p-3 rounded-xl text-center border border-blue-500/10">
+                                                    <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider mb-1">Entry Range</div>
+                                                    <div className="text-base text-blue-400">{entryVal}</div>
+                                                  </div>
+                                                  <div className="bg-emerald-500/5 p-3 rounded-xl text-center border border-emerald-500/10">
+                                                    <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider mb-1">Target Price</div>
+                                                    <div className="text-base text-emerald-400">{targetVal}</div>
+                                                  </div>
+                                                </div>
+
+                                                {/* Core Institutional Sections */}
+                                                <div className="space-y-4">
+                                                  <div className="border-l-[3px] border-sky-450 pl-3.5">
+                                                    <div className="text-sky-400 text-[10px] font-bold uppercase tracking-widest mb-1 font-sans">💎 Conviction / State</div>
+                                                    <p className="text-slate-300 text-[12.5px] leading-relaxed font-sans">
+                                                      Conviction: <strong className="text-white">{r.conviction || 5}/10</strong> (Hold: {r.hold || "weeks"})
+                                                    </p>
+                                                  </div>
+
+                                                  <div className="border-l-[3px] border-indigo-400 pl-3.5">
+                                                    <div className="text-indigo-400 text-[10px] font-bold uppercase tracking-widest mb-1 font-sans">⚖️ Thesis & Tape</div>
+                                                    <p className="text-slate-300 text-[12.5px] leading-relaxed font-sans">{r.thesis || "Evaluating key catalysts and operational risks."}</p>
+                                                  </div>
+
+                                                  <div className="border-l-[3px] border-red-500 pl-3.5">
+                                                    <div className="text-red-400 text-[10px] font-bold uppercase tracking-widest mb-1 font-sans">🛑 Invalidation</div>
+                                                    <p className="text-slate-300 text-[12.5px] leading-relaxed font-sans">{r.invalidation || "Loss of structural support."}</p>
+                                                  </div>
+
+                                                  <div className="border-l-[3px] border-amber-500 pl-3.5">
+                                                    <div className="text-amber-400 text-[10px] font-bold uppercase tracking-widest mb-1 font-sans">🔥 Fuel to the Fire</div>
+                                                      <p className="text-slate-300 text-[12.5px] leading-relaxed font-sans">{r.fuel || "Checking recent news flow and catalyst confirmation."}</p>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        });
+                                      } catch (e) {
+                                        return <div className="col-span-2 p-4 text-center text-red-400 font-mono text-xs whitespace-pre-wrap bg-red-950/20 border border-red-500/20 rounded-xl font-sans">Error parsing neural output:\n{neuralScreenerText}</div>;
+                                      }
+                                    })()}
+                                  </div>
+                                ) : screenerMode === 'earnings' ? (
+                                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-1">
+                                    {(function() {
+                                      try {
+                                        const parsed = JSON.parse(neuralScreenerText || "[]");
+                                        if (!Array.isArray(parsed) || parsed.length === 0) {
+                                          return <div className="col-span-2 text-center py-10 text-bento-muted font-bold text-xs uppercase tracking-widest bg-black/30 rounded-2xl border border-bento-border">{neuralScreenerText ? "No valid results parsed." : "Run screener to generate AI analysis."}</div>;
+                                        }
+                                        return parsed.map((r: any, i: number) => {
+                                          const rawMatch = displayedScreenerResults.find((sr: any) => sr.ticker === r.ticker) || {} as any;
+                                          const entryVal = r.neuralEntry || rawMatch.n_entry || (rawMatch.price || rawMatch.close ? `$${(rawMatch.price || rawMatch.close)?.toFixed(2)}` : '—');
+                                          const targetVal = r.neuralTP1 || rawMatch.n_tp1 || '—';
+                                          const rec = (r.neuralRecommendation || r.recommendation || "BUY").toUpperCase();
+                                          return (
+                                            <div key={i} className="bg-[#0b0b14]/50 border border-white/5 rounded-2xl p-6 shadow-xl text-left hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+                                              <div>
+                                                <div className="flex justify-between items-start mb-4">
+                                                  <div>
+                                                    <div className="flex items-center gap-3 mb-1">
+                                                      <h3 className="text-xl font-extrabold text-blue-400 m-0 tracking-tight">{r.ticker}</h3>
+                                                      <span className={cn(
+                                                        "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
+                                                        rec === 'BUY' ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : 
+                                                        rec === 'WATCH' ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : 
+                                                        "bg-red-500/20 text-red-400 border border-red-500/30"
+                                                      )}>{rec}</span>
+                                                    </div>
+                                                    <div className="text-[11px] text-slate-400 tracking-wider">
+                                                      Score: <strong className={cn("font-bold text-[13px]", r.neuralScore >= 70 ? "text-emerald-400" : (r.neuralScore >= 50 ? "text-amber-400" : "text-red-400"))}>{r.neuralScore || (r.conviction ? r.conviction * 10 : 50)}/100</strong>
+                                                    </div>
+                                                  </div>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-4 mb-5 font-mono font-bold">
+                                                  <div className="bg-blue-500/5 p-3 rounded-xl text-center border border-blue-500/10">
+                                                    <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider mb-1">Entry Range</div>
+                                                    <div className="text-base text-blue-400">{entryVal}</div>
+                                                  </div>
+                                                  <div className="bg-emerald-500/5 p-3 rounded-xl text-center border border-emerald-500/10">
+                                                    <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider mb-1">Target Price</div>
+                                                    <div className="text-base text-emerald-400">{targetVal}</div>
+                                                  </div>
+                                                </div>
+
+                                                <div className="space-y-4">
+                                                  <div className="border-l-[3px] border-indigo-400 pl-3.5">
+                                                    <div className="text-indigo-400 text-[10px] font-bold uppercase tracking-widest mb-1 font-sans">⚖️ Final Take</div>
+                                                    <p className="text-slate-300 text-[12.5px] leading-relaxed font-sans">{r.finalTake || r.thesis || "Evaluating key catalysts and operational risks."}</p>
+                                                  </div>
+
+                                                  <div className="border-l-[3px] border-amber-500 pl-3.5">
+                                                    <div className="text-amber-400 text-[10px] font-bold uppercase tracking-widest mb-1 font-sans">🔥 Guidance Check</div>
+                                                      <p className="text-slate-300 text-[12.5px] leading-relaxed font-sans">{r.guidance || "Checking recent news flow and catalyst confirmation."}</p>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        });
+                                      } catch (e) {
+                                        return <div className="col-span-2 p-4 text-center text-red-400 font-mono text-xs whitespace-pre-wrap bg-red-950/20 border border-red-500/20 rounded-xl font-sans">Error parsing neural output:\n{neuralScreenerText}</div>;
+                                      }
+                                    })()}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
                                   <table className="w-full text-left text-sm text-white border-collapse">
-                                {screenerMode === 'unified_v2' ? (
+                                {screenerMode === 'unified_v2' || screenerMode === 'super_v5_3' ? (
                                   <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-bento-muted whitespace-nowrap">
                                     <tr>
                                       <th className="p-3">Bucket</th>
@@ -8881,6 +9491,18 @@ ${stationInput}
                                       <th className="p-3 min-w-[150px]">Bull Case (🐂 Strings)</th>
                                       <th className="p-3 min-w-[150px]">Bear Case (🐻 Strings)</th>
                                       <th className="p-3 min-w-[150px]">Final Take (Sent Reason)</th>
+                                    </tr>
+                                  </thead>
+                                ) : (screenerMode as string) === 'earnings' ? (
+                                  <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-bento-muted font-bold">
+                                    <tr>
+                                      <th className="p-3">Ticker</th>
+                                      <th className="p-3">N-Score</th>
+                                      <th className="p-3">Rec.</th>
+                                      <th className="p-3">Entry Strategy</th>
+                                      <th className="p-3">Stop Strategy</th>
+                                      <th className="p-3">Target Strategy</th>
+                                      <th className="p-3 min-w-[250px]">Final Take</th>
                                     </tr>
                                   </thead>
                                 ) : (
@@ -8913,7 +9535,7 @@ ${stationInput}
                                       if (!Array.isArray(parsed)) return <tr><td colSpan={10} className="p-4 text-center text-red-400 font-mono text-xs whitespace-pre-wrap">{neuralScreenerText}</td></tr>;
                                       const neuralData = sortNeuralData(parsed);
                                       return neuralData.map((r: any, i: number) => {
-                                        if (screenerMode === 'unified_v2') {
+                                        if (screenerMode === 'unified_v2' || screenerMode === 'super_v5_3') {
                                            const rawMatch = displayedScreenerResults.find(sr => sr.ticker === r.ticker) || {} as any;
                                            const tp1Up = calcUpsidePct(rawMatch.algoTP1 || rawMatch.n_tp1 || r.neuralTP1 || r.tp1, rawMatch.price || rawMatch.close || r.currentPrice);
                                            const tp2Up = calcUpsidePct(rawMatch.algoTP2 || rawMatch.n_tp2 || r.neuralTP2 || r.tp2, rawMatch.price || rawMatch.close || r.currentPrice);
@@ -8960,6 +9582,22 @@ ${stationInput}
                                               <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
                                             </tr>
                                            );
+                                        } else if ((screenerMode as string) === 'earnings') {
+                                          return (
+                                            <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors align-top">
+                                              <td className="p-3 font-mono">
+                                                <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-bold">
+                                                  {r.ticker}
+                                                </a>
+                                              </td>
+                                              <td className="p-3 font-mono text-purple-400 font-bold">{r.neuralScore}</td>
+                                              <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
+                                              <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-indigo-300">{r.neuralEntry || '—'}</td>
+                                              <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-red-300">{r.neuralExit || '—'}</td>
+                                              <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-teal-300">{r.neuralTP1 || '—'}</td>
+                                              <td className="p-3 text-[11px] whitespace-normal min-w-[250px] leading-relaxed text-blue-300 font-medium">{r.finalTake || '—'}</td>
+                                            </tr>
+                                          );
                                         }
                                         const rawMatch = displayedScreenerResults.find((sr: any) => sr.ticker === r.ticker) || {} as any;
                                         const tp1Up = calcUpsidePct(r.neuralTP1 || r.tp1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close);
@@ -9006,13 +9644,15 @@ ${stationInput}
                                   return [];
                                 }
                               })(),
-                              screenerMode === 'unified_v2',
+                              screenerMode === 'unified_v2' || screenerMode === 'super_v5_3',
                               displayedScreenerResults
+                            )}
+                                  </>
+                                )}
+                              </>
                             )}
                           </>
                         )}
-                      </>
-                    )}
                         {snapshotSortBy === 'vcs' && (
                           <div className="hidden space-y-4">
                             {displayedScreenerResults.map((r, i) => (
@@ -10337,10 +10977,12 @@ ${stationInput}
       </AnimatePresence>
 
       {/* 1. SNAPSHOT FULLSCREEN OVERLAY */}
-      {isSnapshotFullscreen && activeSnapshot && (
-        <div 
-          className={cn(
-            "fixed inset-0 z-[250] bg-[#070b19] p-4 sm:p-6 flex flex-col space-y-4 h-screen w-screen overflow-hidden text-white transition-all duration-300",
+      {isSnapshotFullscreen && activeSnapshot && (() => {
+        const isEarningsSnap = activeSnapshot.screenerMode?.toLowerCase().includes('earnings') || (Array.isArray(activeSnapshot.rawResults) && activeSnapshot.rawResults.some((r: any) => r.earnings_date));
+        return (
+          <div 
+            className={cn(
+              "fixed inset-0 z-[250] bg-[#070b19] p-4 sm:p-6 flex flex-col space-y-4 h-screen w-screen overflow-hidden text-white transition-all duration-300",
             isUniversalChatOpen ? "sm:pr-[510px] md:pr-[610px] lg:pr-[750px]" : ""
           )}
         >
@@ -10529,6 +11171,78 @@ ${stationInput}
                             ))}
                           </tbody>
                         </table>
+                      ) : isEarningsSnap ? (
+                        <table className="w-full text-left text-[11px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
+                          <thead className="bg-[#12121e] border-b border-white/10 uppercase tracking-widest text-[#cfd8ff]/70 font-semibold text-[10px]">
+                            <tr>
+                              <th className="p-3">TICKER</th>
+                              <th className="p-3">DATE</th>
+                              <th className="p-3">SETUP</th>
+                              <th className="p-3">PRICE / REACT</th>
+                              <th className="p-3">LAST EPS (ACT/EST)</th>
+                              <th className="p-3 text-emerald-400">SURPRISE</th>
+                              <th className="p-3 text-indigo-300">Q0 EST (REV / EPS)</th>
+                              <th className="p-3 text-sky-400">Q0 YOY GROWTH</th>
+                              <th className="p-3 text-purple-300">Q1 FORECAST (REV / EPS)</th>
+                              <th className="p-3 text-fuchsia-400">Q1 YOY GROWTH</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeSnapshot.rawResults.map((r: any, i: number) => (
+                              <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors font-mono">
+                                <td className="p-3 font-bold text-blue-400">
+                                  <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="hover:underline">{r.ticker}</a>
+                                </td>
+                                <td className="p-3 text-gray-300">
+                                  {r.earnings_date || "—"}
+                                </td>
+                                <td className="p-3">
+                                  <span className={cn(
+                                    "px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider",
+                                    r.setup?.includes("GAP_AND_HOLD") || r.setup?.includes("BEAT") ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" : r.setup?.includes("UPCOMING") ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" : "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20"
+                                  )}>
+                                    {r.setup || "N/A"}
+                                  </span>
+                                </td>
+                                <td className="p-3 font-bold text-slate-100 flex flex-col gap-0.5">
+                                  <a
+                                    href={`https://www.tradingview.com/chart/?symbol=${r.ticker}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="hover:underline hover:text-blue-400 font-bold block"
+                                  >
+                                    ${parseFloat(r.price || r.close || 0).toFixed(2)}
+                                  </a>
+                                  <span className={cn("text-[10px] font-bold", r.report_move_pct >= 0 ? "text-emerald-400" : "text-red-400")}>
+                                    {r.report_move_pct > 0 ? `+${r.report_move_pct}` : r.report_move_pct}%
+                                  </span>
+                                </td>
+                                <td className="p-3 text-white/80">
+                                  {r.eps_actual != null ? r.eps_actual : "—"} / {r.eps_est != null ? r.eps_est : "—"}
+                                </td>
+                                <td className="p-3 text-emerald-400 font-bold">
+                                  {r.surprise_pct != null ? `${r.surprise_pct}%` : "—"}
+                                </td>
+                                <td className="p-3 text-indigo-300">
+                                  <span className="block">{r.q0_rev_est ? `$${(r.q0_rev_est / 1e9).toFixed(2)}B` : "—"} Rev</span>
+                                  <span className="block text-[10px] text-indigo-400/70">{r.q0_eps_est ? `$${parseFloat(r.q0_eps_est).toFixed(2)}` : "—"} EPS</span>
+                                </td>
+                                <td className="p-3 text-sky-400 font-bold">
+                                  <span className="block">{r.q0_rev_growth != null ? `${r.q0_rev_growth > 0 ? '+' : ''}${r.q0_rev_growth}%` : "—"} Rev</span>
+                                  <span className="block text-[10px] text-sky-500/70">{r.q0_eps_growth != null ? `${r.q0_eps_growth > 0 ? '+' : ''}${r.q0_eps_growth}%` : "—"} EPS</span>
+                                </td>
+                                <td className="p-3 text-purple-300">
+                                  <span className="block">{r.q1_rev_est ? `$${(r.q1_rev_est / 1e9).toFixed(2)}B` : "—"} Rev</span>
+                                  <span className="block text-[10px] text-purple-400/70">{r.q1_eps_est ? `$${parseFloat(r.q1_eps_est).toFixed(2)}` : "—"} EPS</span>
+                                </td>
+                                <td className="p-3 text-fuchsia-400 font-bold">
+                                  <span className="block">{r.q1_rev_growth != null ? `${r.q1_rev_growth > 0 ? '+' : ''}${r.q1_rev_growth}%` : "—"} Rev</span>
+                                  <span className="block text-[10px] text-fuchsia-500/70">{r.q1_eps_growth != null ? `${r.q1_eps_growth > 0 ? '+' : ''}${r.q1_eps_growth}%` : "—"} EPS</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       ) : (
                         <table className="w-full text-left text-sm text-white border-collapse">
                           <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-[#cfd8ff]/70 font-bold">
@@ -10614,6 +11328,18 @@ ${stationInput}
                               <th className="p-3 min-w-[250px]">Final Take (Sent Reason)</th>
                             </tr>
                           </thead>
+                        ) : isEarningsSnap ? (
+                          <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-[#cfd8ff]/70 font-bold">
+                            <tr>
+                              <th className="p-3">Ticker</th>
+                              <th className="p-3">N-Score</th>
+                              <th className="p-3">Rec.</th>
+                              <th className="p-3">Entry Strategy</th>
+                              <th className="p-3">Stop Strategy</th>
+                              <th className="p-3">Target Strategy</th>
+                              <th className="p-3 min-w-[250px]">Final Take</th>
+                            </tr>
+                          </thead>
                         ) : (
                           <thead className="bg-[#12121e] border-b border-white/10 uppercase text-[10px] tracking-widest text-[#cfd8ff]/70 font-bold">
                             <tr>
@@ -10686,6 +11412,22 @@ ${stationInput}
                                   <td className="p-3 text-[11px] leading-relaxed text-blue-400 whitespace-normal min-w-[250px]">{r.finalTake}</td>
                                 </tr>
                                );
+                            } else if (isEarningsSnap) {
+                              return (
+                                <tr key={i} className="border-b border-[#243056]/40 hover:bg-white/5 transition-colors align-top">
+                                  <td className="p-3 font-mono">
+                                    <a href={`https://www.dataroma.com/m/stock.php?sym=${r.ticker}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-bold">
+                                      {r.ticker}
+                                    </a>
+                                  </td>
+                                  <td className="p-3 font-mono text-purple-400 font-bold">{r.neuralScore}</td>
+                                  <td className="p-3 uppercase font-bold tracking-widest text-[10px] text-emerald-400">{r.neuralRecommendation}</td>
+                                  <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-indigo-300">{r.neuralEntry || '—'}</td>
+                                  <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-red-300">{r.neuralExit || '—'}</td>
+                                  <td className="p-3 text-[11px] whitespace-normal min-w-[150px] leading-relaxed text-teal-300">{r.neuralTP1 || '—'}</td>
+                                  <td className="p-3 text-[11px] whitespace-normal min-w-[250px] leading-relaxed text-blue-300 font-medium">{r.finalTake || '—'}</td>
+                                </tr>
+                              );
                             }
                             const rawMatch = activeSnapshot.rawResults?.find((sr: any) => sr.ticker === r.ticker) || {} as any;
                             const tp1Up = calcUpsidePct(r.neuralTP1 || r.tp1 || rawMatch.algoTP1 || rawMatch.n_tp1, r.currentPrice || rawMatch.price || rawMatch.close);
@@ -10728,7 +11470,8 @@ ${stationInput}
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* 2. REPORT FULLSCREEN OVERLAY */}
       {isReportFullscreen && activeReport && (

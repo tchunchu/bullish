@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Screener v5 — 2026-06-10</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.55;
+    font-size: 14px;
+  }
+  .container { max-width: 1440px; margin: 0 auto; padding: 28px 24px; }
+
+  /* Typography */
+  h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.3px; }
+  h2 { font-size: 18px; font-weight: 700; margin: 36px 0 14px;
+       border-left: 4px solid #f9ca24; padding-left: 12px; }
+  h3 { font-size: 13px; font-weight: 600; color: #8b949e; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .subtitle { color: #8b949e; font-size: 13px; margin: 6px 0 28px; }
+
+  /* Regime strip */
+  .regime-bar { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 30px; }
+  .regime-card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px 20px; flex: 1; min-width: 220px;
+  }
+  .regime-badge {
+    display: inline-block; padding: 5px 18px; border-radius: 20px;
+    font-weight: 800; font-size: 15px; margin-bottom: 8px;
+  }
+
+  /* Cards */
+  .card {
+    background: #0d1117; border: 1px solid #30363d;
+    border-radius: 12px; padding: 20px; margin-bottom: 26px; overflow-x: auto;
+  }
+  .card-dark { background: #161b22; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    background: #161b22; color: #8b949e;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.07em; padding: 10px 12px; text-align: left;
+    border-bottom: 2px solid #30363d; white-space: nowrap;
+  }
+  td { padding: 13px 12px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  tbody tr:hover td { background: #161b22; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  /* Footer */
+  .footer {
+    text-align: center; color: #484f58; font-size: 12px;
+    margin-top: 48px; padding: 20px; border-top: 1px solid #21262d;
+  }
+  @media (max-width: 768px) {
+    .regime-bar { flex-direction: column; }
+    .container { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>📊 Equity Screener — v5</h1>
+  <div class="subtitle">
+    Generated: 2026-06-10T05:34:36.590Z
+    &nbsp;|&nbsp; Universe: S&amp;P 500 + Curated
+    &nbsp;|&nbsp; Workflow: <code>SCREENER_MASTER.md</code>
+    &nbsp;|&nbsp; Renderer: <code>render_v5.js</code> (deterministic)
+  </div>
+
+  <!-- ── REGIME PANEL ── -->
+  <div class="regime-bar">
+    <div class="regime-card">
+      <h3>Market Regime</h3>
+      <span class="regime-badge" style="background:#00d084;color:#111;">RISK_ON</span>
+      <div style="color:#8b949e;font-size:13px;">Score 100/100 &nbsp;|&nbsp; Size ×1</div>
+    </div>
+    <div class="regime-card">
+      <h3>Regime Signals</h3>
+      <ul style="list-style:none;font-size:13px;"><li style="padding:3px 0;color:#00d084;">+ SPY in uptrend (P&gt;50&gt;200)</li><li style="padding:3px 0;color:#00d084;">+ SPY 20d slope up</li><li style="padding:3px 0;color:#00d084;">+ VIX calm (18.9)</li><li style="padding:3px 0;color:#00d084;">+ VIX not spiking</li><li style="padding:3px 0;color:#00d084;">+ Credit firm (HYG/IEF)</li><li style="padding:3px 0;color:#00d084;">+ Breadth participating (RSP/SPY)</li><li style="padding:3px 0;color:#00d084;">+ QQQ above 50d</li></ul>
+    </div>
+    <div class="regime-card">
+      <h3>Sector Leadership (RS vs SPY)</h3>
+      <div style="margin-top:4px;"><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#00b894;color:#fff;">
+    XLK +14.29
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#00b894;color:#fff;">
+    XLE +3.68
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#d63031;color:#fff;">
+    XLI -2.05
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#d63031;color:#fff;">
+    XLV -2.56
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#d63031;color:#fff;">
+    XLRE -3.03
+  </span><span style="display:inline-block;margin:2px 3px;padding:3px 10px;border-radius:10px;font-size:12px;font-weight:600;background:#d63031;color:#fff;">
+    XLB -3.65
+  </span></div>
+    </div>
+  </div>
+
+  <!-- ── CANDIDATES TABLE ── -->
+  <h2>Today's Screener Candidates</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>State</th>
+          <th style="text-align:center;">Conv.</th>
+          <th style="text-align:center;">Hold</th>
+          <th>Entry → Stop → T1</th>
+          <th>Thesis &amp; ⚡ Catalyst</th>
+          <th>Invalidation &amp; Tape</th>
+        </tr>
+      </thead>
+      <tbody>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      EXPD
+      
+    </td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="text-align:center;"><span style="background:#00d084;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">8</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $163.44 →
+      <span style="color:#e17055;">$156.29</span> →
+      <span style="color:#00d084;">$177.74</span>
+      <br><small style="color:#b2bec3;">R:R 2 &nbsp;|&nbsp; RS 4.47%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Tape strongly confirms triggered state with solid accumulation and buyers stepping in at the close. Positive revenue growth supports holding through base breakout volatility.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ Recent freight volume stabilization reports drove sympathy buying across logistics names.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Loss of structural support below the pivot base.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.58</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 65.1</span> &nbsp; <span style="color:#b2bec3;">RevGr 4.4%</span> &nbsp; <span style="color:#b2bec3;">Marg 10.6%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      IEX
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#00d084;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">8</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $218.59 →
+      <span style="color:#e17055;">$209.52</span> →
+      <span style="color:#00d084;">$242.09</span>
+      <br><small style="color:#b2bec3;">R:R 2.59 &nbsp;|&nbsp; RS 3.65%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Complete alignment. Tape evidence strongly confirms the coil with positive accumulation, rising OBV, and confident buyers at the close. Solid fundamentals support the setup.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Volume-backed collapse below the base support level.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.49</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 62.4</span> &nbsp; <span style="color:#b2bec3;">RevGr 8.9%</span> &nbsp; <span style="color:#b2bec3;">Marg 19.9%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      WST
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#00d084;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">8</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $319.75 →
+      <span style="color:#e17055;">$308.23</span> →
+      <span style="color:#00d084;">$370.59</span>
+      <br><small style="color:#b2bec3;">R:R 4.41 &nbsp;|&nbsp; RS 6.19%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">High conviction setup. Tape strongly confirms with robust accumulation, positive OBV, and healthy closing buyers. Excellent revenue growth and margins cement the thesis.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ Analyst action: Initiation with a buy rating citing secular growth.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Volume expansion on a breakdown below base support.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.7</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 60.5</span> &nbsp; <span style="color:#00d084;">RevGr 21%</span> &nbsp; <span style="color:#00d084;">Marg 21.7%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      TROW
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#f9ca24;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">7</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $105.45 →
+      <span style="color:#e17055;">$101.64</span> →
+      <span style="color:#00d084;">$118.50</span>
+      <br><small style="color:#b2bec3;">R:R 3.43 &nbsp;|&nbsp; RS 0.95%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Tape partially confirms the coil with institutional relative strength near highs and healthy accumulation. Exceptional operating margins validate holding, despite a softer closing range.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ Analyst action: Upgraded by major broker on improving AUM flows.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Loss of the relative strength line trajectory and breakdown below base support.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.4</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 60.4</span> &nbsp; <span style="color:#b2bec3;">RevGr 5.3%</span> &nbsp; <span style="color:#00d084;">Marg 37.2%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      BEN
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#f9ca24;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">7</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $31.39 →
+      <span style="color:#e17055;">$29.71</span> →
+      <span style="color:#00d084;">$37.17</span>
+      <br><small style="color:#b2bec3;">R:R 3.44 &nbsp;|&nbsp; RS 10.26%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Tape confirms the coil. Strong accumulation, positive OBV, and institutional relative strength near highs suggest a breakout is brewing. Fundamentals remain supportive.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Loss of relative strength and a break below the pivot base.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.73</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 56.7</span> &nbsp; <span style="color:#b2bec3;">RevGr 8.7%</span> &nbsp; <span style="color:#b2bec3;">Marg 17.2%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      INVH
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#f9ca24;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">6</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $29.38 →
+      <span style="color:#e17055;">$28.67</span> →
+      <span style="color:#00d084;">$32.49</span>
+      <br><small style="color:#b2bec3;">R:R 4.37 &nbsp;|&nbsp; RS 1.29%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Mixed tape. Strong accumulation suggests underlying demand, but negative OBV slope and weak closing range present near-term conflict. Fundamentals show healthy margin defense.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ Sympathy play on broader residential REIT sector strength.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Daily close below the recent consolidation base.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.6</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 58.2</span> &nbsp; <span style="color:#b2bec3;">RevGr 9.2%</span> &nbsp; <span style="color:#00d084;">Marg 24.3%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      PSX
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#f9ca24;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">6</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $183.42 →
+      <span style="color:#e17055;">$172.35</span> →
+      <span style="color:#00d084;">$209.13</span>
+      <br><small style="color:#b2bec3;">R:R 2.32 &nbsp;|&nbsp; RS 9.74%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Neutral tape structure. OBV is marginally positive, but lack of strong accumulation and weak closing range temper conviction. Energy sector relative strength provides a tailwind.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Price deterioration below the established base support.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.02</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 59.9</span> &nbsp; <span style="color:#b2bec3;">RevGr 6.9%</span> &nbsp; <span style="color:#b2bec3;">Marg 0.6%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      EQR
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#f9ca24;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">6</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $67.34 →
+      <span style="color:#e17055;">$64.76</span> →
+      <span style="color:#00d084;">$73.23</span>
+      <br><small style="color:#b2bec3;">R:R 2.28 &nbsp;|&nbsp; RS 0.65%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Mixed evidence. Institutional relative strength near highs is a massive positive, but negative OBV and poor closing range indicate short-term supply absorption remains incomplete.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Loss of relative strength leadership and a breakdown below base limits.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#b2bec3;">RSI 60.6</span> &nbsp; <span style="color:#b2bec3;">RevGr 2.5%</span> &nbsp; <span style="color:#00d084;">Marg 27.4%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      EQIX
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">5</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $1062.74 →
+      <span style="color:#e17055;">$1040.70</span> →
+      <span style="color:#00d084;">$1200.97</span>
+      <br><small style="color:#b2bec3;">R:R 6.27 &nbsp;|&nbsp; RS 8.01%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Tape contradicts the coiling setup; negative OBV slope and weak closing range suggest distribution despite tight price action. Strong margins provide some fundamental cushion.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Breakdown below the recent swing low and loss of the 50-day moving average.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.1</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 47.6</span> &nbsp; <span style="color:#00d084;">RevGr 12.1%</span> &nbsp; <span style="color:#00d084;">Marg 24.3%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      IRM
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">5</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $123.50 →
+      <span style="color:#e17055;">$119.91</span> →
+      <span style="color:#00d084;">$149.90</span>
+      <br><small style="color:#b2bec3;">R:R 7.35 &nbsp;|&nbsp; RS 7.5%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Fundamentally strong with excellent revenue growth, but tape evidence conflicts. Negative OBV slope and poor closing range indicate sellers capping rallies near the pivot.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Rejection from the pivot leading to a break below base support.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 1.36</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 47.4</span> &nbsp; <span style="color:#00d084;">RevGr 21.6%</span> &nbsp; <span style="color:#00d084;">Marg 21%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      FOXA
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">5</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $67.44 →
+      <span style="color:#e17055;">$63.61</span> →
+      <span style="color:#00d084;">$75.11</span>
+      <br><small style="color:#b2bec3;">R:R 2 &nbsp;|&nbsp; RS 3.01%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Tape contradicts coiling score. Negative revenue growth adds fundamental risk, and while closing range is strong, negative OBV slope indicates broader distributive pressure.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Failure to hold the key support zone below the pivot.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.24</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 59.6</span> &nbsp; <span style="color:#e17055;">RevGr -8.6%</span> &nbsp; <span style="color:#00d084;">Marg 21.4%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      IVZ
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">5</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $27.55 →
+      <span style="color:#e17055;">$26.67</span> →
+      <span style="color:#00d084;">$32.15</span>
+      <br><small style="color:#b2bec3;">R:R 5.2 &nbsp;|&nbsp; RS 2.99%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Contradictory evidence. Setup shows extreme tightness, but negative OBV slope, weak closing range, and subdued accumulation suggest lack of institutional sponsorship for a breakout.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">High-volume breakdown below the recent consolidation cluster.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.17</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 53.5</span> &nbsp; <span style="color:#00d084;">RevGr 14.1%</span> &nbsp; <span style="color:#b2bec3;">Marg 19.1%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      KEY
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">5</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $21.79 →
+      <span style="color:#e17055;">$20.91</span> →
+      <span style="color:#00d084;">$23.60</span>
+      <br><small style="color:#b2bec3;">R:R 2.05 &nbsp;|&nbsp; RS 1.41%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Conflicting tape. Good operating margins, but negative OBV slope and mediocre accumulation contradict the coiling dynamics. Sector cross-currents advise caution.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Failure to hold the recent swing low and breakdown below support.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 1.08</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 56.3</span> &nbsp; <span style="color:#00d084;">RevGr 11.8%</span> &nbsp; <span style="color:#00d084;">Marg 35.8%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      HUM
+      
+    </td>
+    <td><span style="background:#636e72;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">NONE</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">5</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $355.98 →
+      <span style="color:#e17055;">$332.10</span> →
+      <span style="color:#00d084;">$439.05</span>
+      <br><small style="color:#b2bec3;">R:R 3.48 &nbsp;|&nbsp; RS 55.16%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Massive accumulation and positive OBV, but technically lacks a valid setup state. Extended significantly past moving averages, increasing chase risk despite strong buyers.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ Guidance raise: Upward revision of forward internal forecasts reported.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Reversal and failure of the recent high-volume thrust.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#00d084;">UDV 3.13</span> &nbsp; <span style="color:#00d084;">OBV ↑</span> &nbsp; <span style="color:#00d084;">RS-line 🔝</span> &nbsp; <span style="color:#e17055;">RSI 81.8</span> &nbsp; <span style="color:#00d084;">RevGr 23.5%</span> &nbsp; <span style="color:#b2bec3;">Marg 4.7%</span></div>
+    </td>
+  </tr>
+  <tr>
+    <td style="font-weight:700;font-size:16px;white-space:nowrap;">
+      TGT
+      
+    </td>
+    <td><span style="background:#f9ca24;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">COILING</span></td>
+    <td style="text-align:center;"><span style="background:#e17055;color:#111;padding:4px 11px;border-radius:50%;font-weight:800;font-size:15px;">4</span></td>
+    <td style="text-align:center;"><span style="font-weight:600;">weeks</span></td>
+    <td style="font-family:monospace;font-size:13px;white-space:nowrap;">
+      $123.97 →
+      <span style="color:#e17055;">$120.15</span> →
+      <span style="color:#00d084;">$141.24</span>
+      <br><small style="color:#b2bec3;">R:R 4.52 &nbsp;|&nbsp; RS 2.45%</small>
+    </td>
+    <td style="max-width:360px;"><div style="font-weight:600;margin-bottom:5px;line-height:1.5;">Tape evidence contradicts. Despite a strong closing range, accumulation is non-existent, OBV is negative, and operating margins remain thin. Lacking confirmation.</div>
+       <div style="color:#f9ca24;font-size:12px;">⚡ No fresh catalyst found in 7-day search.</div></td>
+    <td style="max-width:200px;">
+      <span style="color:#e17055;font-size:12px;">Breakdown below the multi-week base support.</span>
+      <div style="margin-top:6px;font-size:11px;color:#8b949e;"><span style="color:#b2bec3;">UDV 0.99</span> &nbsp; <span style="color:#e17055;">OBV ↓</span> &nbsp; <span style="color:#b2bec3;">RS-line off-high</span> &nbsp; <span style="color:#b2bec3;">RSI 48.4</span> &nbsp; <span style="color:#b2bec3;">RevGr 6.7%</span> &nbsp; <span style="color:#b2bec3;">Marg 4.5%</span></div>
+    </td>
+  </tr></tbody>
+    </table>
+  </div>
+
+  <!-- ── AUTO PORTFOLIO NOTE ── -->
+  <h2>📋 Portfolio Note — 2026-06-10</h2>
+  <div class="card card-dark">
+    <p style="font-size:14px;color:#cdd9e5;line-height:1.7;">
+      <strong style="color:#e6edf3;">Regime:</strong>
+      RISK_ON ×1 — full allocation eligible.<br>
+
+      <strong style="color:#e6edf3;">TRIGGERED:</strong> EXPD (conviction 8, entry $163.44→T1 $177.74)<br>
+
+      <strong style="color:#e6edf3;">COILING alerts (conv ≥7):</strong> IEX (pivot $223.85), WST (pivot $330.88), TROW (pivot $108.20), BEN (pivot $32.47) — set pivot alerts at levels shown, check the 3:30–4:00 pm ET close.<br>
+
+      <strong style="color:#f9ca24;">⚠ Sector concentration:</strong> Other: EXPD, FOXA, HUM, TGT (4 names) | XLF/Financials: TROW, BEN, IVZ, KEY (4 names) | XLRE/REITs: INVH, EQR, EQIX, IRM (4 names) — cap group weight.<br>
+
+      <strong style="color:#e6edf3;">Chart to watch:</strong> EXPD — TRIGGERED; watch for second day ≥1.4× vol above $163.44 to confirm institutional follow-through. Measured move target $177.74.
+    </p></div>
+
+  <!-- ── HISTORICAL LEDGER ── -->
+  <h2>📒 Historical Trigger Ledger</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Ticker</th>
+          <th>State</th>
+          <th>Entry</th>
+          <th>Stop</th>
+          <th>T1</th>
+          <th>R:R</th>
+          <th>RS%</th>
+          <th>Regime</th>
+        </tr>
+      </thead>
+      <tbody>
+  <tr>
+    <td style="white-space:nowrap;color:#8b949e;">2026-06-10</td>
+    <td style="font-weight:700;">EXPD</td>
+    <td><span style="background:#00d084;color:#111;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap;">TRIGGERED</span></td>
+    <td style="font-family:monospace;">$163.44</td>
+    <td style="font-family:monospace;color:#e17055;">$156.29</td>
+    <td style="font-family:monospace;color:#00d084;">$177.74</td>
+    <td>2</td>
+    <td>4.47%</td>
+    <td><span style="color:#00d084;font-weight:600;">RISK_ON</span></td>
+  </tr></tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    Screener v5 &nbsp;|&nbsp; researchshipper/equity · update branch &nbsp;|&nbsp; 2026-06-10<br>
+    All price levels sourced from <code>screener_dump.json</code>. LLM reasoning applied over dump numbers only.
+    Forward returns tracked in <code>screener_log.jsonl</code> via <code>scorecard.js</code>.
+  </div>
+
+</div>
+</body>
+</html>

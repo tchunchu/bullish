@@ -1,0 +1,42 @@
+[
+  {
+    "sym": "INVH",
+    "conviction": 9,
+    "hold": "weeks",
+    "thesis": "Strong institutional accumulation and rising on-balance volume confirm the setup. Price remains tight against the pivot with high relative strength, suggesting a breakout is imminent in a favorable risk-on market environment.",
+    "invalidation": "Fails to break the pivot on significant volume or drops below the defined stop level.",
+    "fuel": "No fresh catalyst found in 7-day search"
+  },
+  {
+    "sym": "ELV",
+    "conviction": 5,
+    "hold": "weeks",
+    "thesis": "High volume accumulation signals strength, yet the lack of institutional relative strength and weak close-range buying force a lower conviction rating. Validates as a potential move if volume confirms the pivot breakout.",
+    "invalidation": "Failure to breach pivot with conviction or significant reversal from current levels.",
+    "fuel": "No fresh catalyst found in 7-day search"
+  },
+  {
+    "sym": "FOXA",
+    "conviction": 6,
+    "hold": "weeks",
+    "thesis": "Strong institutional backing and high relative strength support the setup. While the on-balance volume slope is slightly negative, the tight volatility contraction makes this a top-tier candidate for an upside pivot break.",
+    "invalidation": "Price drops below the stop level or loses institutional relative strength status.",
+    "fuel": "No fresh catalyst found in 7-day search"
+  },
+  {
+    "sym": "TGT",
+    "conviction": 5,
+    "hold": "weeks",
+    "thesis": "Aggressive late-day buying shows clear intent, but the lack of institutional relative strength and negative volume slope suggest caution. Requires a high-volume breakout to overcome current distribution signals.",
+    "invalidation": "Price fails to hold at the close or breaks down through the stop.",
+    "fuel": "No fresh catalyst found in 7-day search"
+  },
+  {
+    "sym": "BEN",
+    "conviction": 6,
+    "hold": "weeks",
+    "thesis": "Institutional relative strength and high accumulation scores provide a solid foundation. While the close-range performance is weak, the tight base structure indicates sellers are exhausted and buyers are waiting for a clear breakout signal.",
+    "invalidation": "Price fails to push through the pivot or breaks support.",
+    "fuel": "No fresh catalyst found in 7-day search"
+  }
+]

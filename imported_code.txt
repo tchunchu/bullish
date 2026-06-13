@@ -1,0 +1,271 @@
+
+--- screener/screener_v5.js ---
+ #!/usr/bin/env node
+'use strict';
+const YahooFinance = require('yahoo-finance2').default;
+const yf = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
+const fs = require('fs');
+const { getSMA, getRSI, getATR } = require('../lib/indicators.js');
+const { relStrength, rsLineNearHigh, upDownVolRatio, obvSlope, closingRange } = require('../lib/indicators_v2.js');
+const { classifySetup } = require('../lib/setups.js');
+const { classifyRegime, sectorLeadership } = require('../lib/regime.js');
+const { evaluateSignals, parseJsonl } = require('../lib/scorecard.js');
+
+const REGIME_SYMS = ['SPY', 'QQQ', 'IWM', 'HYG', 'IEF', '^VIX', 'RSP'];
+const SECTOR_ETFS = ['XLK', 'XLE', 'XLF', 'XLI', 'XLV', 'XLY', 'XLP', 'XLU', 'XLB', 'XLC', 'XLRE'];
+const { resolveUniverse } = require('./universe.js');
+
+async function chartCloses(sym, days = 420) {
+  const d1 = Math.floor(Date.now() / 1000) - days * 24 * 3600;
+  const ch = await yf.chart(sym, { period1: d1, interval: '1d' }).catch(() => null);
+  const quotes = (ch?.quotes || []).filter(q => q.close != null);
+  return { quotes, closes: quotes.map(q => q.close) };
+}
+
+async function fetchRegime() {
+  const series = {}, sectors = {};
+  for (const s of REGIME_SYMS) series[s.replace('^', '')] = (await chartCloses(s)).closes;
+  for (const s of SECTOR_ETFS) sectors[s] = (await chartCloses(s, 200)).closes;
+  const regime = classifyRegime(series);
+  const leaders = sectorLeadership(sectors, series.SPY);
+  return { regime, leaders, spyCloses: series.SPY };
+}
+
+async function screenOne(sym, spyCloses, regime) {
+  const { quotes, closes } = await chartCloses(sym);
+  if (quotes.length < 120) return null;
+  const last = quotes[quotes.length - 1];
+
+  const dollarVols = quotes.slice(-20).map(q => (q.close || 0) * (q.volume || 0)).sort((a, b) => a - b);
+  const medDollarVol = dollarVols[Math.floor(dollarVols.length / 2)];
+  if (last.close < 5 || medDollarVol < 20e6) return null;
+
+  const rs = relStrength(closes, spyCloses);
+  if (rs == null) return null;
+
+  const setup = classifySetup(quotes);
+  if (setup.state === 'NO_DATA' || setup.state === 'NONE') {
+    if (setup.score < 20) return null;
+  }
+  if (regime.regime === 'RISK_OFF' && setup.state !== 'TRIGGERED') return null;
+
+  const tape = {
+    udvRatio50: upDownVolRatio(quotes),
+    obvSlope20: obvSlope(quotes),
+    closeRange: closingRange(last),
+    rsLineHigh: rsLineNearHigh(closes, spyCloses),
+    rsi14: +(getRSI(quotes, 14) || 0).toFixed(1),
+    atrPct: +((getATR(quotes, 14) / last.close) * 100).toFixed(2),
+    vsMa50: +(((last.close / getSMA(closes, 50)) - 1) * 100).toFixed(1),
+    vsMa200: closes.length >= 200 ? +(((last.close / getSMA(closes, 200)) - 1) * 100).toFixed(1) : null,
+  };
+
+  let earningsInDays = null, revGr = null, margins = null;
+  try {
+    const qs = await yf.quoteSummary(sym, { modules: ['calendarEvents', 'financialData'] });
+    const ed = qs?.calendarEvents?.earnings?.earningsDate?.[0];
+    if (ed) earningsInDays = Math.round((new Date(ed) - Date.now()) / 86400000);
+    revGr = qs?.financialData?.revenueGrowth ?? null;
+    margins = qs?.financialData?.operatingMargins ?? null;
+  } catch { }
+
+  return {
+    sym, price: +last.close.toFixed(2), rs, setup, tape,
+    earningsInDays, earningsRisk: earningsInDays != null && earningsInDays >= 0 && earningsInDays <= 7,
+    fund: { revGrowthPct: revGr != null ? +(revGr * 100).toFixed(1) : null, opMarginPct: margins != null ? +(margins * 100).toFixed(1) : null },
+    medDollarVolM: +(medDollarVol / 1e6).toFixed(0),
+  };
+}
+
+(async () => {
+  const args = process.argv.slice(2);
+  const top = +(args.find(a => a.startsWith('--top='))?.split('=')[1] || 15);
+
+  console.log('🌍 [0/3] Regime + sector leadership…');
+  const { regime, leaders, spyCloses } = await fetchRegime();
+  console.log(` Regime: ${regime.regime} (${regime.score}/100) | exposure x${regime.exposure}`);
+  regime.signals.forEach(s => console.log(`  ${s}`));
+  console.log(` Leading sectors: ${leaders.slice(0, 4).map(l => `${l.etf}(${l.rs > 0 ? '+' : ''}${l.rs})`).join(' ')}`);
+
+  const universe = await resolveUniverse(args);
+
+  console.log(`\n🔬 [1/3] Screening ${universe.length} tickers…`);
+  const results = [];
+  const conc = 8;
+  for (let i = 0; i < universe.length; i += conc) {
+    const chunk = await Promise.all(universe.slice(i, i + conc).map(s => screenOne(s, spyCloses, regime)));
+    results.push(...chunk.filter(Boolean));
+    process.stdout.write(`\r batch ${Math.floor(i / conc) + 1}/${Math.ceil(universe.length / conc)}`);
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  results.sort((a, b) => b.rs - a.rs);
+  const rsCut = results[Math.floor(results.length * 0.4)]?.rs ?? -Infinity;
+  const leadersOnly = results.filter(r => r.rs >= rsCut);
+
+  const statePri = { TRIGGERED: 3, COILING: 2, REVERSAL: 1, NONE: 0, EXTENDED: 0 };
+  leadersOnly.sort((a, b) =>
+    (statePri[b.setup.state] - statePri[a.setup.state]) ||
+    (b.setup.score - a.setup.score) || (b.rs - a.rs));
+
+  const final = leadersOnly.slice(0, top);
+
+  console.log(`\n\n📊 [2/3] ${final.length} candidates (regime ${regime.regime}, size x${regime.exposure}):\n`);
+  console.log('SYM     STATE       SCORE  RS%    PRICE    ENTRY→STOP→T1            R:R   EARN  DETAIL');
+  for (const r of final) {
+    const s = r.setup;
+    console.log(`${r.sym.padEnd(7)} ${s.state.padEnd(11)} ${String(s.score).padEnd(6)} ${String(r.rs).padEnd(6)} $${String(r.price).padEnd(8)} ${s.entry}→${s.stop}→${s.t1} ${String(s.rr).padEnd(5)} ${r.earningsRisk ? '⚠️ ' + r.earningsInDays + 'd' : '—'}  ${s.detail}`);
+  }
+
+  const dump = {
+    generatedAt: new Date().toISOString(),
+    regime, sectorLeaders: leaders,
+    instructions: 'Rank these candidates for 5-60 day swing holds. Use ONLY numbers in this file. For each: (1) does the tape evidence (udvRatio, obvSlope, rsLineHigh, closeRange) confirm or contradict the setup state? (2) does fund growth/margin justify holding through volatility? (3) is the sector a leader? (4) earnings risk handling. Output strict JSON: [{sym, conviction:1-10, hold:"days|weeks|months", thesis:<=40 words, invalidation:<=20 words, fuel:<=25 words}]. Flag any candidate where evidence conflicts.',
+    candidates: final,
+  };
+  fs.writeFileSync('screener/screener_dump.json', JSON.stringify(dump, null, 2));
+  fs.writeFileSync('screener/top_tickers.txt', final.map(r => r.sym).join(','));
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const lines = final.filter(r => r.setup.state === 'TRIGGERED').map(r => JSON.stringify({
+    date: dateStr, sym: r.sym, entry: r.setup.entry, stop: r.setup.stop, t1: r.setup.t1,
+    pivot: r.setup.pivot, rr: r.setup.rr, score: r.setup.score, rs: r.rs,
+    regime: regime.regime, exposure: regime.exposure,
+  }));
+  const logPath = 'screener/screener_log.jsonl';
+  const priorLog = fs.existsSync(logPath) ? parseJsonl(fs.readFileSync(logPath, 'utf8')) : [];
+  const already = new Set(priorLog.map(x => `${x.sym}|${x.date}`));
+  const fresh = lines.filter(l => { const o = JSON.parse(l); return !already.has(`${o.sym}|${o.date}`); });
+  if (fresh.length) {
+    fs.appendFileSync(logPath, fresh.join('\n') + '\n');
+    console.log(`📒 Appended ${fresh.length} TRIGGERED signal(s) to screener_log.jsonl`);
+  } else if (lines.length) {
+    console.log('📒 TRIGGERED signal(s) already logged today — no duplicate append.');
+  }
+
+  try {
+    const ledger = fs.existsSync(logPath) ? parseJsonl(fs.readFileSync(logPath, 'utf8')) : [];
+    if (ledger.length) {
+      const syms = [...new Set(ledger.map(x => x.sym))];
+      const quotesBySym = {};
+      for (const sym of syms) quotesBySym[sym] = (await chartCloses(sym, 200)).quotes;
+      const card = evaluateSignals(ledger, quotesBySym);
+      card.asOf = new Date().toISOString();
+      fs.writeFileSync('screener/scorecard.json', JSON.stringify(card, null, 2));
+      const st = card.stats;
+      console.log(`📈 Scorecard: ${st.total} signals | ${st.open} open | win rate ${st.winRatePct ?? '—'}% | avg R ${st.avgR ?? '—'} | cum R ${st.cumR ?? '—'}`);
+    }
+  } catch (e) { console.log('⚠️ scorecard generation failed (non-fatal):', e.message); }
+
+  console.log(`\n✅ [3/3] screener_dump.json written — feed to LLM for Pass 2.`);
+})();
+
+
+--- lib/setups.js ---
+ 'use strict';
+/**
+ * setups.js — Deterministic setup STATE MACHINE.
+ */
+const { getATR, getSMA } = require('./indicators.js');
+const {
+  bbWidthPercentile, atrPctPercentile, isSqueezed, volDryUp,
+  contractionSequence, closingRange, upDownVolRatio, obvSlope,
+} = require('./indicators_v2.js');
+
+function compressionScore(quotes) {
+  const closes = quotes.map(q => q.close).filter(v => v != null);
+  let score = 0; const parts = {};
+
+  const bbp = bbWidthPercentile(closes);
+  if (bbp != null && bbp <= 20) { score += 25; parts.bbTight = bbp; }
+  else if (bbp != null && bbp <= 35) { score += 12; parts.bbTight = bbp; }
+
+  const ap = atrPctPercentile(quotes);
+  if (ap && ap.pctile != null && ap.pctile <= 25) { score += 15; parts.atrPctile = ap.pctile; }
+
+  if (isSqueezed(quotes) === true) { score += 15; parts.ttmSqueeze = true; }
+
+  const dry = volDryUp(quotes);
+  if (dry != null && dry < 0.8) { score += 15; parts.volDryUp = dry; }
+  else if (dry != null && dry < 1.0) { score += 7; parts.volDryUp = dry; }
+
+  const cs = contractionSequence(quotes);
+  if (cs && cs.contracting) { score += 15; parts.vcp = cs.ranges; }
+
+  const udv = upDownVolRatio(quotes);
+  if (udv != null && udv > 1.3) { score += 15; parts.accum = udv; }
+  else if (udv != null && udv > 1.0) { score += 7; parts.accum = udv; }
+
+  return { score: Math.min(100, score), parts };
+}
+
+function pivotLevel(quotes, lookback = 60) {
+  if (!quotes || quotes.length < lookback + 1) return null;
+  const prior = quotes.slice(-(lookback + 1), -1);
+  return Math.max(...prior.map(q => q.high));
+}
+
+function classifySetup(quotes, opts = {}) {
+  const maxStopPct = opts.maxStopPct ?? 0.08;
+  if (!quotes || quotes.length < 70) return { state: 'NO_DATA' };
+
+  const today = quotes[quotes.length - 1];
+  const price = today.close;
+  const atr = getATR(quotes, 14);
+  const vols = quotes.map(q => q.volume).filter(v => v != null);
+  const avgVol50 = getSMA(vols, 50);
+  const closes = quotes.map(q => q.close);
+  const ma20 = getSMA(closes, 20);
+  const ma50 = getSMA(closes, 50);
+  const pivot = pivotLevel(quotes);
+  if (!pivot || !atr || !avgVol50) return { state: 'NO_DATA' };
+
+  const comp = compressionScore(quotes.slice(0, -1));
+  const cr = closingRange(today);
+  const volThrust = today.volume != null && today.volume >= 1.4 * avgVol50;
+  const distPastPivot = (price - pivot) / pivot;
+
+  const swingLow = Math.min(...quotes.slice(-10).map(q => q.low));
+  let stop = Math.max(swingLow, price - 2 * atr);
+  stop = Math.min(stop, price - atr);
+  stop = Math.max(stop, price * (1 - maxStopPct));
+  if (stop >= price) stop = price - 1.5 * atr;
+
+  const baseLow = Math.min(...quotes.slice(-45).map(q => q.low));
+  const baseDepth = pivot - baseLow;
+  const t1 = +Math.max(pivot + baseDepth * 0.5, price + 2 * (price - stop)).toFixed(2);
+  const t2 = +(pivot + baseDepth).toFixed(2);
+  const rr = +((t1 - price) / (price - stop)).toFixed(2);
+
+  const base = { pivot: +pivot.toFixed(2), entry: +price.toFixed(2), stop: +stop.toFixed(2), t1, t2, rr, atr: +atr.toFixed(2), compression: comp };
+
+  if (distPastPivot > 0.05 || price > pivot + 1.5 * atr) {
+    return { state: 'EXTENDED', score: 10, ...base,
+      detail: `+${(distPastPivot * 100).toFixed(1)}% past pivot — chase risk. Alert on retest of ${pivot.toFixed(2)}.` };
+  }
+
+  if (price > pivot && distPastPivot <= 0.03 && volThrust && cr != null && cr >= 0.6 && comp.score >= 40) {
+    return { state: 'TRIGGERED', score: 90 + Math.round(comp.score / 10), ...base,
+      detail: `Pivot break +${(distPastPivot * 100).toFixed(1)}% on ${(today.volume / avgVol50).toFixed(1)}x vol, close-range ${cr}. Coil score ${comp.score}.` };
+  }
+
+  const nearPivot = (pivot - price) / pivot;
+  if (price <= pivot && nearPivot <= 0.08 && comp.score >= 55 && ma50 != null && price > ma50 * 0.97) {
+    return { state: 'COILING', score: 50 + Math.round(comp.score / 4), ...base,
+      detail: `Coil ${comp.score}/100, ${(nearPivot * 100).toFixed(1)}% below pivot ${pivot.toFixed(2)}. ALERT: break of pivot on ≥1.4x vol.` };
+  }
+
+  const lo60 = Math.min(...quotes.slice(-60).map(q => q.low));
+  const offLow = (price - lo60) / lo60;
+  const reclaim20 = ma20 != null && price > ma20 && quotes[quotes.length - 2].close <= ma20;
+  if (offLow > 0.05 && offLow < 0.20 && reclaim20 && volThrust) {
+    return { state: 'REVERSAL', score: 55, ...base,
+      detail: `Reclaimed 20d MA on volume, +${(offLow * 100).toFixed(1)}% off 60d low.` };
+  }
+
+  return { state: 'NONE', score: comp.score >= 45 ? 20 : 0, ...base,
+    detail: comp.score >= 45 ? `Compressing (${comp.score}) but pivot ${pivot.toFixed(2)} is ${(nearPivot * 100).toFixed(1)}% away.` : 'No setup.' };
+}
+
+module.exports = { classifySetup, compressionScore, pivotLevel };
+
