@@ -5908,6 +5908,9 @@ Please populate the following core comparison table (you MUST use the exact comp
 | Return on Invested Capital (ROIC) | | ${pPlaceholders} | |
 | Weighted Average Cost of Capital (WACC) | | ${pPlaceholders} | |
 | Economic Value Spread (ROIC - WACC) | | ${pPlaceholders} | |
+| YoY Share Dilution Rate | | ${pPlaceholders} | |
+| Capex % of Operating Cash Flow | | ${pPlaceholders} | |
+| Near-Term Dilution Risk Category | | ${pPlaceholders} | |
 
 ### B. Sector-Adaptive Valuation & Economic Narrative
 - **Sector-Specific Valuation Lens Utilized:** [Detail why plain-vanilla P/E comparisons fail or succeed here, and explain which sector custom metric is prioritized—e.g. PEG normalization for high-growth Semis/Tech, EV/EBITDA rather than PE for Asset-heavy/debt-leveraged sectors, Price/Book for Financials, Capitalized R&D adjustments for Healthcare/Biotech, or Price/Sales for high-growth SaaS. Explain how this selected lens feeds directly into your fair value estimates below.]
@@ -5929,6 +5932,12 @@ Analyze the ROIC, WACC, and Value Spread from Part A. You MUST align your analys
 - **ROIC (Return on Invested Capital):** [Explain what the company's ROIC indicates about its capital allocation efficiency. Compare this directly to its peers.]
 - **WACC (Weighted Average Cost of Capital):** [Evaluate the hurdle rate for this company. Detail how its cost of debt and capital structure affect this cost.]
 - **Value Spread Analysis (ROIC - WACC):** [Highlight whether the spread is positive (creating true shareholder value) or negative (destroying economic value). State what this spread represents about the underlying economic profitability and competitive moat of the enterprise.]
+
+### E. Near-Term Share Dilution Risk & Capital Allocation Assessment
+Evaluate the potential risk of near-term share count dilution from stock issuance, employee stock-based compensation (SBC), and negative cash flows caused by heavy Capital Expenditures (Capex):
+- **Dilution Risk Veridct (HIGH / MEDIUM / LOW):** [Assign an explicit dilution risk category for ${t} and each peer ticker based on ground-truth share dilution growth and capex to operational cash flow metrics.]
+- **Capex intensity and FCF depletion:** [Analyze capital allocation strain. E.g., if a company runs heavy capex (e.g. Meta and Google high GPU/Capex scaling requirements) and lacks FCF cover to initiate offsetting share buybacks, their employee SBC plans create un-hedged shares dilution. Explain how Capex intensity relative to Operating Cash Flow creates or avoids dilution triggers.]
+- **Historical share count trajectory:** [Evaluate the YoY diluted average shares outstanding trend from the ground truth table. Does the company's share count expand or shrink? Is management actively destroying shareholder value via dilution or creating value via share buybacks?]
 
 **Operational Execution & Peer Verdict:** Is **${t}** a sector **leader**, **laggard**, or **in-line** with peers regarding operational execution? Detail where **${t}** has a clear advantage or disadvantage vs. each peer under this sector-adaptive lens.
 
@@ -6403,6 +6412,11 @@ Format output as:
         { label: "ROIC (yfinance computed)", key: "roic", percent: true },
         { label: "WACC (yfinance computed)", key: "wacc", percent: true },
         { label: "Value Spread (ROIC - WACC)", key: "valSpread", percent: true },
+        { label: "Shares Outstanding", key: "sharesOutstanding" },
+        { label: "YoY Share Dilution Rate", key: "dilutionYoY", percent: true },
+        { label: "Capex % of Operating Cash Flow", key: "capexOcf", percent: true },
+        { label: "FCF Yield %", key: "fcfYield", percent: true },
+        { label: "Near-Term Dilution Risk Category", key: "dilutionRisk" },
         { label: "Analyst Target", key: "targetMeanPrice" },
       ];
       
@@ -6472,6 +6486,11 @@ Format output as:
         { label: "ROIC (yfinance computed)", key: "roic", percent: true },
         { label: "WACC (yfinance computed)", key: "wacc", percent: true },
         { label: "Value Spread (ROIC - WACC)", key: "valSpread", percent: true },
+        { label: "Shares Outstanding", key: "sharesOutstanding" },
+        { label: "YoY Share Dilution Rate", key: "dilutionYoY", percent: true },
+        { label: "Capex % of Operating Cash Flow", key: "capexOcf", percent: true },
+        { label: "FCF Yield %", key: "fcfYield", percent: true },
+        { label: "Near-Term Dilution Risk Category", key: "dilutionRisk" },
         { label: "Analyst Target", key: "targetMeanPrice" },
       ];
       
@@ -8910,6 +8929,7 @@ ${stationInput}
                                               <th className="p-2 text-[9px]">TECHNICAL</th>
                                               <th className="p-2 text-[9px]">RISK/REWARD</th>
                                               <th className="p-2 text-[9px]">UPSIDE (FV)</th>
+                                              <th className="p-2 text-[9px] text-pink-300">DILUTION RISK</th>
                                               <th className="p-2 text-[9px]">STOP</th>
                                               <th className="p-2 text-[9px]">TARGET</th>
                                               <th className="p-2 text-[9px]">MA STACK</th>
@@ -8942,6 +8962,7 @@ ${stationInput}
                                                 <td className="p-2" style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}}>{r.g3}</td>
                                                 <td className="p-2" style={{color: r.g4?.includes('EXCELLENT') ? '#00ff44' : '#ef4444'}}>{r.g4} ({r.rr || 'N/A'})</td>
                                                 <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
+                                                <td className="p-2 font-bold" style={{color: (r.dilutionRisk === "HIGH" || r.dilution_risk === "HIGH") ? "#f43f5e" : (r.dilutionRisk === "MEDIUM" || r.dilution_risk === "MEDIUM") ? "#fbbf24" : "#10b981"}}>{r.dilutionRisk || r.dilution_risk || "LOW"}</td>
                                                 <td className="p-2 text-red-400">${r.algoExit || r.stop || r.n_exit}</td>
                                                 <td className="p-2 text-blue-400">${r.algoTP1 || r.target || r.n_tp1}</td>
                                                 <td className="p-2" style={{color: r.ma_stack === "BULLISH" ? "#00ff88" : "#c9d1d9"}}>{r.ma_stack}</td>
@@ -8964,6 +8985,7 @@ ${stationInput}
                                               <th className="p-2">BOX SPREAD</th>
                                               <th className="p-2 text-sky-300">REV GROWTH</th>
                                               <th className="p-2 text-emerald-400">UPSIDE (FV)</th>
+                                              <th className="p-2 text-pink-300">DILUTION RISK</th>
                                               <th className="p-2">ANALYST TARGET</th>
                                               <th className="p-2">DYNAMIC R:R</th>
                                               <th className="p-2">NOISE SIGNALS</th>
@@ -8995,6 +9017,7 @@ ${stationInput}
                                                 <td className="p-2 text-gray-400">${r.box_spread?.toFixed(2)} (${r.box_low?.toFixed(2)} - ${r.box_high?.toFixed(2)})</td>
                                                 <td className="p-2 text-sky-400 font-bold">{r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct}%</td>
                                                 <td className="p-2 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
+                                                <td className="p-2 font-bold" style={{color: (r.dilutionRisk === "HIGH" || r.dilution_risk === "HIGH") ? "#f43f5e" : (r.dilutionRisk === "MEDIUM" || r.dilution_risk === "MEDIUM") ? "#fbbf24" : "#10b981"}}>{r.dilutionRisk || r.dilution_risk || "LOW"}</td>
                                                 <td className="p-2 text-indigo-400">${r.analyst_target?.toFixed(2)}</td>
                                                 <td className="p-2 font-bold" style={{color: parseFloat(r.dynamic_rr) >= 2.0 ? "#00ff66" : "#fbbf24"}}>{r.dynamic_rr || "1.5x"}</td>
                                                 <td className="p-2 text-gray-300 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.noise_signals}>{r.noise_signals}</td>
@@ -10193,6 +10216,7 @@ ${stationInput}
                                   <th className="p-2.5">Setup</th>
                                   <th className="p-2.5">Price</th>
                                   <th className="p-2.5 text-emerald-400">Upside</th>
+                                  <th className="p-2.5 text-pink-300">Dilution Risk</th>
                                   <th className="p-2.5 text-sky-400">Rev Gr</th>
                                   <th className="p-2.5">Dynamic R:R</th>
                                   <th className="p-2.5 text-blue-400">Entry</th>
@@ -10230,6 +10254,9 @@ ${stationInput}
                                     </td>
                                     <td className="p-2.5 text-emerald-400 font-bold text-sm">
                                       {r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%
+                                    </td>
+                                    <td className="p-2.5 font-bold text-sm" style={{color: (r.dilutionRisk === "HIGH" || r.dilution_risk === "HIGH") ? "#f43f5e" : (r.dilutionRisk === "MEDIUM" || r.dilution_risk === "MEDIUM") ? "#fbbf24" : "#10b981"}}>
+                                      {r.dilutionRisk || r.dilution_risk || "LOW"}
                                     </td>
                                     <td className="p-2.5 text-sky-400 font-bold text-sm">
                                       {r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct}%
@@ -12379,6 +12406,7 @@ ${stationInput}
                               <th className="p-3">BOX SPREAD</th>
                               <th className="p-3 text-sky-300">REV GROWTH</th>
                               <th className="p-3 text-emerald-400">UPSIDE (FV)</th>
+                              <th className="p-3 text-pink-300">DILUTION RISK</th>
                               <th className="p-3">ANALYST TARGET</th>
                               <th className="p-3">DYNAMIC R:R</th>
                               <th className="p-3">NOISE SIGNALS</th>
@@ -12410,6 +12438,9 @@ ${stationInput}
                                 <td className="p-3 text-gray-400">${r.box_spread?.toFixed(2)} (${r.box_low?.toFixed(2)} - ${r.box_high?.toFixed(2)})</td>
                                 <td className="p-3 text-sky-400 font-bold">{r.revenue_growth_pct > 0 ? `+${r.revenue_growth_pct}` : r.revenue_growth_pct}%</td>
                                 <td className="p-3 text-emerald-400 font-bold">{r.upside_pct > 0 ? `+${r.upside_pct}` : r.upside_pct}%</td>
+                                <td className="p-3 font-bold" style={{color: (r.dilutionRisk === "HIGH" || r.dilution_risk === "HIGH") ? "#f43f5e" : (r.dilutionRisk === "MEDIUM" || r.dilution_risk === "MEDIUM") ? "#fbbf24" : "#10b981"}}>
+                                  {r.dilutionRisk || r.dilution_risk || "LOW"}
+                                </td>
                                 <td className="p-3 text-indigo-400">${r.analyst_target?.toFixed(2)}</td>
                                 <td className="p-3 font-bold" style={{color: parseFloat(r.dynamic_rr) >= 2.0 ? "#00ff66" : "#fbbf24"}}>{r.dynamic_rr || "1.5x"}</td>
                                 <td className="p-3 text-gray-300 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.noise_signals}>{r.noise_signals}</td>

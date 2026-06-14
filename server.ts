@@ -1699,7 +1699,7 @@ async function startServer() {
       
       const [ch, qs] = await Promise.all([
         (yahooFinance as any).chart(ticker, { period1: d1, interval: '1d' }).catch(() => null),
-        yahooFinance.quoteSummary(ticker, { modules: ['financialData', 'recommendationTrend', 'defaultKeyStatistics', 'insiderTransactions'] }, { validateResult: false }).catch(() => null)
+        yahooFinance.quoteSummary(ticker, { modules: ['financialData', 'recommendationTrend', 'defaultKeyStatistics', 'insiderTransactions', 'incomeStatementHistory'] }, { validateResult: false }).catch(() => null)
       ]);
 
       if (!ch || !ch.quotes || ch.quotes.length < 60) {
@@ -1865,6 +1865,54 @@ async function startServer() {
       else if (hybrid_score >= 45) hybrid_signal = "HYBRID WATCH";
       else hybrid_signal = "HYBRID AVOID";
 
+      let dilutionYoY = 0;
+      let capexOcf = 0;
+      let fcfYield = 0;
+      let dilutionRisk = "LOW";
+
+      try {
+        const hIS = qs && qs.incomeStatementHistory && qs.incomeStatementHistory.incomeStatementHistory ? qs.incomeStatementHistory.incomeStatementHistory : [];
+        if (hIS.length >= 2) {
+          const sharesLatest = hIS[0].weightedAverageShares?.raw || hIS[0].weightedAverageShares || hIS[0].weightedAverageSharesDiluted?.raw || hIS[0].weightedAverageSharesDiluted || hIS[0].dilutedAverageShares || hIS[0].basicAverageShares;
+          const sharesPrior = hIS[1].weightedAverageShares?.raw || hIS[1].weightedAverageShares || hIS[1].weightedAverageSharesDiluted?.raw || hIS[1].weightedAverageSharesDiluted || hIS[1].dilutedAverageShares || hIS[1].basicAverageShares;
+          if (sharesLatest && sharesPrior && typeof sharesLatest === 'number' && typeof sharesPrior === 'number' && sharesPrior > 0) {
+            dilutionYoY = (sharesLatest / sharesPrior) - 1;
+          }
+        }
+
+        if (qs && qs.financialData) {
+          const fd = qs.financialData;
+          const opCashflow = fd.operatingCashflow;
+          const freeCashflow = fd.freeCashflow;
+          const mcap = (qs.defaultKeyStatistics?.sharesOutstanding || 1e9) * price;
+
+          if (opCashflow && typeof opCashflow === 'number' && freeCashflow && typeof freeCashflow === 'number' && opCashflow !== 0) {
+            const capex = opCashflow - freeCashflow;
+            capexOcf = capex / opCashflow;
+          }
+
+          if (freeCashflow && typeof freeCashflow === 'number' && mcap > 0) {
+            fcfYield = freeCashflow / mcap;
+          }
+        }
+
+        const dYoY = dilutionYoY * 100;
+        const cOcf = capexOcf * 100;
+        const fYield = fcfYield * 100;
+
+        if (dYoY > 1.5) {
+          dilutionRisk = "HIGH";
+        } else if (dYoY > 0.3) {
+          dilutionRisk = "MEDIUM";
+        } else if (cOcf > 75 && fYield < 2) {
+          dilutionRisk = "MEDIUM";
+        } else {
+          dilutionRisk = "LOW";
+        }
+      } catch (dilutionCalcErr) {
+        console.warn(`[computeSuperSignalV5_3] Dilution calculation failed for ${ticker}:`, dilutionCalcErr);
+      }
+
       return {
         ticker,
         price,
@@ -1908,6 +1956,12 @@ async function startServer() {
         g3: tech.trendStatus,
         g4: risk.g4,
         gate_pass_raw: "G1:" + (tech.isAccum ? "P" : "W") + " G2:" + (analystData && analystData.analystOk ? "P" : "W") + " G3:" + (tech.trendStatus === 'UPTREND' ? "P" : "W") + " G4:" + (risk.g4 === 'EXCELLENT' ? "P" : "W"),
+
+        dilutionRisk,
+        dilution_risk: dilutionRisk,
+        dilutionYoY,
+        capexOcf,
+        fcfYield,
 
         // New insider & macro indicators
         insider_score,
@@ -2306,7 +2360,7 @@ async function startServer() {
       for (const sym of symbolList) {
         try {
           // Fetch summary and statistics modules natively
-          const modules = ['summaryDetail', 'financialData', 'defaultKeyStatistics', 'price', 'summaryProfile'];
+          const modules = ['summaryDetail', 'financialData', 'defaultKeyStatistics', 'price', 'summaryProfile', 'incomeStatementHistory'];
           const summary = await yahooFinance.quoteSummary(sym, { modules }, { validateResult: false }).catch((e) => {
             console.warn(`[Node Harvest Engine] Details failed for ${sym}: ${e.message}`);
             return null;
@@ -2431,6 +2485,53 @@ async function startServer() {
             console.warn(`[Node Harvest Engine] ROIC/WACC computation error for ${sym}:`, calcErr);
           }
 
+          // Compute Dilution risk, Capex consuming capacity, FCF yields and stock issuance indicators
+          let computedDilutionYoY: any = "N/A";
+          let computedCapexOcf: any = "N/A";
+          let computedFcfYield: any = "N/A";
+          let computedDilutionRisk: string = "LOW";
+          let computedSharesOutstanding: any = kStats.sharesOutstanding ?? sDetail.sharesOutstanding ?? "N/A";
+          
+          try {
+            const hIS = summary?.incomeStatementHistory?.incomeStatementHistory || [];
+            if (hIS.length >= 2) {
+              const sharesLatest = hIS[0].weightedAverageShares?.raw || hIS[0].weightedAverageShares || hIS[0].weightedAverageSharesDiluted?.raw || hIS[0].weightedAverageSharesDiluted || hIS[0].dilutedAverageShares || hIS[0].basicAverageShares;
+              const sharesPrior = hIS[1].weightedAverageShares?.raw || hIS[1].weightedAverageShares || hIS[1].weightedAverageSharesDiluted?.raw || hIS[1].weightedAverageSharesDiluted || hIS[1].dilutedAverageShares || hIS[1].basicAverageShares;
+              if (sharesLatest && sharesPrior && typeof sharesLatest === 'number' && typeof sharesPrior === 'number' && sharesPrior > 0) {
+                computedDilutionYoY = (sharesLatest / sharesPrior) - 1;
+              }
+            }
+            
+            const opCashflow = fData.operatingCashflow;
+            const freeCashflow = fData.freeCashflow;
+            const mcap = pData.marketCap ?? sDetail.marketCap;
+            
+            if (opCashflow && typeof opCashflow === 'number' && freeCashflow && typeof freeCashflow === 'number' && opCashflow !== 0) {
+              const capex = opCashflow - freeCashflow;
+              computedCapexOcf = capex / opCashflow;
+            }
+            
+            if (freeCashflow && typeof freeCashflow === 'number' && mcap && typeof mcap === 'number' && mcap > 0) {
+              computedFcfYield = freeCashflow / mcap;
+            }
+            
+            const dYoY = typeof computedDilutionYoY === 'number' ? computedDilutionYoY * 100 : 0;
+            const cOcf = typeof computedCapexOcf === 'number' ? computedCapexOcf * 100 : 0;
+            const fYield = typeof computedFcfYield === 'number' ? computedFcfYield * 100 : 0;
+            
+            if (dYoY > 1.5) {
+              computedDilutionRisk = "HIGH";
+            } else if (dYoY > 0.3) {
+              computedDilutionRisk = "MEDIUM";
+            } else if (cOcf > 75 && fYield < 2) {
+              computedDilutionRisk = "MEDIUM";
+            } else {
+              computedDilutionRisk = "LOW";
+            }
+          } catch (dilutionCalcErr) {
+            console.warn(`[Node Harvest Engine] Dilution computation error for ${sym}:`, dilutionCalcErr);
+          }
+
           results[sym] = {
             price: getVal(fData.currentPrice ?? pData.regularMarketPrice ?? sDetail.regularMarketPrice),
             marketCap: getVal(pData.marketCap ?? sDetail.marketCap),
@@ -2452,6 +2553,11 @@ async function startServer() {
             roic: computedROIC,
             wacc: computedWACC,
             valSpread: computedSpread,
+            sharesOutstanding: computedSharesOutstanding,
+            dilutionYoY: computedDilutionYoY,
+            capexOcf: computedCapexOcf,
+            fcfYield: computedFcfYield,
+            dilutionRisk: computedDilutionRisk,
             sector: getVal(sProfile.sector),
             description: getVal(sProfile.longBusinessSummary),
             previousClose: getVal(sDetail.previousClose),
