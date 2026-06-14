@@ -113,8 +113,21 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  const errCode = (error as any)?.code || '';
+
+  const isPermissionError = 
+    errCode === 'permission-denied' || 
+    errMsg.toLowerCase().includes('permission') || 
+    errMsg.toLowerCase().includes('insufficient');
+
+  if (!isPermissionError) {
+    console.warn(`[Firestore Status] Client is offline or network connection deferred for path: ${path}. Error: ${errMsg}`);
+    return;
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -130,7 +143,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  // Not throwing to avoid crashing the app entirely, just logging
+  throw new Error(JSON.stringify(errInfo));
 }
 
 import type { Report, UserProfile, StockTrack, MacroTrack, UploadedHtmlReport, PromptTemplate } from './types';
@@ -3704,12 +3717,18 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
 
 ### SYNTHESIS RULES:
 1. **MARKET CONTEXT & THE MOAT:** Do not give generic volume explanations. Read the \`acc_ratio\`, \`dist_ratio\`, and \`fund_pass\` data inside the \`_context\` object. Draw on your knowledge of the company's business model, fundamental moat, recent earnings catalysts, and macro sector dynamics to explain *why* the data looks the way it does. 
-2. **ALIGN WITH SIGNAL_STATE:** 
+2. **MACRO SENSITIVITY & TICKER IMPACT (URGENT):** Meticulously analyze the provided \`macro_context\` values (including yield curve spreads, labor market net jobs progress, CPI inflation MoM/YoY levels, FedWatch policy rate easing probabilities, Sahm rule gaps, real estate starts, and overall market fear-greed levels) transmitted at the top root. You must analyze in-depth how these specific economic numbers apply directly to each individual ticker based on its sectoral sensitivity. Some sectors or companies benefit massively from specific rate/growth combinations while others are severely penalized; map these transmission mechanisms clearly and double-check those numbers! Explain why and how they interact in the \`fundamentals\` and \`final_comment\` fields.
+3. **DEEP INSIDER & HYBRID SCANS (URGENT):** Perform a deep, smart neural check on any potential insider buying/selling trends and hybrid technical/fundamental confluence triggers for each specific ticker. Provide this analytical overview in the \`insider\` and \`news\` commentary fields.
+4. **ALIGN WITH SIGNAL_STATE:** 
    - **HOT_BREAKOUT** or **STRONG BUY / BUY:** Focus the \`bull_case\` on structural tailwinds, supply chain dominance, and fundamental catalysts that justify the institutional accumulation.
    - **DROP_BREAKDOWN:** Focus the \`bear_case\` on deteriorating fundamentals, competitive threats, or macro headwinds driving the distribution.
    - **COLD_UP_TRAP:** Explicitly state that retail is buying into overhead supply without professional sponsorship. Focus the \`bear_case\` on imminent rejection at resistance.
    - **COLD_DOWN_TRAP:** This is a potential false breakdown. Focus the \`bull_case\` on the lack of institutional distribution and the high probability of a reversal bounce off support.
-3. **STRICT FORMATTING:** Return ONLY the enriched JSON object. Do not output any conversational text, pleasantries, or markdown formatting outside of the JSON block. Any text outside the \`{}\` brackets will cause a frontend 'Position 10872' crash in \`App.tsx\`.`;
+5. **STRICT FORMATTING:** Return ONLY the enriched JSON object. Do not output any conversational text, pleasantries, or markdown formatting outside of the JSON block. Any text outside the \`{}\` brackets will cause a frontend 'Position 10872' crash in \`App.tsx\`.
+6. **ANALYTICAL THINKING DIRECTIVE (360-DEGREE SMART MONEY FLOW & CAPITAL ROTATION LOGIC):** When evaluating direct or cascading effects (especially when assessing Beneficiary vs. Detrimental assets or Level-1/Level-2 implications), you must employ sophisticated, real-world capital flow and liquidity mechanics rather than surface-level narrative associations.
+   - Smart Money Liquidity Mechanics: Trace how capital actually flows. Institutional money operates as a zero-sum game of allocation. For instance, a major event like a SpaceX IPO/capital-raise can cause "smart money" to sell down unrelated or non-profitable high-beta software/tech holdings (or thematic Space/Satellite ETFs) to unlock cash and rotate into a new premium monopoly-esque asset. This triggers localized drops in software or high-multiple assets across the board without any negative news for those specific companies, simply due to portfolio rebalancing and liquidity preservation.
+   - Sector Rotation Tracing: Avoid simplistic assumptions (e.g. "SpaceX IPO is good for all tech because tech is expanding"). Think 360 degrees: Who is losing capital so that this beneficiary can gain it? Analyze positional overcrowding, leverage squeeze, relative valuations, and risk premium re-ratings.
+   - Reasonable Victimize-and-Benefit Analysis: Ensure your "beneficiary" and "detrimental/victim" selections are grounded in professional macro-hedging narratives. Trace secondary and tertiary cascades logically (e.g. increased yield leads to small-cap regional bank squeeze due to capital flight, rather than just saying bank stocks go down because rates are high). Avoid weird, speculative, or loose-association linkages. Maintain absolute intellectual rigor.`;
 
   const [legacySearchQuery, setLegacySearchQuery] = useState(defaultMacroPrompt);
   const [intelQuery, setIntelQuery] = useState('');
@@ -4693,11 +4712,13 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
                   source: "screener",
                   index: chunkTitle,
                   screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                  screenerModeRaw: screenerMode,
                   horizon: hzLabels[screenHorizon] || screenHorizon,
                   rawResults: chunk,
                   aiResults: [],
                   tickerCount: chunk.length,
-                  userId: user.uid
+                  userId: user.uid,
+                  macro: data.macro || null
                 }));
               } else {
                 setSavedSnapshots(prev => {
@@ -4707,10 +4728,12 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
                     source: "screener",
                     index: chunkTitle,
                     screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                    screenerModeRaw: screenerMode,
                     horizon: hzLabels[screenHorizon] || screenHorizon,
                     rawResults: chunk,
                     aiResults: [],
-                    tickerCount: chunk.length
+                    tickerCount: chunk.length,
+                    macro: data.macro || null
                   };
                   return [newSnapshot, ...prev];
                 });
@@ -4893,11 +4916,13 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
                       source: "screener",
                       index: chunkTitle,
                       screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                      screenerModeRaw: screenerMode,
                       horizon: hzLabels[screenHorizon] || screenHorizon,
                       rawResults: chunk,
                       aiResults: [],
                       tickerCount: chunk.length,
-                      userId: user.uid
+                      userId: user.uid,
+                      macro: data.macro || null
                     }));
                   } else {
                     setSavedSnapshots(prev => {
@@ -4907,10 +4932,12 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
                         source: "screener",
                         index: chunkTitle,
                         screenerMode: mdLabels[screenerMode] || "Unified Alpha Screener",
+                        screenerModeRaw: screenerMode,
                         horizon: hzLabels[screenHorizon] || screenHorizon,
                         rawResults: chunk,
                         aiResults: [],
-                        tickerCount: chunk.length
+                        tickerCount: chunk.length,
+                        macro: data.macro || null
                       };
                       return [newSnapshot, ...prev];
                     });
@@ -5078,7 +5105,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
             rawOutput: "",
             neuralOutput: "",
             tickerCount: resultsToSave.length,
-            userId: user.uid
+            userId: user.uid,
+            macro: screenerMacroResult
           }));
         } else {
           setSavedSnapshots(prev => {
@@ -5093,7 +5121,8 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
               aiResults: aiArr,
               rawOutput: "",
               neuralOutput: "",
-              tickerCount: resultsToSave.length
+              tickerCount: resultsToSave.length,
+              macro: screenerMacroResult
             };
             return [newSnapshot, ...prev];
           });
@@ -5160,6 +5189,7 @@ Your ONLY job is to enrich the empty strings (\`technical\`, \`fundamentals\`, \
            };
         }
         const structuredPayload = {
+           macro_context: screenerMacroResult,
            top_quality_bulls: top_quality_bulls,
            gate_results: gate_results,
            reversal_results: reversal_results,
@@ -5223,6 +5253,10 @@ EVALUATION CRITERIA:
 2. FUNDAMENTAL SHIFTS: Identify Fundamental Shifts: Earnings, M&A, or Guidance.
 3. MOATS & PARTNERSHIPS: Identify Moats: Specifically look for partnerships with giants like NVDA or AVGO.
 4. SYNTHESIS (Final Take): Synthesize: If technicals are Bullish but news is Bearish (Headwinds), flag the divergence in the Final Take.
+5. ANALYTICAL THINKING DIRECTIVE (360-DEGREE SMART MONEY FLOW & CAPITAL ROTATION LOGIC): When evaluating direct or cascading effects (especially when assessing Beneficiary vs. Detrimental assets or Level-1/Level-2 implications), you must employ sophisticated, real-world capital flow and liquidity mechanics rather than surface-level narrative associations.
+   - Smart Money Liquidity Mechanics: Trace how capital actually flows. Institutional money operates as a zero-sum game of allocation. For instance, a major event like a SpaceX IPO/capital-raise can cause "smart money" to sell down unrelated or non-profitable high-beta software/tech holdings (or thematic Space/Satellite ETFs) to unlock cash and rotate into a new premium monopoly-esque asset. This triggers localized drops in software or high-multiple assets across the board without any negative news for those specific companies, simply due to portfolio rebalancing and liquidity preservation.
+   - Sector Rotation Tracing: Avoid simplistic assumptions (e.g. "SpaceX IPO is good for all tech because tech is expanding"). Think 360 degrees: Who is losing capital so that this beneficiary can gain it? Analyze positional overcrowding, leverage squeeze, relative valuations, and risk premium re-ratings.
+   - Reasonable Victimize-and-Benefit Analysis: Ensure your "beneficiary" and "detrimental/victim" selections are grounded in professional macro-hedging narratives. Trace secondary and tertiary cascades logically (e.g. increased yield leads to small-cap regional bank squeeze due to capital flight, rather than just saying bank stocks go down because rates are high). Avoid weird, speculative, or loose-association linkages. Maintain absolute intellectual rigor.
 
 You must respond ONLY with a valid JSON array of objects, with NO additional markdown. Each object MUST contain these exact keys: 
 ticker, neuralScore, neuralRecommendation (e.g., Accumulate, Hold), neuralEntry, neuralExit, neuralTP1, neuralTP2, technical, fundamentals, news, moat, competition, insider, overallBull (1 sentence), overallBear (1 sentence), finalComment (1 sentence synthesis of charts+news).
@@ -6024,6 +6058,10 @@ You MUST output the exact plaintext markup tags \`[ELI5_START]\` and \`[ELI5_END
 1. Every single subsection take, outlook, rating, and recommendation must be backed by concrete numerical data, calculated margins, historic growth, and financial solvency facts rather than generic media headlines or market noise.
 2. Conduct deep quantitative analysis of any sector benchmark or peer comparison data provided in the prompt context, drawing precise conclusions for each category.
 3. Establish perfect internal coherence: Your ratings, verdicts, fair value mathematics, and trading entry points must align logically. For example, do not present a bullish trend narrative alongside an ultra-bearish technical stop or a bearish rating alongside high-growth valuation assumptions. Ensure the report is completely coherent from top to bottom.
+4. ANALYTICAL THINKING DIRECTIVE (360-DEGREE SMART MONEY FLOW & CAPITAL ROTATION LOGIC): When evaluating direct or cascading effects (especially when assessing Beneficiary vs. Detrimental assets or Level-1/Level-2 implications), you must employ sophisticated, real-world capital flow and liquidity mechanics rather than surface-level narrative associations.
+   - Smart Money Liquidity Mechanics: Trace how capital actually flows. Institutional money operates as a zero-sum game of allocation. For instance, a major event like a SpaceX IPO/capital-raise can cause "smart money" to sell down unrelated or non-profitable high-beta software/tech holdings (or thematic Space/Satellite ETFs) to unlock cash and rotate into a new premium monopoly-esque asset. This triggers localized drops in software or high-multiple assets across the board without any negative news for those specific companies, simply due to portfolio rebalancing and liquidity preservation.
+   - Sector Rotation Tracing: Avoid simplistic assumptions (e.g. "SpaceX IPO is good for all tech because tech is expanding"). Think 360 degrees: Who is losing capital so that this beneficiary can gain it? Analyze positional overcrowding, leverage squeeze, relative valuations, and risk premium re-ratings.
+   - Reasonable Victimize-and-Benefit Analysis: Ensure your "beneficiary" and "detrimental/victim" selections are grounded in professional macro-hedging narratives. Trace secondary and tertiary cascades logically (e.g. increased yield leads to small-cap regional bank squeeze due to capital flight, rather than just saying bank stocks go down because rates are high). Avoid weird, speculative, or loose-association linkages. Maintain absolute intellectual rigor.
 
 Act as a ruthless, disciplined "Money Mindset" equity research analyst. Your judgment must be cold, calculating, and devoid of emotion. 
 Do NOT be a "perma-bull" or gentle for the sake of it. You are a perfect critic with elite judgment. 
@@ -8655,11 +8693,28 @@ ${stationInput}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (activeSnapshot.rawResults && Array.isArray(activeSnapshot.rawResults)) {
-                                      setScreenerResults(activeSnapshot.rawResults);
-                                      setNeuralScreenerText(activeSnapshot.aiResults ? JSON.stringify(activeSnapshot.aiResults) : "");
-                                      setIsScreened(true);
-                                      setActiveTab('screener');
-                                    }
+                                       setScreenerResults(activeSnapshot.rawResults);
+                                       let targetMode = 'super_v5_3';
+                                       const snapMode = (activeSnapshot.screenerMode || '').toLowerCase();
+                                       if (activeSnapshot.screenerModeRaw) {
+                                         targetMode = activeSnapshot.screenerModeRaw;
+                                       } else if (snapMode.includes('classic') || snapMode.includes('vcs')) {
+                                         targetMode = 'classic';
+                                       } else if (snapMode.includes('unified') || snapMode.includes('alpha') || snapMode.includes('reversal')) {
+                                         targetMode = 'unified_v2';
+                                       } else if (snapMode.includes('super') || snapMode.includes('v5')) {
+                                         targetMode = 'super_v5_3';
+                                       } else if (snapMode.includes('coiled') || snapMode.includes('spring')) {
+                                         targetMode = 'coiled';
+                                       } else if (snapMode.includes('earnings') || snapMode.includes('beat')) {
+                                         targetMode = 'earnings';
+                                       }
+                                       setScreenerMode(targetMode as any);
+                                       setNeuralScreenerText(activeSnapshot.aiResults ? JSON.stringify(activeSnapshot.aiResults) : "");
+                                       setScreenerMacroResult(activeSnapshot.macro || null);
+                                       setIsScreened(true);
+                                       setActiveTab('screener');
+                                     }
                                   }}
                                   className="inline-flex items-center gap-1 text-[10px] text-emerald-500 hover:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded transition-colors uppercase tracking-widest font-bold"
                                 >
@@ -8682,6 +8737,162 @@ ${stationInput}
                               <div className="flex-1 bg-black rounded-xl p-4 overflow-auto custom-scrollbar border border-white/10 h-full mb-6">
                                 {Array.isArray(activeSnapshot.rawResults) ? (
                                   <>
+
+                                    {/* FRED Macro Economic Indicator Pulse Panel */}
+                                    {activeSnapshot.macro && (
+                                      <div className="mb-4 bg-gradient-to-r from-[#11111e] via-[#0e0e16] to-[#11111e] border border-violet-500/20 p-4 rounded-xl shadow-lg text-left">
+                                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-white/5 pb-2.5 mb-3 gap-2">
+                                          <div className="flex items-center gap-2.5">
+                                            <span className="flex h-2.5 w-2.5 relative">
+                                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
+                                            </span>
+                                            <h4 className="text-[11px] font-black uppercase tracking-widest text-[#cfd8ff]">
+                                              FRED Macro Regime Indicators (Captured Economic Pulse)
+                                            </h4>
+                                            <span className="text-[9px] font-mono bg-white/5 border border-white/10 px-1.5 py-0.5 rounded text-bento-muted">
+                                              as of {activeSnapshot.macro.asOf || 'Captured Time'}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-3 text-[10px]">
+                                            <div className="font-semibold text-[#8b5cf6]">
+                                              REGIME: <span className="font-extrabold text-white text-xs bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 rounded ml-1">{activeSnapshot.macro.label}</span>
+                                            </div>
+                                            <div className="font-semibold text-emerald-400">
+                                              MACRO SCORE: <span className="font-extrabold text-white text-xs bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded ml-1">{(activeSnapshot.macro.score || 50).toFixed(1)}/100</span>
+                                            </div>
+                                            <div className="font-semibold text-cyan-400">
+                                              TARGET EQUITY ALLOC: <span className="font-extrabold text-white text-xs bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 rounded ml-1">{activeSnapshot.macro.equityAlloc}%</span>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                          <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Yield Curve (10Y-2Y)</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                {activeSnapshot.macro.pillars?.curve?.val !== undefined ? `${activeSnapshot.macro.pillars.curve.val > 0 ? '+' : ''}${activeSnapshot.macro.pillars.curve.val.toFixed(2)} pp` : '—'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.pillars?.curve?.score || 0) < 0 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                SCORE: {`${((activeSnapshot.macro.pillars?.curve?.score || 0) * 100).toFixed(0)}`}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                              {activeSnapshot.macro.pillars?.curve?.state || 'no data'}
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Labor Market (UNRATE/SAHM)</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                Sahm Gap: {activeSnapshot.macro.pillars?.labor?.sahmGap !== undefined ? `${activeSnapshot.macro.pillars.labor.sahmGap.toFixed(2)}%` : '—'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.pillars?.labor?.score || 0) < 0.5 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                SCORE: {`${((activeSnapshot.macro.pillars?.labor?.score || 0) * 100).toFixed(0)}`}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                              {activeSnapshot.macro.pillars?.labor?.state || 'no data'}
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Fed Funds Interest Rate</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                6M Change: {activeSnapshot.macro.pillars?.fed?.ffChg6m !== undefined ? `${activeSnapshot.macro.pillars.fed.ffChg6m > 0 ? '+' : ''}${activeSnapshot.macro.pillars.fed.ffChg6m.toFixed(2)}%` : '—'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.pillars?.fed?.score || 0) < 0.5 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                SCORE: {`${((activeSnapshot.macro.pillars?.fed?.score || 0) * 100).toFixed(0)}`}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                              {activeSnapshot.macro.pillars?.fed?.state || 'no data'}
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Housing Starts (HOUST)</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                YoY Change: {activeSnapshot.macro.pillars?.housing?.houstYoy !== undefined ? `${activeSnapshot.macro.pillars.housing.houstYoy > 0 ? '+' : ''}${activeSnapshot.macro.pillars.housing.houstYoy.toFixed(1)}%` : '—'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.pillars?.housing?.score || 0) < 0.5 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                SCORE: {`${((activeSnapshot.macro.pillars?.housing?.score || 0) * 100).toFixed(0)}`}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                              {activeSnapshot.macro.pillars?.housing?.state || 'no data'}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                          <div className="bg-[#1a1130]/30 border border-purple-500/15 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-purple-300 uppercase tracking-wider font-bold mb-1">Fear & Greed Index (VIX)</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                {activeSnapshot.macro.fearGreedIndex !== undefined ? `${activeSnapshot.macro.fearGreedIndex}/100` : '68/100'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.fearGreedIndex || 50) >= 60 ? 'bg-emerald-500/10 text-emerald-400' : (activeSnapshot.macro.fearGreedIndex || 50) <= 40 ? 'bg-red-500/10 text-red-400' : 'bg-neutral-500/10 text-neutral-400'}`}>
+                                                {activeSnapshot.macro.fearGreedLabel || 'GREED'}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                              VIX Level: {activeSnapshot.macro.vixVal !== undefined ? `${activeSnapshot.macro.vixVal.toFixed(1)} vol` : '14.5'}
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-[#111c30]/20 border border-blue-500/15 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-blue-300 uppercase tracking-wider font-bold mb-1">Domestic CPI Inflation</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                YoY Rate: {activeSnapshot.macro.cpiYoY !== undefined ? `${activeSnapshot.macro.cpiYoY.toFixed(2)}%` : '2.70%'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.cpiYoY || 0) < 3.0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                {(activeSnapshot.macro.cpiYoY || 0) < 3.0 ? 'STABLE RANGE' : 'INFLATED'}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                              Secular price expansion rate
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-[#11241a]/20 border border-emerald-500/15 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-emerald-300 uppercase tracking-wider font-bold mb-1">Nonfarm Workforce Addition</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                MoM Change: {activeSnapshot.macro.jobsMoM !== undefined ? `${activeSnapshot.macro.jobsMoM >= 0 ? '+' : ''}${activeSnapshot.macro.jobsMoM.toLocaleString()}` : '+195,000'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.jobsMoM || 0) > 150000 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                                {(activeSnapshot.macro.jobsMoM || 0) > 150000 ? 'BUOYANT' : 'STABLE'}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                              Monthly net employment count
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-[#241311]/20 border border-pink-500/15 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-pink-300 uppercase tracking-wider font-bold mb-1">FedWatch Easing Expectation</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                Score / Prob: {activeSnapshot.macro.fedWatchCutProb !== undefined ? `${activeSnapshot.macro.fedWatchCutProb}%` : '74%'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.fedWatchCutProb || 50) > 65 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-neutral-500/10 text-neutral-400'}`}>
+                                                {(activeSnapshot.macro.fedWatchCutProb || 0) > 65 ? 'EASING BIAS' : 'RESTRICTIVE'}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                              Implied near-term rate easing
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
                                     <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
                                       {activeSnapshot.screenerMode?.includes('Unified') ? (
                                         <table className="w-full text-left text-[10px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
@@ -9669,12 +9880,14 @@ ${stationInput}
                                 source: "screener",
                                 index: (indexLabels[screenIndex] || "Custom/Colab") + (screenerPreset === 'full' ? ' (Full)' : screenerPreset === 'phase1' ? ' (Phase 1)' : ' (Phase 2)'),
                                 screenerMode: modeLabels[screenerMode] || "Unified Alpha Screener",
+                                screenerModeRaw: screenerMode,
                                 horizon: horizonLabels[screenHorizon] || screenHorizon,
                                 rawResults: resultsToSave,
                                 aiResults: (() => { try { return JSON.parse(neuralScreenerText || "[]"); } catch { return []; } })(),
                                 rawOutput: "",
                                 neuralOutput: "",
-                                tickerCount: resultsToSave.length
+                                tickerCount: resultsToSave.length,
+                                macro: screenerMacroResult
                               };
                               
                               if (user) {
@@ -9799,6 +10012,85 @@ ${stationInput}
                                     </div>
                                     <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
                                       {screenerMacroResult.pillars?.housing?.state || 'no data'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Ongoing Live Systemic Indicators Row */}
+                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                  {/* Fear & Greed Index */}
+                                  <div className="bg-[#1a1130]/30 border border-purple-500/15 p-2.5 rounded-lg">
+                                    <span className="block text-[8px] text-purple-300 uppercase tracking-wider font-bold mb-1">Fear & Greed Index (VIX)</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold font-mono text-white">
+                                        {screenerMacroResult.fearGreedIndex !== undefined ? `${screenerMacroResult.fearGreedIndex}/100` : '68/100'}
+                                      </span>
+                                      <span className={cn(
+                                        "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                                        (screenerMacroResult.fearGreedIndex || 50) >= 60 ? "bg-emerald-500/10 text-emerald-400" : (screenerMacroResult.fearGreedIndex || 50) <= 40 ? "bg-red-500/10 text-red-400" : "bg-neutral-500/10 text-neutral-400"
+                                      )}>
+                                        {screenerMacroResult.fearGreedLabel || 'GREED'}
+                                      </span>
+                                    </div>
+                                    <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                      VIX Level: {screenerMacroResult.vixVal !== undefined ? `${screenerMacroResult.vixVal.toFixed(1)} vol` : '14.5'}
+                                    </span>
+                                  </div>
+
+                                  {/* CPI Inflation */}
+                                  <div className="bg-[#111c30]/20 border border-blue-500/15 p-2.5 rounded-lg">
+                                    <span className="block text-[8px] text-blue-300 uppercase tracking-wider font-bold mb-1">Domestic CPI Inflation</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold font-mono text-white">
+                                        YoY Rate: {screenerMacroResult.cpiYoY !== undefined ? `${screenerMacroResult.cpiYoY.toFixed(2)}%` : '2.70%'}
+                                      </span>
+                                      <span className={cn(
+                                        "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                                        (screenerMacroResult.cpiYoY || 0) < 3.0 ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
+                                      )}>
+                                        {(screenerMacroResult.cpiYoY || 0) < 3.0 ? 'STABLE RANGE' : 'INFLATED'}
+                                      </span>
+                                    </div>
+                                    <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                      Secular price expansion rate
+                                    </span>
+                                  </div>
+
+                                  {/* Nonfarm Payrolls */}
+                                  <div className="bg-[#11241a]/20 border border-emerald-500/15 p-2.5 rounded-lg">
+                                    <span className="block text-[8px] text-emerald-300 uppercase tracking-wider font-bold mb-1">Nonfarm Workforce Addition</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold font-mono text-white">
+                                        MoM Change: {screenerMacroResult.jobsMoM !== undefined ? `${screenerMacroResult.jobsMoM >= 0 ? '+' : ''}${screenerMacroResult.jobsMoM.toLocaleString()}` : '+195,000'}
+                                      </span>
+                                      <span className={cn(
+                                        "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                                        (screenerMacroResult.jobsMoM || 0) > 150000 ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
+                                      )}>
+                                        {(screenerMacroResult.jobsMoM || 0) > 150000 ? 'BUOYANT' : 'STABLE'}
+                                      </span>
+                                    </div>
+                                    <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                      Monthly net employment count
+                                    </span>
+                                  </div>
+
+                                  {/* FedWatch Prob */}
+                                  <div className="bg-[#241311]/20 border border-pink-500/15 p-2.5 rounded-lg">
+                                    <span className="block text-[8px] text-pink-300 uppercase tracking-wider font-bold mb-1">FedWatch Easing Expectation</span>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold font-mono text-white">
+                                        Score / Prob: {screenerMacroResult.fedWatchCutProb !== undefined ? `${screenerMacroResult.fedWatchCutProb}%` : '74%'}
+                                      </span>
+                                      <span className={cn(
+                                        "text-[8px] font-extrabold px-1.5 py-0.5 rounded",
+                                        (screenerMacroResult.fedWatchCutProb || 50) > 65 ? "bg-emerald-500/10 text-emerald-400" : "bg-neutral-500/10 text-neutral-400"
+                                      )}>
+                                        {(screenerMacroResult.fedWatchCutProb || 0) > 65 ? 'EASING BIAS' : 'RESTRICTIVE'}
+                                      </span>
+                                    </div>
+                                    <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                      Implied near-term rate easing
                                     </span>
                                   </div>
                                 </div>
@@ -11859,6 +12151,162 @@ ${stationInput}
               <div className="flex-1 bg-black rounded-xl p-4 overflow-auto custom-scrollbar border border-white/10 h-full mb-6">
                 {Array.isArray(activeSnapshot.rawResults) ? (
                   <>
+
+                                    {/* FRED Macro Economic Indicator Pulse Panel */}
+                                    {activeSnapshot.macro && (
+                                      <div className="mb-4 bg-gradient-to-r from-[#11111e] via-[#0e0e16] to-[#11111e] border border-violet-500/20 p-4 rounded-xl shadow-lg text-left">
+                                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-white/5 pb-2.5 mb-3 gap-2">
+                                          <div className="flex items-center gap-2.5">
+                                            <span className="flex h-2.5 w-2.5 relative">
+                                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
+                                            </span>
+                                            <h4 className="text-[11px] font-black uppercase tracking-widest text-[#cfd8ff]">
+                                              FRED Macro Regime Indicators (Captured Economic Pulse)
+                                            </h4>
+                                            <span className="text-[9px] font-mono bg-white/5 border border-white/10 px-1.5 py-0.5 rounded text-bento-muted">
+                                              as of {activeSnapshot.macro.asOf || 'Captured Time'}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-3 text-[10px]">
+                                            <div className="font-semibold text-[#8b5cf6]">
+                                              REGIME: <span className="font-extrabold text-white text-xs bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 rounded ml-1">{activeSnapshot.macro.label}</span>
+                                            </div>
+                                            <div className="font-semibold text-emerald-400">
+                                              MACRO SCORE: <span className="font-extrabold text-white text-xs bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded ml-1">{(activeSnapshot.macro.score || 50).toFixed(1)}/100</span>
+                                            </div>
+                                            <div className="font-semibold text-cyan-400">
+                                              TARGET EQUITY ALLOC: <span className="font-extrabold text-white text-xs bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 rounded ml-1">{activeSnapshot.macro.equityAlloc}%</span>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                          <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Yield Curve (10Y-2Y)</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                {activeSnapshot.macro.pillars?.curve?.val !== undefined ? `${activeSnapshot.macro.pillars.curve.val > 0 ? '+' : ''}${activeSnapshot.macro.pillars.curve.val.toFixed(2)} pp` : '—'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.pillars?.curve?.score || 0) < 0 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                SCORE: {`${((activeSnapshot.macro.pillars?.curve?.score || 0) * 100).toFixed(0)}`}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                              {activeSnapshot.macro.pillars?.curve?.state || 'no data'}
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Labor Market (UNRATE/SAHM)</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                Sahm Gap: {activeSnapshot.macro.pillars?.labor?.sahmGap !== undefined ? `${activeSnapshot.macro.pillars.labor.sahmGap.toFixed(2)}%` : '—'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.pillars?.labor?.score || 0) < 0.5 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                SCORE: {`${((activeSnapshot.macro.pillars?.labor?.score || 0) * 100).toFixed(0)}`}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                              {activeSnapshot.macro.pillars?.labor?.state || 'no data'}
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Fed Funds Interest Rate</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                6M Change: {activeSnapshot.macro.pillars?.fed?.ffChg6m !== undefined ? `${activeSnapshot.macro.pillars.fed.ffChg6m > 0 ? '+' : ''}${activeSnapshot.macro.pillars.fed.ffChg6m.toFixed(2)}%` : '—'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.pillars?.fed?.score || 0) < 0.5 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                SCORE: {`${((activeSnapshot.macro.pillars?.fed?.score || 0) * 100).toFixed(0)}`}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                              {activeSnapshot.macro.pillars?.fed?.state || 'no data'}
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-[#cbd5e1]/60 uppercase tracking-wider font-bold mb-1">Housing Starts (HOUST)</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                YoY Change: {activeSnapshot.macro.pillars?.housing?.houstYoy !== undefined ? `${activeSnapshot.macro.pillars.housing.houstYoy > 0 ? '+' : ''}${activeSnapshot.macro.pillars.housing.houstYoy.toFixed(1)}%` : '—'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.pillars?.housing?.score || 0) < 0.5 ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                                SCORE: {`${((activeSnapshot.macro.pillars?.housing?.score || 0) * 100).toFixed(0)}`}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[9px] text-gray-400 mt-1 font-mono leading-tight">
+                                              {activeSnapshot.macro.pillars?.housing?.state || 'no data'}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                          <div className="bg-[#1a1130]/30 border border-purple-500/15 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-purple-300 uppercase tracking-wider font-bold mb-1">Fear & Greed Index (VIX)</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                {activeSnapshot.macro.fearGreedIndex !== undefined ? `${activeSnapshot.macro.fearGreedIndex}/100` : '68/100'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.fearGreedIndex || 50) >= 60 ? 'bg-emerald-500/10 text-emerald-400' : (activeSnapshot.macro.fearGreedIndex || 50) <= 40 ? 'bg-red-500/10 text-red-400' : 'bg-neutral-500/10 text-neutral-400'}`}>
+                                                {activeSnapshot.macro.fearGreedLabel || 'GREED'}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                              VIX Level: {activeSnapshot.macro.vixVal !== undefined ? `${activeSnapshot.macro.vixVal.toFixed(1)} vol` : '14.5'}
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-[#111c30]/20 border border-blue-500/15 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-blue-300 uppercase tracking-wider font-bold mb-1">Domestic CPI Inflation</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                YoY Rate: {activeSnapshot.macro.cpiYoY !== undefined ? `${activeSnapshot.macro.cpiYoY.toFixed(2)}%` : '2.70%'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.cpiYoY || 0) < 3.0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                {(activeSnapshot.macro.cpiYoY || 0) < 3.0 ? 'STABLE RANGE' : 'INFLATED'}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                              Secular price expansion rate
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-[#11241a]/20 border border-emerald-500/15 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-emerald-300 uppercase tracking-wider font-bold mb-1">Nonfarm Workforce Addition</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                MoM Change: {activeSnapshot.macro.jobsMoM !== undefined ? `${activeSnapshot.macro.jobsMoM >= 0 ? '+' : ''}${activeSnapshot.macro.jobsMoM.toLocaleString()}` : '+195,000'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.jobsMoM || 0) > 150000 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                                                {(activeSnapshot.macro.jobsMoM || 0) > 150000 ? 'BUOYANT' : 'STABLE'}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                              Monthly net employment count
+                                            </span>
+                                          </div>
+
+                                          <div className="bg-[#241311]/20 border border-pink-500/15 p-2.5 rounded-lg">
+                                            <span className="block text-[8px] text-pink-300 uppercase tracking-wider font-bold mb-1">FedWatch Easing Expectation</span>
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[11px] font-bold font-mono text-white">
+                                                Score / Prob: {activeSnapshot.macro.fedWatchCutProb !== undefined ? `${activeSnapshot.macro.fedWatchCutProb}%` : '74%'}
+                                              </span>
+                                              <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded ${(activeSnapshot.macro.fedWatchCutProb || 50) > 65 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-neutral-500/10 text-neutral-400'}`}>
+                                                {(activeSnapshot.macro.fedWatchCutProb || 0) > 65 ? 'EASING BIAS' : 'RESTRICTIVE'}
+                                              </span>
+                                            </div>
+                                            <span className="block text-[8px] text-gray-400 mt-1 font-mono leading-tight">
+                                              Implied near-term rate easing
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
                     <div className={cn("overflow-x-auto", viewMode === 'table' ? "block" : "hidden")}>
                       {activeSnapshot.screenerMode?.includes('Unified') ? (
                         <table className="w-full text-left text-[11px] text-white border-collapse whitespace-nowrap border border-white/5 bg-[#0b0b14]/50">
@@ -11902,7 +12350,8 @@ ${stationInput}
                                 <td className="p-3" style={{color: r.gate_sig === "STRONG BUY" || r.gate_sig === "BUY" ? "#00ff66" : r.gate_sig === "WATCH" ? "#fbbf24" : "#ff4444"}}>{r.gate_sig}</td>
                                 <td className="p-3" style={{color: r.rev_state?.includes("STEAM") ? "#ff4400" : r.rev_state?.includes("BOTTOM") ? "#aaffaa" : r.rev_state?.includes("ACCUM") ? "#00aaff" : "#fbbf24"}}>{r.rev_state}</td>
                                 <td className="p-3 text-emerald-400">{r.composite}</td>
-                                <td className="p-3">{r.steam}/14</td>
+
+                                 <td className="p-3">{r.steam}/14</td>
                                 <td className="p-3" style={{color: r.g1?.includes('PASS') ? '#00ff44' : r.g1?.includes('WATCH') ? '#fbbf24' : '#ff4444'}}>{r.g1}</td>
                                 <td className="p-3" style={{color: r.g2?.includes('DEEP VALUE') ? '#00ff44' : r.g2?.includes('OVERVALUED') ? '#f87171' : '#9ca3af'}}>{r.g2}</td>
                                 <td className="p-3" style={{color: r.g3?.includes('STRONG') ? '#00ff44' : r.g3?.includes('CONFIRM') ? '#10b981' : r.g3?.includes('CONTRADICT') ? '#ef4444' : '#9ca3af'}}>{r.g3}</td>

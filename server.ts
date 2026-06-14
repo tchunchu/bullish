@@ -1699,7 +1699,7 @@ async function startServer() {
       
       const [ch, qs] = await Promise.all([
         (yahooFinance as any).chart(ticker, { period1: d1, interval: '1d' }).catch(() => null),
-        yahooFinance.quoteSummary(ticker, { modules: ['financialData', 'recommendationTrend', 'defaultKeyStatistics'] }, { validateResult: false }).catch(() => null)
+        yahooFinance.quoteSummary(ticker, { modules: ['financialData', 'recommendationTrend', 'defaultKeyStatistics', 'insiderTransactions'] }, { validateResult: false }).catch(() => null)
       ]);
 
       if (!ch || !ch.quotes || ch.quotes.length < 60) {
@@ -1796,6 +1796,75 @@ async function startServer() {
 
       const rating = computeRating(macroResult, tech, analystData, risk);
 
+      let insider_score = 50;
+      let total_buy_val = 0;
+      let total_sell_val = 0;
+      let transaction_summary = "No recent transactions";
+
+      if (qs && qs.insiderTransactions && qs.insiderTransactions.transactions) {
+        const sixMonthsAgo = Date.now() - 180 * 24 * 3600 * 1000;
+        let buysCount = 0;
+        let sellsCount = 0;
+        for (const tx of qs.insiderTransactions.transactions) {
+          const txTime = tx.startDate ? new Date(tx.startDate).getTime() : 0;
+          if (txTime >= sixMonthsAgo) {
+            const text = (tx.transactionText || '').toLowerCase();
+            const val = tx.value || 0;
+            const isBuy = text.includes('purchase') || text.includes('buy');
+            const isSale = text.includes('sale');
+            if (isBuy) {
+              total_buy_val += val;
+              buysCount++;
+            } else if (isSale) {
+              total_sell_val += val;
+              sellsCount++;
+            }
+          }
+        }
+        
+        const netValue = total_buy_val - total_sell_val;
+        if (total_buy_val > 0) {
+          if (netValue > 0) {
+            if (total_buy_val > 5000000) insider_score = 100;
+            else if (total_buy_val > 1000000) insider_score = 95;
+            else if (total_buy_val > 250000) insider_score = 90;
+            else insider_score = 85;
+          } else {
+            if (total_buy_val > 1000000) insider_score = 80;
+            else if (total_buy_val > 250000) insider_score = 75;
+            else if (total_buy_val > 50000) insider_score = 70;
+            else insider_score = 60;
+          }
+        } else if (total_sell_val > 0) {
+          if (total_sell_val > 10000000) insider_score = 30;
+          else if (total_sell_val > 1000000) insider_score = 40;
+          else insider_score = 45;
+        } else {
+          insider_score = 50;
+        }
+
+        if (buysCount > 0 || sellsCount > 0) {
+          const fmtM = (v: number) => {
+            if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+            if (v >= 1e3) return `$${(v / 1e3).toFixed(0)}k`;
+            return `$${v}`;
+          };
+          const netStr = netValue >= 0 ? `+${fmtM(netValue)} net` : `-${fmtM(Math.abs(netValue))} net`;
+          transaction_summary = `${buysCount} Buys (${fmtM(total_buy_val)}) vs ${sellsCount} Sells (${fmtM(total_sell_val)}) | ${netStr}`;
+        }
+      }
+
+      const rawRating = rating.rating; // 1-5
+      const baselineRatingScore = Math.round(rawRating * 20); // 20-100
+      const macroScore = macroResult ? (macroResult.score || 50) : 50; // 0-100
+      const hybrid_score = Math.round((baselineRatingScore + insider_score + macroScore) / 3);
+
+      let hybrid_signal = "NEUTRAL";
+      if (hybrid_score >= 80) hybrid_signal = "STRONG HYBRID BUY";
+      else if (hybrid_score >= 65) hybrid_signal = "HYBRID BUY";
+      else if (hybrid_score >= 45) hybrid_signal = "HYBRID WATCH";
+      else hybrid_signal = "HYBRID AVOID";
+
       return {
         ticker,
         price,
@@ -1839,6 +1908,14 @@ async function startServer() {
         g3: tech.trendStatus,
         g4: risk.g4,
         gate_pass_raw: "G1:" + (tech.isAccum ? "P" : "W") + " G2:" + (analystData && analystData.analystOk ? "P" : "W") + " G3:" + (tech.trendStatus === 'UPTREND' ? "P" : "W") + " G4:" + (risk.g4 === 'EXCELLENT' ? "P" : "W"),
+
+        // New insider & macro indicators
+        insider_score,
+        total_buy_val,
+        total_sell_val,
+        insider_summary: transaction_summary,
+        hybrid_score,
+        hybrid_signal
       };
     } catch (e: any) {
       console.error(`Error computing Super Signal for ${ticker}:`, e.message);
@@ -2835,6 +2912,12 @@ Your response MUST match the JSON response schema perfectly. Evaluate each provi
       const prompt = `You are a senior macro partner at a multi-billion quantitative global macro hedge fund.
 Create an elite, institutional-grade end-of-day market news intelligence report. 
 
+🧠 ANALYTICAL THINKING DIRECTIVE (360-DEGREE SMART MONEY FLOW & CAPITAL ROTATION LOGIC):
+When evaluating direct or cascading effects (especially when assessing Beneficiary vs. Detrimental assets or Level-1/Level-2 implications), you must employ sophisticated, real-world capital flow and liquidity mechanics rather than surface-level narrative associations.
+- Smart Money Liquidity Mechanics: Trace how capital actually flows. Institutional money operates as a zero-sum game of allocation. For instance, a major event like a SpaceX IPO/capital-raise can cause "smart money" to sell down unrelated or non-profitable high-beta software/tech holdings (or thematic Space/Satellite ETFs) to unlock cash and rotate into a new premium monopoly-esque asset. This triggers localized drops in software or high-multiple assets across the board without any negative news for those specific companies, simply due to portfolio rebalancing and liquidity preservation.
+- Sector Rotation Tracing: Avoid simplistic assumptions (e.g. "SpaceX IPO is good for all tech because tech is expanding"). Think 360 degrees: Who is losing capital so that this beneficiary can gain it? Analyze positional overcrowding, leverage squeeze, relative valuations, and risk premium re-ratings.
+- Reasonable Victimize-and-Benefit Analysis: Ensure your "beneficiary" and "detrimental/victim" selections are grounded in professional macro-hedging narratives. Trace secondary and tertiary cascades logically (e.g. increased yield leads to small-cap regional bank squeeze due to capital flight, rather than just saying bank stocks go down because rates are high). Avoid weird, speculative, or loose-association linkages. Maintain absolute intellectual rigor.
+
 You must deeply analyze these selected high-impact headlines:
 ${articlesList}
 
@@ -2848,19 +2931,24 @@ ${userIntent ? `PORTFOLIO MANAGER INSTRUCTIONS & FOCUS BIAS: "${userIntent}"` : 
 
 Task Instructions:
 1. Diagnose the Macro Regime (e.g. "HAWKISH RE-PRICING", "DOVISH REBOUND", "RISK-ON MOMENTUM", "FLIGHT TO SAFETY", "STAGFLATIONARY SQUEEZE"). Heavily incorporate the live market data (VIX level, Treasury yields, Crude/Gold movements, and Forex pairs) to justify this classification.
-2. Write a comprehensive macro front-page lede summarizing the overall message, specifically connecting how treasury yields, commodities, and volatility levels corroborate the headline narratives.
+2. Write an extremely comprehensive macro front-page lede summarizing the overall message, specifically connecting how treasury yields, commodities, and volatility levels corroborate the headline narratives with rich institutional narrative depth.
 3. FOR EACH and every news item in the provided list, construct a thorough "Detailed Impact Analysis block" that conforms exactly to the Schema. This must contain:
    a. "implicationLine": a single, clear, punchy executive bottom-line of what this headline means for general investors.
    b. "level1Implication": explicit direct, immediate 1st order consequence (how the news directly affects cash flows, sales, yields, or margins).
    c. "level2Implication": derivative, systemic, or structural 2nd order consequence (wider sector effects, regulatory follow-up, central bank reactions, cascading actions, or supply-chain repercussions).
    d. "beneficiaryTickers": 1 to 2 real public companies, ETFs, or index tickers that BENEFIT from this development. State the ticker symbol, name, and a precise 1-sentence narrative/thesis.
    e. "detrimentalTickers": 1 to 2 real public companies, ETFs, or index tickers that suffer a NEGATIVE impact or act as short candidates. State the ticker, name, and a precise 1-sentence narrative thesis.
-4. Supply standard overview elements: Key macro events timeline, general macro bullet shifts, and synthetic corporate insider activities matching the prevailing regime.
+4. Supply standard overview elements conforming strictly to the requested schema. Ensure they match the level of elite detail of a seasoned global macro portfolio manager:
+   - "macroEvents": Key events or data releases that map exactly to the calendar or headline narratives. Provide 2-5 high-relevance events with precise physical time (e.g., "08:30am ET") and expected outcome or market reactions.
+   - "macroTextLines": Supply 3-5 deep quantitative technical and structural bullet points.
+   - "actionSummary": A tactical walkthrough playbook consisting of "Primary Long Vectors" and "Primary Short Vectors" outlining actual trade structures, derivatives, or asset-hedges derived from the capital rotative flows.
+   - "insiderStats": 2-3 custom high-level summary strings summarizing aggregate corporate buys vs strategic sales matching the prevailing sentiment.
+   - "insiderTables": Model highly professional insider transactions of public corporations (e.g., INTC, MU, AMD, UAL, XOM) with authentic SEC-filed records context. Provide the ticker, the named executive entity, relationship/role (e.g. CEO, CFO, Director), price, shares, transaction value ($), and type ("Buy" or "Sell") that align 100% with the news flow, sector rotation patterns, and corporate valuations.
 
 Ensure your entire output matches the custom JSON schema layout exactly.`;
 
       const response = await generateContentWithRetry({
-        model: MODELS.FLASH_LITE,
+        model: MODELS.FLASH_35,
         contents: prompt,
         config: {
           temperature: 0.15,

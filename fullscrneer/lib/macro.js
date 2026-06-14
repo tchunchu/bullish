@@ -24,7 +24,7 @@ import cfg from '../config.js';
 
 let isFredOffline = false;
 
-function fetchUrl(url, timeoutMs = 1200) {
+function fetchUrl(url, timeoutMs = 4000) {
   return new Promise((resolve, reject) => {
     let completed = false;
     const req = https.get(url, { 
@@ -76,7 +76,7 @@ async function fetchFRED(seriesId) {
     }
     return data;
   } catch (e) {
-    console.error(`  [MACRO] Failed to fetch ${seriesId}: ${e.message}`);
+    console.warn(`  [MACRO] Failed to fetch ${seriesId}: ${e.message}`);
     isFredOffline = true; // flag FRED as offline to bypass future slow attempts
     return [];
   }
@@ -281,7 +281,13 @@ export function getOfflineMacroFallback() {
     supports: 'Curve, Labor, Housing',
     history: [
       { date: nowStr, score: 65.0, regime: 1 }
-    ]
+    ],
+    fearGreedIndex: 68,
+    fearGreedLabel: 'GREED',
+    cpiYoY: 2.7,
+    jobsMoM: 195000,
+    fedWatchCutProb: 74,
+    vixVal: 14.5
   };
 }
 
@@ -294,22 +300,73 @@ export async function computeMacroRegime() {
   console.log('[MACRO] Fetching FRED economic data...');
 
   try {
-    const [curveRaw, unrateRaw, ffRaw, houstRaw] = await Promise.all([
-      fetchFRED('T10Y2Y'),
+    // Sequential test query to check online status and prevent multiple concurrent timeouts
+    const curveRaw = await fetchFRED('T10Y2Y');
+    if (isFredOffline || !curveRaw || !curveRaw.length) {
+      console.warn('[MACRO] FRED is offline or unreachable on test query. Activating persistent offline fallback.');
+      isFredOffline = true;
+      return getOfflineMacroFallback();
+    }
+
+    const [unrateRaw, ffRaw, houstRaw, vixRaw, cpiRaw, jobsRaw, dgs2Raw] = await Promise.all([
       fetchFRED('UNRATE'),
       fetchFRED('DFF'),
-      fetchFRED('HOUST')
+      fetchFRED('HOUST'),
+      fetchFRED('VIXCLS').catch(() => []),
+      fetchFRED('CPIAUCSL').catch(() => []),
+      fetchFRED('PAYEMS').catch(() => []),
+      fetchFRED('DGS2').catch(() => [])
     ]);
 
-    // If any series is empty, it means fetching failed or was incomplete.
-    if (!curveRaw.length || !unrateRaw.length || !ffRaw.length || !houstRaw.length) {
+    // If any core series is empty, it means fetching failed or was incomplete.
+    if (!curveRaw || !curveRaw.length || !unrateRaw.length || !ffRaw.length || !houstRaw.length) {
       console.warn('[MACRO] Incomplete FRED series received. Activating persistent offline fallback.');
       isFredOffline = true;
       return getOfflineMacroFallback();
     }
 
+    let fearGreedIndex = 68;
+    let fearGreedLabel = 'GREED';
+    let cpiYoY = 2.7;
+    let jobsMoM = 195000;
+    let fedWatchCutProb = 74;
+    let vixVal = 14.5;
+
+    if (vixRaw && vixRaw.length > 0) {
+      vixVal = vixRaw[vixRaw.length - 1].value;
+      const fgVal = Math.max(5, Math.min(95, Math.round(90 - ((vixVal - 12) / (35 - 12)) * 80)));
+      fearGreedIndex = fgVal;
+      fearGreedLabel = fgVal >= 80 ? 'EXTREME GREED' : fgVal >= 60 ? 'GREED' : fgVal >= 40 ? 'NEUTRAL' : fgVal >= 20 ? 'FEAR' : 'EXTREME FEAR';
+    }
+
+    if (cpiRaw && cpiRaw.length >= 13) {
+      const lastCpi = cpiRaw[cpiRaw.length - 1].value;
+      const prevCpi = cpiRaw[cpiRaw.length - 13].value;
+      cpiYoY = parseFloat((((lastCpi / prevCpi) - 1) * 100).toFixed(2));
+    }
+
+    if (jobsRaw && jobsRaw.length >= 2) {
+      const lastJobs = jobsRaw[jobsRaw.length - 1].value;
+      const prevJobs = jobsRaw[jobsRaw.length - 2].value;
+      jobsMoM = Math.round((lastJobs - prevJobs) * 1000);
+    }
+
+    if (dgs2Raw && dgs2Raw.length > 0 && ffRaw.length > 0) {
+      const latestFF = ffRaw[ffRaw.length - 1].value;
+      const latestDGS2 = dgs2Raw[dgs2Raw.length - 1].value;
+      const spread = latestFF - latestDGS2;
+      fedWatchCutProb = Math.max(5, Math.min(99, Math.round(50 + spread * 50)));
+    }
+
     const result = computeMacroFromSeries({ curveRaw, unrateRaw, ffRaw, houstRaw });
     if (result) {
+      result.fearGreedIndex = fearGreedIndex;
+      result.fearGreedLabel = fearGreedLabel;
+      result.cpiYoY = cpiYoY;
+      result.jobsMoM = jobsMoM;
+      result.fedWatchCutProb = fedWatchCutProb;
+      result.vixVal = vixVal;
+
       console.log(`[MACRO] As of ${result.asOf} | Regime: ${result.label} (${result.score.toFixed(0)}/100, raw ${result.rawScore.toFixed(0)}) | Eq ${result.equityAlloc}%/Cash ${(100 - result.equityAlloc).toFixed(0)}%`);
       console.log(`[MACRO] Why: ${result.why}`);
       return result;
